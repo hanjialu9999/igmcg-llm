@@ -1,6 +1,7 @@
 import torch
 import json
 import argparse
+import os
 from pathlib import Path
 import sys
 
@@ -121,6 +122,12 @@ def batch_generate(model, vocab, prompts, max_length=30, temperature=0.8,
 
 
 def main():
+    # 避免中文在 GBK 控制台打印时崩溃；同时把结果写入 UTF-8 文件便于查看
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
     parser = argparse.ArgumentParser(description='Text generation with trained model')
     parser.add_argument('--model', type=str, default='./checkpoints/final_model.pt',
                         help='Path to model checkpoint')
@@ -128,6 +135,8 @@ def main():
                         help='Path to vocabulary file')
     parser.add_argument('--prompt', type=str, default=None,
                         help='Text prompt for generation')
+    parser.add_argument('--prompt-file', type=str, default=None,
+                        help='Path to a UTF-8 file containing the prompt (avoids console GBK encoding issues with Chinese)')
     parser.add_argument('--max-length', type=int, default=30,
                         help='Maximum length of generated text')
     parser.add_argument('--temperature', type=float, default=0.8,
@@ -155,16 +164,27 @@ def main():
     print(f"Vocabulary size: {len(vocab)}")
     
     # Generation mode
+    prompt = args.prompt
+    if args.prompt_file:
+        with open(args.prompt_file, 'r', encoding='utf-8-sig') as pf:
+            prompt = pf.read().strip()
+
     if args.interactive:
         interactive_mode(model, vocab, device)
-    elif args.prompt:
-        generated = generate_text(model, vocab, args.prompt, 
+    elif prompt:
+        generated = generate_text(model, vocab, prompt,
                                  max_length=args.max_length,
                                  temperature=args.temperature,
                                  top_k=args.top_k,
                                  device=device)
-        print(f"\nPrompt: {args.prompt}")
+        # 同时写 UTF-8 结果文件，方便中文查看（控制台可能是 GBK）
+        out_path = os.path.join('logs', 'generation_output.txt')
+        os.makedirs('logs', exist_ok=True)
+        with open(out_path, 'w', encoding='utf-8') as of:
+            of.write(f"Prompt: {prompt}\nGenerated: {generated}\n")
+        print(f"\nPrompt: {prompt}")
         print(f"Generated: {generated}\n")
+        print(f"(结果已同时写入 {out_path})")
     else:
         # Default example
         examples = [

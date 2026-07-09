@@ -1,0 +1,41 @@
+# 正式预训练配置：在中文+英文混合语料 (merged.txt) 上训练基座模型
+# 训练前会自动把 checkpoints/ 备份到 archive_unused/checkpoints_backup/
+model:
+  vocab_size: 12000            # DML 在 20000 输出投影的 backward 会触发多GPU设备错误；12000 已验证可用且覆盖 ~98.9% token
+  embedding_dim: 512
+  num_heads: 8
+  num_layers: 6
+  hidden_dim: 1024
+  max_seq_length: 64
+  dropout: 0.1
+
+# Training Configuration
+training:
+  batch_size: 32
+  epochs: 10                   # 正式预训练轮数（数据量有限，10 轮已较充分）
+  learning_rate: 3.0e-4
+  weight_decay: 0.01
+  gradient_clip: 1.0
+  warmup_steps: 10
+  early_stop_patience: 5
+  label_smoothing: 0.1
+  cpu_threads: 4
+
+# Data Configuration
+data:
+  train_file: "data/pretrain_corpus/merged.txt"
+  vocab_size: 12000
+  max_seq_length: 64
+  num_workers: 0
+  prefetch: 2
+  test_split: 0.1
+
+# Paths
+paths:
+  checkpoint_dir: "checkpoints"
+  log_dir: "logs"
+
+# Device
+device: "auto"
+
+seed: 42

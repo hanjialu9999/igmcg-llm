@@ -1,5 +1,6 @@
 import os
 import sys
+import shutil
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -179,6 +180,31 @@ def cleanup_old_checkpoints(checkpoint_dir, keep_last_n=5):
     print(f"   Kept last {keep_last_n} checkpoint(s) and final_model.pt")
 
 
+def backup_existing_checkpoints(checkpoint_dir, backup_root=None):
+    """训练开始前自动备份已有 checkpoints，避免覆盖旧模型。
+    备份到 <项目根>/archive_unused/checkpoints_backup 下，名字冲突时自动追加数字。
+    返回备份目标路径；无内容可备份时返回 None。
+    """
+    if backup_root is None:
+        backup_root = os.path.join(project_root, 'archive_unused', 'checkpoints_backup')
+
+    if not os.path.isdir(checkpoint_dir) or not os.listdir(checkpoint_dir):
+        print("No existing checkpoints to back up; skipping backup.")
+        return None
+
+    os.makedirs(backup_root, exist_ok=True)
+    base = os.path.basename(os.path.normpath(checkpoint_dir))
+    dest = os.path.join(backup_root, base)
+    n = 0
+    while os.path.exists(dest):
+        n += 1
+        dest = os.path.join(backup_root, f"{base}_{n}")
+
+    shutil.copytree(checkpoint_dir, dest)
+    print(f"Backed up existing checkpoints -> {dest}")
+    return dest
+
+
 def main(config_path='config/config.yaml'):
     # Load configuration
     config = load_config(config_path)
@@ -193,6 +219,10 @@ def main(config_path='config/config.yaml'):
     
     # Create checkpoint directory
     checkpoint_dir = config['paths']['checkpoint_dir']
+
+    # 训练前自动备份已有模型，避免覆盖旧 checkpoints
+    backup_existing_checkpoints(checkpoint_dir)
+
     os.makedirs(checkpoint_dir, exist_ok=True)
     
     # Load data

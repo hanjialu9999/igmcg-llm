@@ -67,16 +67,22 @@ class Vocabulary:
         print(f"  Coverage: {coverage:.2f}%")
     
     def tokenize(self, text):
-        """Improved tokenization - preserves case info and better handles punctuation"""
+        """支持中英文混合的分词：
+        - 中日韩(CJK)字符逐字切分（中文无词边界，按字建模）
+        - 其它文本按空格/标点切分
+        """
         # Clean text: remove extra spaces
         text = ' '.join(text.split())
         text = text.lower()
-        
-        # Tokenize: split on spaces and punctuation boundaries
-        # Keep most common punctuation as separate tokens
+
+        # 先把每个 CJK 字符用空格隔开，非 CJK 片段保持原样
+        # 这样后续统一按空格切分时，CJK 会逐字成 token
+        text = re.sub(r'([\u3400-\u9fff\uf900-\ufaff\uff00-\uffef])', r' \1 ', text)
+
+        # 常见标点也单独成 token
         text = re.sub(r'([.!?,;:-])', r' \1 ', text)
         words = text.split()
-        
+
         # Filter empty strings
         words = [w for w in words if w]
         return words
@@ -107,7 +113,8 @@ class Vocabulary:
                 if token_id in [0, 2, 3, 4]:
                     continue
             
-            word = self.idx2word.get(str(token_id), '<unk>')
+            # idx2word 以 int 为键；直接按 int 查找（兼容 vocab.json 中字符串键的情况）
+            word = self.idx2word.get(token_id, self.idx2word.get(str(token_id), '<unk>'))
             words.append(word)
         
         text = ' '.join(words)
