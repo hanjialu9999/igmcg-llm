@@ -29,7 +29,7 @@ def main():
     parser.add_argument('--device', default='auto')
     parser.add_argument('--max-length', type=int, default=60)
     parser.add_argument('--temperature', type=float, default=0.7)
-    parser.add_argument('--top-k', type=int, default=50)
+    parser.add_argument('--top-k', type=int, default=30)
     # 以下为参数扫描(粗扫+细扫+连贯性评估)得到的最优生成参数，已自动写入默认值
     parser.add_argument('--repetition-penalty', type=float, default=1.7)
     parser.add_argument('--history', default='logs/chat_history.txt')
