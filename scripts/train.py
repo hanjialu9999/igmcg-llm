@@ -19,7 +19,7 @@ sys.path.insert(0, str(project_root))
 from models.transformer import TransformerModel
 from models.data_utils import load_data, create_dataloader
 from models.config_loader import build_model
-from models.device import get_device, supports_amp
+from models.device import get_device, supports_amp, apply_cpu_threads
 
 class AverageMeter:
     def __init__(self):
@@ -188,6 +188,7 @@ def main(config_path='config/config.yaml'):
     
     # Device: 自动适配 CUDA / DirectML(AMD) / CPU
     device = get_device(config.get('device', 'auto'))
+    apply_cpu_threads(config['training'].get('cpu_threads'))
     print(f"Using device: {device}")
     
     # Create checkpoint directory

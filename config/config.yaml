@@ -10,7 +10,7 @@ model:
 
 # Training Configuration
 training:
-  batch_size: 64            # 核显/小显存更稳妥；数据量小也能保证足够的更新步数
+  batch_size: 32            # 核显/小显存更稳妥（8GB 共享显存下不会吃满）；大显存机器可上调到 64/128
   epochs: 10                # 原 200 轮过多，改为 10 轮
   learning_rate: 3.0e-4     # 适中学习率，配合余弦退火
   weight_decay: 0.01        # 增强 L2 正则（原 1e-4 偏弱）
@@ -18,6 +18,7 @@ training:
   warmup_steps: 10          # 原 30 在 10 轮下占比过大，调小
   early_stop_patience: 3    # 10 轮内可在损失不再下降时提前停止
   label_smoothing: 0.1
+  cpu_threads: 4            # 限制 PyTorch 使用的 CPU 线程数，避免训练/推理吃满所有核心（占满 CPU 时可调小）
   
 # Data Configuration
 data:

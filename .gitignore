@@ -11,6 +11,9 @@ dist/
 .amd_venv/
 venv/
 
+# Archived/legacy scripts & data (historical, not part of active project)
+archive_unused/
+
 # Model checkpoints & large artifacts (do NOT commit)
 *.pt
 *.pth

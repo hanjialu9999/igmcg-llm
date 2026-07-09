@@ -58,14 +58,14 @@ def show_config():
 def start_training():
     """开始训练"""
     print("\n开始训练模型...")
-    os.system('python scripts/train.py --config config/config.yaml')
+    os.system(f'{sys.executable} scripts/train.py --config config/config.yaml')
 
 
 def interactive_generation():
     """交互生成"""
     device = input("使用GPU还是CPU? (cuda/cpu, 默认cpu): ").strip() or 'cpu'
     print(f"\n使用设备: {device}")
-    os.system(f'python scripts/generate.py --interactive --device {device}')
+    os.system(f'{sys.executable} scripts/generate.py --interactive --device {device}')
 
 
 def single_generation():
@@ -84,7 +84,7 @@ def single_generation():
     device = input("使用GPU还是CPU? (cuda/cpu, 默认cpu): ").strip() or 'cpu'
     
     print(f"\n生成文本 (提示词: {prompt})...")
-    os.system(f'python scripts/generate.py --prompt "{prompt}" --max-length {max_length} --temperature {temperature} --device {device}')
+    os.system(f'{sys.executable} scripts/generate.py --prompt "{prompt}" --max-length {max_length} --temperature {temperature} --device {device}')
 
 
 def main():

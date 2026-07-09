@@ -11,7 +11,7 @@ import glob
 try:
     from models.transformer import TransformerModel
     from models.config_loader import load_config, build_model
-    from models.device import get_device
+    from models.device import get_device, apply_cpu_threads
 except ImportError:
     print("❌ 错误：在当前目录下找不到 models/transformer.py，请确保在项目根目录下运行脚本")
     exit()
@@ -117,6 +117,7 @@ def train():
         print("✅ 直接加载权重成功")
 
     device = get_device()  # 自动适配 CUDA / DirectML(AMD) / CPU
+    apply_cpu_threads(config['training'].get('cpu_threads'))
     model = model.to(device)
     model.train()
     print(f"使用设备: {device}")

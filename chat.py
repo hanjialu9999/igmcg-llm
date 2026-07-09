@@ -4,13 +4,14 @@ import re
 import os
 from models.transformer import TransformerModel
 from models.config_loader import load_config as load_model_config, build_model, load_vocab
-from models.device import get_device
+from models.device import get_device, apply_cpu_threads
 
 # ===== 1. 环境配置 =====
 MODEL_PATH = "checkpoints/best_finetuned_model.pt" 
 VOCAB_PATH = "checkpoints/vocab.json"
 CONFIG_PATH = "chat_config.json"
 DEVICE = get_device()  # 自动适配 CUDA / DirectML(AMD) / CPU
+apply_cpu_threads(load_model_config().get('training', {}).get('cpu_threads'))
 
 def load_config():
     if os.path.exists(CONFIG_PATH):

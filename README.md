@@ -90,21 +90,26 @@ pip install -r requirements-amd.txt
 > 编码层的融合算子 DirectML 暂不支持、会回退 CPU，但功能正常、不影响结果。这是后端限制，
 > 非代码问题。如追求生成也在 GPU 上跑，建议使用 ROCm（Linux）环境。
 
-## 快速开始
+## 怎么运行（不用记虚拟环境）
 
-```bash
-# 1) 训练语言模型（产出 checkpoints/final_model.pt + vocab.json）
-python scripts/train.py --config config/config.yaml
+项目根目录提供了 **`run.bat`** 启动器，会自动选好对应的虚拟环境，直接双击或用命令行：
 
-# 2) 微调（基于已有模型，产出 best_finetuned_model.pt）
-python train_finetune.py
-
-# 3) 启动对话
-python chat.py
+```bat
+run.bat            REM 交互菜单（训练 / 生成 / 看配置）
+run.bat train      REM 训练语言模型（产出 checkpoints/final_model.pt + vocab.json）
+run.bat finetune   REM 微调（产出 best_finetuned_model.pt）
+run.bat chat       REM 对话
+run.bat gen "你的问题"   REM 单条生成
 ```
 
-更详细的步骤见 `QUICK_START.md`；训练 / 调参 / 数据 / 模型用法分别见
-`TRAINING_GUIDE.md`、`TUNING_GUIDE.md`、`DATA_USAGE.md`、`MODEL_USAGE_GUIDE.md`。
+> 手动跑也行：先 `.amd_venv\Scripts\activate`（AMD 核显）或 `.my_venv\Scripts\activate`（CUDA/CPU），
+> 再 `python scripts/train.py --config config/config.yaml`。
+
+## 文档导航（只看本文件即可，其它是分主题细节）
+
+- 上手最快：**[QUICK_START.md](QUICK_START.md)**
+- 分主题细节在 **`docs/`**：训练 `docs/TRAINING_GUIDE.md`、调参 `docs/TUNING_GUIDE.md`、
+  数据 `docs/DATA_USAGE.md`、模型用法 `docs/MODEL_USAGE_GUIDE.md`
 
 ## 配置说明
 
