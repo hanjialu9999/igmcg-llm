@@ -30,7 +30,8 @@ def main():
     parser.add_argument('--max-length', type=int, default=60)
     parser.add_argument('--temperature', type=float, default=0.7)
     parser.add_argument('--top-k', type=int, default=50)
-    parser.add_argument('--repetition-penalty', type=float, default=1.4)
+    # 以下为参数扫描(粗扫+细扫)得到的最优生成参数，已自动写入默认值
+    parser.add_argument('--repetition-penalty', type=float, default=2.0)
     parser.add_argument('--history', default='logs/chat_history.txt')
     parser.add_argument('--script', default=None,
                         help='UTF-8 文件，每行一个 prompt，非交互式跑完一轮对话（便于测试/避免控制台编码问题）')
@@ -56,7 +57,7 @@ def main():
 
     # 非交互式：从 UTF-8 文件逐行对话
     if args.script:
-        with open(args.script, 'r', encoding='utf-8') as sf:
+        with open(args.script, 'r', encoding='utf-8-sig') as sf:
             prompts = [ln.strip() for ln in sf if ln.strip()]
         for prompt in prompts:
             if prompt.lower() in ('quit', 'exit', '退出', 'q'):
