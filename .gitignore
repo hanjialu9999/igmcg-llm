@@ -14,6 +14,12 @@ venv/
 # Archived/legacy scripts & data (historical, not part of active project)
 archive_unused/
 
+# Pretraining corpus (large data, kept locally not in git)
+# 只跟踪目录结构与说明脚本，不跟踪大体量数据文件
+data/pretrain_corpus/raw/
+data/pretrain_corpus/*.txt
+!data/pretrain_corpus/MANUAL.md
+
 # Model checkpoints & large artifacts (do NOT commit)
 *.pt
 *.pth
