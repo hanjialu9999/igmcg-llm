@@ -13,10 +13,11 @@ import torch
 import json
 import numpy as np
 from models.config_loader import load_config, build_model, load_vocab
+from models.device import get_device
 
 vocab = load_vocab('checkpoints/vocab.json')
 
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
+device = get_device()
 
 model = build_model(load_config()).to(device)
 cp = torch.load('checkpoints/final_model.pt', map_location=device)

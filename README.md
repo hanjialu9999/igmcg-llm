@@ -62,7 +62,15 @@ python -m venv .my_venv
 pip install -r requirements.txt
 ```
 
-依赖：`torch`、`pyyaml`、`numpy`、`tqdm`。本项目在 CPU / CUDA 下均可运行（自动检测）。
+依赖：`torch`、`pyyaml`、`numpy`、`tqdm`。本项目**自动适配不同硬件**，无需改代码：
+
+- **NVIDIA 显卡** → 自动使用 CUDA
+- **AMD / Intel 核显或独显（Windows）** → 安装 `torch-directml` 后自动通过 DirectML 后端使用
+  （`pip install torch-directml`，需配合 Python 3.10/3.11 + torch 2.0/2.1）
+- **无 GPU** → 自动退回 CPU
+
+设备选择由 `models/device.py` 的 `get_device()` 统一处理，配置项 `config.yaml` 的
+`device: "auto"` 即为自动探测（也可显式写 `"cuda"` / `"cpu"` / `"dml"`）。
 
 ## 快速开始
 

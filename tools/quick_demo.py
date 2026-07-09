@@ -12,9 +12,10 @@ import torch
 import json
 from models.transformer import TransformerModel
 from models.data_utils import Vocabulary
+from models.device import get_device
 import yaml
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = get_device()
 
 # Load config
 with open('config/config.yaml', 'r') as f:

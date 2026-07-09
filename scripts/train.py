@@ -19,6 +19,7 @@ sys.path.insert(0, str(project_root))
 from models.transformer import TransformerModel
 from models.data_utils import load_data, create_dataloader
 from models.config_loader import build_model
+from models.device import get_device, supports_amp
 
 class AverageMeter:
     def __init__(self):
@@ -185,8 +186,8 @@ def main(config_path='config/config.yaml'):
     # Set seed
     set_seed(config['seed'])
     
-    # Device
-    device = torch.device('cuda' if torch.cuda.is_available() and config['device'] == 'cuda' else 'cpu')
+    # Device: 自动适配 CUDA / DirectML(AMD) / CPU
+    device = get_device(config.get('device', 'auto'))
     print(f"Using device: {device}")
     
     # Create checkpoint directory
@@ -237,8 +238,8 @@ def main(config_path='config/config.yaml'):
     )
     scheduler = CosineAnnealingLR(optimizer, T_max=config['training']['epochs'])
     
-    # Mixed precision training setup
-    use_amp = device.type == 'cuda'  # Only use AMP on CUDA
+    # Mixed precision training setup (仅 CUDA 支持 torch.cuda.amp；DirectML/CPU 用 fp32)
+    use_amp = supports_amp(device)
     scaler = torch.amp.GradScaler('cuda') if use_amp else None
     
     print(f"\n[Training Config]")

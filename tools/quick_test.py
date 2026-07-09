@@ -7,8 +7,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from models.config_loader import load_config, build_model, load_vocab
+from models.device import get_device
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = get_device()
 
 config = load_config()
 vocab = load_vocab('checkpoints/vocab.json')

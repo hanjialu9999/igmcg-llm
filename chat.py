@@ -4,12 +4,13 @@ import re
 import os
 from models.transformer import TransformerModel
 from models.config_loader import load_config as load_model_config, build_model, load_vocab
+from models.device import get_device
 
 # ===== 1. 环境配置 =====
 MODEL_PATH = "checkpoints/best_finetuned_model.pt" 
 VOCAB_PATH = "checkpoints/vocab.json"
 CONFIG_PATH = "chat_config.json"
-DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+DEVICE = get_device()  # 自动适配 CUDA / DirectML(AMD) / CPU
 
 def load_config():
     if os.path.exists(CONFIG_PATH):

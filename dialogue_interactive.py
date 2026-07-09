@@ -13,7 +13,9 @@ from models.data_utils import Vocabulary
 import yaml
 import sys
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+from models.device import get_device
+
+device = get_device()  # 自动适配 CUDA / DirectML(AMD) / CPU
 
 # Load config
 with open('config/config.yaml', 'r') as f:

@@ -10,6 +10,7 @@ sys.path.insert(0, str(project_root))
 
 from models.transformer import TransformerModel
 from models.data_utils import Vocabulary
+from models.device import get_device
 
 def load_model(model_path, vocab_path, device='cpu'):
     """Load trained model and vocabulary"""
@@ -133,8 +134,8 @@ def main():
                         help='Sampling temperature (0.5-1.5)')
     parser.add_argument('--top-k', type=int, default=50,
                         help='Top-k sampling')
-    parser.add_argument('--device', type=str, default='cpu',
-                        help='Device to use (cpu or cuda)')
+    parser.add_argument('--device', type=str, default='auto',
+                        help='Device to use: auto (detect) / cuda / cpu / dml')
     parser.add_argument('--interactive', action='store_true',
                         help='Run in interactive mode')
     
@@ -146,8 +147,8 @@ def main():
         print("Please train the model first using: python scripts/train.py")
         return
     
-    # Load model
-    device = torch.device('cuda' if args.device == 'cuda' and torch.cuda.is_available() else 'cpu')
+    # Load model (自动适配 CUDA / DirectML(AMD) / CPU；--device 默认 auto 自动探测)
+    device = get_device(args.device)
     print(f"Loading model from {args.model}...")
     model, vocab = load_model(args.model, args.vocab, device=device)
     print(f"Model loaded successfully!")

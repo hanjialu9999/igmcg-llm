@@ -11,6 +11,7 @@ import glob
 try:
     from models.transformer import TransformerModel
     from models.config_loader import load_config, build_model
+    from models.device import get_device
 except ImportError:
     print("❌ 错误：在当前目录下找不到 models/transformer.py，请确保在项目根目录下运行脚本")
     exit()
@@ -115,7 +116,7 @@ def train():
         model.load_state_dict(checkpoint)
         print("✅ 直接加载权重成功")
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = get_device()  # 自动适配 CUDA / DirectML(AMD) / CPU
     model = model.to(device)
     model.train()
     print(f"使用设备: {device}")
@@ -129,7 +130,7 @@ def train():
     # 忽略 padding 部分的 loss
     criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id)
     
-    num_epochs = 200
+    num_epochs = 10  # 原 200 轮过多，改为 10 轮
     print(f"\n开始微调，共 {num_epochs} 个epoch...\n")
     
     best_loss = float('inf')

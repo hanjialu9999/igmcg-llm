@@ -2,3 +2,9 @@ torch==2.0.0
 pyyaml==6.0
 numpy==1.24.3
 tqdm>=4.65.0
+
+# ===== 可选：AMD / Intel 核显或独显（Windows）=====
+# 安装 torch-directml 后，程序会自动通过 DirectML 后端使用核显/独显，
+# 无需改任何代码（device 设为 "auto" 即可）。
+# 注意：torch-directml 需要兼容的 Python(3.10/3.11) 与 torch(>=2.0,<2.2) 版本。
+#   pip install torch-directml

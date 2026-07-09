@@ -11,9 +11,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from models.transformer import TransformerModel
 from models.data_utils import Vocabulary
+from models.device import get_device
 
 # Load model and vocab
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = get_device()
 print(f"Device: {device}")
 
 model_path = 'checkpoints/final_model.pt'
