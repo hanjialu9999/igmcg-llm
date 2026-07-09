@@ -97,71 +97,81 @@ def train():
     model_path = "checkpoints/best_finetuned_model.pt"
     vocab_path = "checkpoints/vocab.json"
     data_folder = "data/datasets"
-    
+
     print("加载tokenizer...")
     tokenizer = SimpleTokenizer(vocab_path)
-    
+
     # 模型结构统一从 config.yaml 读取，避免与训练脚本不一致
     print("初始化 Transformer 结构...")
     config = load_config()
     model = build_model(config)
-    
-    # 加载权重
-    print("加载权重参数...")
-    checkpoint = torch.load(model_path, map_location='cpu')
-    if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
-        model.load_state_dict(checkpoint['model_state_dict'])
-        print("✅ 从 checkpoint 成功加载权重")
-    else:
-        model.load_state_dict(checkpoint)
-        print("✅ 直接加载权重成功")
+
+    # 加载权重：优先用微调后的模型；不存在则回退到预训练底座 final_model.pt
+    # （支持「先预训练 base 再微调」的两阶段流程）；都缺失则从随机初始化开始
+    if not os.path.exists(model_path):
+        fallback = "checkpoints/final_model.pt"
+        if os.path.exists(fallback):
+            print(f"未找到 {model_path}，改用预训练底座 {fallback}")
+            model_path = fallback
+        else:
+            print(f"⚠️ 权重文件不存在（{model_path} / {fallback}），将从随机初始化开始训练")
+
+    if os.path.exists(model_path):
+        print("加载权重参数...")
+        checkpoint = torch.load(model_path, map_location='cpu')
+        if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+            model.load_state_dict(checkpoint['model_state_dict'])
+            print("✅ 从 checkpoint 成功加载权重")
+        else:
+            model.load_state_dict(checkpoint)
+            print("✅ 直接加载权重成功")
 
     device = get_device()  # 自动适配 CUDA / DirectML(AMD) / CPU
     apply_cpu_threads(config['training'].get('cpu_threads'))
     model = model.to(device)
     model.train()
     print(f"使用设备: {device}")
-    
+
     # 准备数据 (max_length 设为 64，与 config 一致)
     dataset = QADataset(data_folder, tokenizer, max_length=64)
     # batch_size 设为 16，显存如果炸了就改小
     dataloader = DataLoader(dataset, batch_size=16, shuffle=True)
-    
+
     optimizer = AdamW(model.parameters(), lr=2e-5)
     # 忽略 padding 部分的 loss
     criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id)
-    
+
     num_epochs = 10  # 原 200 轮过多，改为 10 轮
     print(f"\n开始微调，共 {num_epochs} 个epoch...\n")
-    
+
     best_loss = float('inf')
-    
+
     for epoch in range(num_epochs):
         total_loss = 0
         progress_bar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{num_epochs}")
-        
+
         for batch in progress_bar:
             input_ids = batch['input_ids'].to(device)
             target_ids = batch['target_ids'].to(device)
-            
+
             optimizer.zero_grad()
-            
+
             # 前向传播 (batch, 64, vocab_size)
             outputs = model(input_ids)
-            
+
             # 计算loss: 需要把 outputs 展平为 (batch*64, vocab_size)
             # target_ids 展平为 (batch*64)
             loss = criterion(outputs.view(-1, outputs.size(-1)), target_ids.view(-1))
-            
+
             loss.backward()
             optimizer.step()
-            
+
             total_loss += loss.item()
             progress_bar.set_postfix({'loss': f'{loss.item():.4f}'})
-        
+
         avg_loss = total_loss / len(dataloader)
         print(f"Epoch {epoch+1} 完成，平均Loss: {avg_loss:.4f}")
-        
+
         # 保存最佳权重
         if avg_loss < best_loss:
             best_loss = avg_loss
