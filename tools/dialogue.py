@@ -3,6 +3,11 @@
 连续对话脚本 - 支持多轮对话交互
 """
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import torch
 import json
 from models.transformer import TransformerModel

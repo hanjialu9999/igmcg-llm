@@ -6,7 +6,7 @@ from models.transformer import TransformerModel
 from models.config_loader import load_config as load_model_config, build_model, load_vocab
 
 # ===== 1. 环境配置 =====
-MODEL_PATH = "best_finetuned_model.pt" 
+MODEL_PATH = "checkpoints/best_finetuned_model.pt" 
 VOCAB_PATH = "checkpoints/vocab.json"
 CONFIG_PATH = "chat_config.json"
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

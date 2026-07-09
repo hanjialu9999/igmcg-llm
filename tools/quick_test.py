@@ -3,6 +3,9 @@ import torch
 import json
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from models.config_loader import load_config, build_model, load_vocab
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

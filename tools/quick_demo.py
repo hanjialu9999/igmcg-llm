@@ -3,6 +3,11 @@
 快速体验脚本 - 快速查看对话效果（配置可调）
 """
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import torch
 import json
 from models.transformer import TransformerModel

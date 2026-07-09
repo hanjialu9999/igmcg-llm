@@ -6,6 +6,7 @@ Top-K Tuning Script - 系统性地测试不同top-k值找最优点
 """
 import sys
 import io
+from pathlib import Path
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 import torch

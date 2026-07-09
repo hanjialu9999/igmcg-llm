@@ -6,10 +6,13 @@ Based on controlled parameter tuning experiments
 """
 import sys
 import io
+from pathlib import Path
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 import torch
 import json
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
 from models.config_loader import load_config, build_model, load_vocab
 
 vocab = load_vocab('checkpoints/vocab.json')

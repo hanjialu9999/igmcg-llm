@@ -92,8 +92,8 @@ class QADataset(Dataset):
 
 # ===== 3. 微调训练 =====
 def train():
-    # 路径设置（相对路径，兼容任意项目位置）
-    model_path = "best_finetuned_model.pt"
+    # 路径设置（统一存入 checkpoints/，避免模型文件散落各处）
+    model_path = "checkpoints/best_finetuned_model.pt"
     vocab_path = "checkpoints/vocab.json"
     data_folder = "data/datasets"
     
@@ -163,8 +163,8 @@ def train():
         # 保存最佳权重
         if avg_loss < best_loss:
             best_loss = avg_loss
-            torch.save(model.state_dict(), "best_finetuned_model.pt")
-            print(f"✨ 已更新最佳权重文件")
+            torch.save(model.state_dict(), "checkpoints/best_finetuned_model.pt")
+            print(f"✨ 已更新最佳权重文件: checkpoints/best_finetuned_model.pt")
 
     print("\n🎉 微调任务圆满成功！")
 
