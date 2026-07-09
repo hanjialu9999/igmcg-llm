@@ -1,0 +1,8 @@
+{
+    "temperature": 0.65,
+    "top_k": 40,
+    "repetition_penalty": 2,
+    "min_new_tokens": 10,
+    "max_new_tokens": 100,
+    "context_rounds": 3
+}

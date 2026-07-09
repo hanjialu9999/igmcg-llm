@@ -1,0 +1,614 @@
+What is biology?
+Biology is the scientific study of living organisms and life processes.
+What is a cell?
+A cell is the basic structural and functional unit of all living organisms.
+What is a prokaryotic cell?
+A prokaryotic cell is a cell without a membrane-bound nucleus.
+What is a eukaryotic cell?
+A eukaryotic cell is a cell with a membrane-bound nucleus and organelles.
+What is DNA?
+DNA is deoxyribonucleic acid that carries genetic information in living organisms.
+What is RNA?
+RNA is ribonucleic acid that plays roles in protein synthesis and gene regulation.
+What is a gene?
+A gene is a segment of DNA that codes for a specific protein or RNA molecule.
+What is a chromosome?
+A chromosome is a structure containing tightly coiled DNA and proteins.
+What is mitosis?
+Mitosis is cell division producing two identical daughter cells.
+What is meiosis?
+Meiosis is cell division producing four genetically different gametes with half the chromosome number.
+What is photosynthesis?
+Photosynthesis is the process plants use to convert light energy into chemical energy.
+What is cellular respiration?
+Cellular respiration is the process cells use to break down glucose and produce ATP.
+What is ATP?
+ATP is adenosine triphosphate, the primary energy currency of cells.
+What is an enzyme?
+An enzyme is a biological catalyst that speeds up chemical reactions.
+What is a protein?
+A protein is a large molecule made of amino acids that performs various functions in organisms.
+What are amino acids?
+Amino acids are organic compounds that are the building blocks of proteins.
+What is a lipid?
+A lipid is a hydrophobic molecule including fats, oils, and steroids.
+What is a carbohydrate?
+A carbohydrate is an organic compound made of carbon, hydrogen, and oxygen used for energy and structure.
+What is a nucleic acid?
+A nucleic acid is a polymer made of nucleotides including DNA and RNA.
+What is the cell membrane?
+The cell membrane is a phospholipid bilayer that surrounds and protects the cell.
+What is the nucleus?
+The nucleus is the membrane-bound organelle containing the cell's genetic material.
+What are mitochondria?
+Mitochondria are organelles that produce ATP through cellular respiration.
+What are chloroplasts?
+Chloroplasts are organelles in plant cells where photosynthesis occurs.
+What is the endoplasmic reticulum?
+The endoplasmic reticulum is an organelle network involved in protein and lipid synthesis.
+What is the Golgi apparatus?
+The Golgi apparatus modifies, packages, and transports proteins and lipids.
+What are ribosomes?
+Ribosomes are cellular structures where protein synthesis occurs.
+What are lysosomes?
+Lysosomes are organelles containing digestive enzymes that break down cellular waste.
+What is the cytoplasm?
+The cytoplasm is the gel-like substance filling the cell between the membrane and nucleus.
+What is the cytoskeleton?
+The cytoskeleton is a network of protein filaments providing cell structure and movement.
+What is osmosis?
+Osmosis is the diffusion of water across a semi-permeable membrane.
+What is diffusion?
+Diffusion is the movement of molecules from high to low concentration.
+What is active transport?
+Active transport is the movement of molecules against a concentration gradient using energy.
+What is passive transport?
+Passive transport is the movement of molecules down a concentration gradient without energy.
+What is homeostasis?
+Homeostasis is the maintenance of stable internal conditions in an organism.
+What is metabolism?
+Metabolism is the sum of all chemical reactions occurring in an organism.
+What is an ecosystem?
+An ecosystem is a community of organisms interacting with their physical environment.
+What is a food chain?
+A food chain is a linear sequence showing how energy flows from one organism to another.
+What is a food web?
+A food web is a complex network of interconnected food chains in an ecosystem.
+What is a producer?
+A producer is an organism that makes its own food through photosynthesis or chemosynthesis.
+What is a consumer?
+A consumer is an organism that obtains energy by eating other organisms.
+What is a decomposer?
+A decomposer is an organism that breaks down dead organic matter.
+What is a herbivore?
+A herbivore is an animal that eats only plants.
+What is a carnivore?
+A carnivore is an animal that eats only other animals.
+What is an omnivore?
+An omnivore is an animal that eats both plants and animals.
+What is a species?
+A species is a group of organisms that can interbreed and produce fertile offspring.
+What is taxonomy?
+Taxonomy is the science of classifying and naming organisms.
+What are the three domains of life?
+The three domains are Bacteria, Archaea, and Eukarya.
+What are the five kingdoms of life?
+The five kingdoms are Monera, Protista, Fungi, Plantae, and Animalia.
+What is evolution?
+Evolution is the change in heritable characteristics of populations over successive generations.
+What is natural selection?
+Natural selection is the process where organisms better adapted to their environment survive and reproduce more.
+Who proposed the theory of evolution?
+Charles Darwin proposed the theory of evolution by natural selection.
+What is adaptation?
+Adaptation is a trait that increases an organism's fitness in its environment.
+What is fitness in biology?
+Fitness is an organism's ability to survive and reproduce in its environment.
+What is a mutation?
+A mutation is a change in the DNA sequence of a gene.
+What is genetic variation?
+Genetic variation is the diversity in gene frequencies within a population.
+What is heredity?
+Heredity is the passing of traits from parents to offspring through genes.
+What is Mendel's law of segregation?
+The law of segregation states that allele pairs separate during gamete formation.
+What is Mendel's law of independent assortment?
+Independent assortment states that genes for different traits are inherited independently.
+What is a genotype?
+A genotype is an organism's genetic makeup.
+What is a phenotype?
+A phenotype is an organism's observable characteristics.
+What is a dominant allele?
+A dominant allele is expressed when at least one copy is present.
+What is a recessive allele?
+A recessive allele is only expressed when two copies are present.
+What is incomplete dominance?
+Incomplete dominance occurs when neither allele is completely dominant producing a blended phenotype.
+What is codominance?
+Codominance occurs when both alleles are fully expressed in the phenotype.
+What is a heterozygote?
+A heterozygote has two different alleles for a gene.
+What is a homozygote?
+A homozygote has two identical alleles for a gene.
+What is a Punnett square?
+A Punnett square is a diagram used to predict offspring genotypes.
+What is linkage in genetics?
+Linkage is the tendency of genes located close together on a chromosome to be inherited together.
+What is crossing over?
+Crossing over is the exchange of genetic material between homologous chromosomes during meiosis.
+What is genetic recombination?
+Genetic recombination is the production of offspring with new combinations of genes.
+What is sex-linked inheritance?
+Sex-linked inheritance involves genes located on sex chromosomes.
+What are autosomes?
+Autosomes are chromosomes that are not sex chromosomes.
+What is a karyotype?
+A karyotype is a display of all chromosomes in a cell arranged by size and shape.
+What is polyploidy?
+Polyploidy is having more than two complete sets of chromosomes.
+What is aneuploidy?
+Aneuploidy is having an abnormal number of chromosomes.
+What is Down syndrome?
+Down syndrome is a genetic disorder caused by an extra copy of chromosome twenty-one.
+What is a pedigree?
+A pedigree is a diagram showing the inheritance of a trait through generations of a family.
+What is transcription?
+Transcription is the synthesis of RNA from a DNA template.
+What is translation?
+Translation is the synthesis of proteins from an mRNA template.
+What is the central dogma of molecular biology?
+The central dogma describes information flow from DNA to RNA to protein.
+What is a codon?
+A codon is a three-nucleotide sequence that codes for a specific amino acid.
+What is the genetic code?
+The genetic code is the set of rules by which DNA sequences are translated into proteins.
+What is a start codon?
+A start codon is AUG that signals where translation should begin.
+What are stop codons?
+Stop codons are UAA, UAG, and UGA that signal where translation should end.
+What is messenger RNA?
+Messenger RNA carries genetic information from DNA to ribosomes.
+What is transfer RNA?
+Transfer RNA brings amino acids to ribosomes during protein synthesis.
+What is ribosomal RNA?
+Ribosomal RNA is a structural and catalytic component of ribosomes.
+What is a promoter?
+A promoter is a DNA region where RNA polymerase binds to initiate transcription.
+What is RNA polymerase?
+RNA polymerase is the enzyme that synthesizes RNA from a DNA template.
+What is splicing?
+Splicing is the removal of introns and joining of exons in pre-mRNA.
+What are introns?
+Introns are non-coding sequences removed from pre-mRNA during splicing.
+What are exons?
+Exons are coding sequences that remain in mature mRNA after splicing.
+What is alternative splicing?
+Alternative splicing produces different proteins from the same gene by including different exons.
+What is gene expression?
+Gene expression is the process by which genetic information is used to synthesize functional products.
+What is gene regulation?
+Gene regulation controls when and how much a gene is expressed.
+What are transcription factors?
+Transcription factors are proteins that regulate gene transcription by binding to DNA.
+What is an operon?
+An operon is a cluster of genes under control of a single promoter in prokaryotes.
+What is the lac operon?
+The lac operon regulates genes for lactose metabolism in bacteria.
+What is epigenetics?
+Epigenetics studies heritable changes in gene expression without changes to DNA sequence.
+What is DNA methylation?
+DNA methylation is the addition of methyl groups to DNA that can silence gene expression.
+What is histone modification?
+Histone modification alters chromatin structure affecting gene accessibility.
+What is chromatin?
+Chromatin is the complex of DNA and proteins that makes up chromosomes.
+What is heterochromatin?
+Heterochromatin is tightly packed chromatin that is transcriptionally inactive.
+What is euchromatin?
+Euchromatin is loosely packed chromatin that is transcriptionally active.
+What is DNA replication?
+DNA replication is the process of copying DNA before cell division.
+What is semiconservative replication?
+Semiconservative replication produces two DNA molecules each with one old and one new strand.
+What is DNA polymerase?
+DNA polymerase is the enzyme that synthesizes new DNA strands.
+What is a replication fork?
+A replication fork is the Y-shaped structure where DNA strands separate during replication.
+What is a leading strand?
+The leading strand is synthesized continuously in the direction of replication fork movement.
+What is a lagging strand?
+The lagging strand is synthesized discontinuously in short fragments away from fork movement.
+What are Okazaki fragments?
+Okazaki fragments are short DNA segments synthesized on the lagging strand.
+What is DNA ligase?
+DNA ligase is the enzyme that joins Okazaki fragments together.
+What is helicase?
+Helicase is the enzyme that unwinds the DNA double helix during replication.
+What is primase?
+Primase is the enzyme that synthesizes RNA primers needed to start DNA synthesis.
+What is a telomere?
+A telomere is a protective cap of repetitive DNA at the end of chromosomes.
+What is telomerase?
+Telomerase is an enzyme that adds telomeric sequences to chromosome ends.
+What is PCR?
+PCR is polymerase chain reaction, a technique to amplify specific DNA sequences.
+What is gel electrophoresis?
+Gel electrophoresis separates DNA fragments by size using an electric field.
+What is DNA sequencing?
+DNA sequencing determines the precise order of nucleotides in a DNA molecule.
+What is recombinant DNA?
+Recombinant DNA is DNA formed by combining sequences from different sources.
+What is a plasmid?
+A plasmid is a small circular DNA molecule in bacteria used in genetic engineering.
+What is a restriction enzyme?
+A restriction enzyme cuts DNA at specific recognition sequences.
+What is gene cloning?
+Gene cloning is the process of making multiple copies of a gene.
+What is transformation in bacteria?
+Transformation is the uptake of foreign DNA by bacterial cells.
+What is CRISPR?
+CRISPR is a gene-editing technology that allows precise modification of DNA sequences.
+What is genome?
+A genome is the complete set of genetic material in an organism.
+What is the Human Genome Project?
+The Human Genome Project mapped all human genes and their DNA sequences.
+What is genomics?
+Genomics is the study of entire genomes including gene interactions.
+What is proteomics?
+Proteomics is the study of all proteins expressed by a genome.
+What is bioinformatics?
+Bioinformatics uses computational tools to analyze biological data.
+What is a transgenic organism?
+A transgenic organism contains DNA from another species.
+What is gene therapy?
+Gene therapy treats disease by introducing corrected genes into patient cells.
+What is a stem cell?
+A stem cell can divide and differentiate into various specialized cell types.
+What is cellular differentiation?
+Cellular differentiation is the process by which cells become specialized.
+What is apoptosis?
+Apoptosis is programmed cell death.
+What is the cell cycle?
+The cell cycle is the series of events cells go through from formation to division.
+What are the phases of the cell cycle?
+The phases are G1, S, G2, and M phase.
+What is interphase?
+Interphase includes G1, S, and G2 phases when the cell grows and replicates DNA.
+What is the G1 phase?
+G1 phase is when the cell grows and prepares for DNA synthesis.
+What is the S phase?
+S phase is when DNA replication occurs.
+What is the G2 phase?
+G2 phase is when the cell prepares for mitosis.
+What is the M phase?
+M phase includes mitosis and cytokinesis when the cell divides.
+What are cyclins?
+Cyclins are proteins that regulate progression through the cell cycle.
+What are checkpoints in the cell cycle?
+Checkpoints are control points that ensure proper cell cycle progression.
+What is cancer?
+Cancer is uncontrolled cell division resulting from mutations in genes regulating the cell cycle.
+What is a tumor suppressor gene?
+A tumor suppressor gene is a gene that normally prevents uncontrolled cell growth.
+What is an oncogene?
+An oncogene is a mutated gene that promotes cancer development.
+What is metastasis?
+Metastasis is the spread of cancer cells from the original tumor to other body parts.
+What is a carcinogen?
+A carcinogen is a substance that can cause cancer.
+What is tissue?
+Tissue is a group of similar cells working together to perform a function.
+What are the four main tissue types?
+The four main types are epithelial, connective, muscle, and nervous tissue.
+What is epithelial tissue?
+Epithelial tissue covers body surfaces and lines organs and cavities.
+What is connective tissue?
+Connective tissue supports, binds, and protects other tissues and organs.
+What is muscle tissue?
+Muscle tissue is specialized for contraction and movement.
+What is nervous tissue?
+Nervous tissue transmits electrical signals throughout the body.
+What is an organ?
+An organ is a structure composed of multiple tissue types performing specific functions.
+What is an organ system?
+An organ system is a group of organs working together to perform major body functions.
+What is the circulatory system?
+The circulatory system transports blood, nutrients, oxygen, and waste throughout the body.
+What is the respiratory system?
+The respiratory system enables gas exchange between the body and environment.
+What is the digestive system?
+The digestive system breaks down food and absorbs nutrients.
+What is the nervous system?
+The nervous system coordinates body activities through electrical signals.
+What is the endocrine system?
+The endocrine system regulates body functions through hormones.
+What is the immune system?
+The immune system defends the body against pathogens and disease.
+What is the skeletal system?
+The skeletal system provides structure, support, and protection for the body.
+What is the muscular system?
+The muscular system enables body movement and maintains posture.
+What is the urinary system?
+The urinary system removes waste and regulates water and electrolyte balance.
+What is the reproductive system?
+The reproductive system produces gametes and enables reproduction.
+What is a hormone?
+A hormone is a chemical messenger secreted by endocrine glands that regulates body functions.
+What is insulin?
+Insulin is a hormone that regulates blood glucose levels.
+What is testosterone?
+Testosterone is the primary male sex hormone.
+What is estrogen?
+Estrogen is a primary female sex hormone.
+What is a neuron?
+A neuron is a specialized cell that transmits electrical signals in the nervous system.
+What is a synapse?
+A synapse is the junction between two neurons where signals are transmitted.
+What is a neurotransmitter?
+A neurotransmitter is a chemical messenger that transmits signals across synapses.
+What is the central nervous system?
+The central nervous system consists of the brain and spinal cord.
+What is the peripheral nervous system?
+The peripheral nervous system consists of nerves outside the brain and spinal cord.
+What is the autonomic nervous system?
+The autonomic nervous system controls involuntary body functions.
+What is the somatic nervous system?
+The somatic nervous system controls voluntary movements.
+What is the sympathetic nervous system?
+The sympathetic nervous system prepares the body for stress or emergency.
+What is the parasympathetic nervous system?
+The parasympathetic nervous system promotes rest and digestion.
+What is an action potential?
+An action potential is a rapid electrical signal transmitted along a neuron.
+What is myelin?
+Myelin is an insulating layer around nerve fibers that speeds signal transmission.
+What is a reflex?
+A reflex is an automatic response to a stimulus.
+What is innate immunity?
+Innate immunity is the nonspecific defense system present from birth.
+What is adaptive immunity?
+Adaptive immunity is the specific immune response that develops after pathogen exposure.
+What is an antibody?
+An antibody is a protein produced by B cells that binds to specific antigens.
+What is an antigen?
+An antigen is a molecule that triggers an immune response.
+What are B cells?
+B cells are lymphocytes that produce antibodies in the adaptive immune response.
+What are T cells?
+T cells are lymphocytes that coordinate immune responses and kill infected cells.
+What is a vaccine?
+A vaccine stimulates immunity by exposing the body to weakened or inactive pathogens.
+What is inflammation?
+Inflammation is a localized immune response to injury or infection.
+What is an allergy?
+An allergy is an overreaction of the immune system to a harmless substance.
+What is autoimmune disease?
+An autoimmune disease occurs when the immune system attacks the body's own cells.
+What is HIV?
+HIV is human immunodeficiency virus that attacks the immune system.
+What is a pathogen?
+A pathogen is an organism that causes disease.
+What is a virus?
+A virus is a non-living infectious agent that requires a host cell to replicate.
+What is a bacterium?
+A bacterium is a single-celled prokaryotic microorganism.
+What is a fungus?
+A fungus is a eukaryotic organism that absorbs nutrients from organic matter.
+What is a parasite?
+A parasite is an organism that lives on or in a host and benefits at the host's expense.
+What is symbiosis?
+Symbiosis is a close relationship between two different species.
+What is mutualism?
+Mutualism is a symbiotic relationship where both species benefit.
+What is commensalism?
+Commensalism is a relationship where one species benefits and the other is unaffected.
+What is parasitism?
+Parasitism is a relationship where one species benefits at the expense of another.
+What is predation?
+Predation is an interaction where one organism kills and consumes another.
+What is competition?
+Competition occurs when organisms vie for the same limited resources.
+What is a niche?
+A niche is the role and position a species has in its environment.
+What is a habitat?
+A habitat is the physical environment where an organism lives.
+What is population?
+A population is a group of individuals of the same species living in the same area.
+What is population density?
+Population density is the number of individuals per unit area or volume.
+What is carrying capacity?
+Carrying capacity is the maximum population size an environment can sustain.
+What is exponential growth?
+Exponential growth is unlimited population increase when resources are abundant.
+What is logistic growth?
+Logistic growth is population increase that levels off as it approaches carrying capacity.
+What is a limiting factor?
+A limiting factor is a resource or condition that restricts population growth.
+What is succession?
+Succession is the gradual change in species composition in an ecosystem over time.
+What is primary succession?
+Primary succession occurs in areas with no previous soil such as bare rock.
+What is secondary succession?
+Secondary succession occurs in areas where soil remains after disturbance.
+What is a climax community?
+A climax community is a stable ecosystem that represents the endpoint of succession.
+What is biodiversity?
+Biodiversity is the variety of life forms in an ecosystem or on Earth.
+What is species richness?
+Species richness is the number of different species in an area.
+What is species evenness?
+Species evenness is how equally abundant different species are in an area.
+What is extinction?
+Extinction is the complete disappearance of a species.
+What is an endangered species?
+An endangered species is at high risk of extinction in the near future.
+What is conservation biology?
+Conservation biology studies how to protect and restore biodiversity.
+What is a keystone species?
+A keystone species has a disproportionately large effect on its ecosystem.
+What is an invasive species?
+An invasive species is a non-native organism that causes harm in a new environment.
+What is biogeochemical cycle?
+A biogeochemical cycle is the movement of elements through living and nonliving components of ecosystems.
+What is the carbon cycle?
+The carbon cycle describes the movement of carbon through Earth's systems.
+What is the nitrogen cycle?
+The nitrogen cycle describes the movement of nitrogen through Earth's systems.
+What is nitrogen fixation?
+Nitrogen fixation converts atmospheric nitrogen into forms usable by organisms.
+What is the water cycle?
+The water cycle describes the continuous movement of water through evaporation, condensation, and precipitation.
+What is primary productivity?
+Primary productivity is the rate at which producers convert energy into organic matter.
+What is gross primary productivity?
+Gross primary productivity is the total amount of energy captured by producers.
+What is net primary productivity?
+Net primary productivity is energy available to consumers after producer respiration.
+What is biomass?
+Biomass is the total mass of living organisms in a given area.
+What is trophic level?
+A trophic level is a position in a food chain or web.
+What is energy pyramid?
+An energy pyramid shows energy flow through trophic levels with decreasing amounts at higher levels.
+What is the ten percent rule?
+The ten percent rule states that only about ten percent of energy transfers between trophic levels.
+What is bioaccumulation?
+Bioaccumulation is the buildup of substances in an organism over its lifetime.
+What is biomagnification?
+Biomagnification is the increasing concentration of substances at higher trophic levels.
+What is eutrophication?
+Eutrophication is excessive nutrient enrichment in water bodies causing algal blooms.
+What is ecological footprint?
+Ecological footprint measures human demand on natural resources.
+What is speciation?
+Speciation is the formation of new species from existing populations.
+What is allopatric speciation?
+Allopatric speciation occurs when populations are geographically separated.
+What is sympatric speciation?
+Sympatric speciation occurs without geographic separation within the same area.
+What is reproductive isolation?
+Reproductive isolation prevents interbreeding between populations.
+What is prezygotic isolation?
+Prezygotic isolation prevents fertilization from occurring.
+What is postzygotic isolation?
+Postzygotic isolation reduces hybrid viability or fertility after fertilization.
+What is gene flow?
+Gene flow is the transfer of alleles between populations through migration.
+What is genetic drift?
+Genetic drift is random changes in allele frequencies in small populations.
+What is the bottleneck effect?
+The bottleneck effect is genetic drift after a drastic population reduction.
+What is the founder effect?
+The founder effect is genetic drift when a new population is established by few individuals.
+What is Hardy-Weinberg equilibrium?
+Hardy-Weinberg equilibrium describes allele frequencies in non-evolving populations.
+What are the conditions for Hardy-Weinberg equilibrium?
+The conditions are no mutation, random mating, no gene flow, large population, and no selection.
+What is sexual selection?
+Sexual selection is selection based on mating success rather than survival.
+What is convergent evolution?
+Convergent evolution produces similar traits in unrelated species due to similar environments.
+What is divergent evolution?
+Divergent evolution produces different traits in related species due to different environments.
+What is coevolution?
+Coevolution is reciprocal evolutionary changes in interacting species.
+What is adaptive radiation?
+Adaptive radiation is rapid diversification of a lineage into multiple species filling different niches.
+What is molecular clock?
+A molecular clock estimates evolutionary time based on mutation rates.
+What is phylogeny?
+Phylogeny is the evolutionary history and relationships among organisms.
+What is a cladogram?
+A cladogram is a diagram showing evolutionary relationships based on shared derived characteristics.
+What is a common ancestor?
+A common ancestor is an ancestral organism shared by two or more descendant species.
+What is homology?
+Homology is similarity due to shared ancestry.
+What is analogy?
+Analogy is similarity due to convergent evolution rather than common ancestry.
+What is vestigial structure?
+A vestigial structure is a reduced remnant of a feature that was functional in ancestors.
+What is biogeography?
+Biogeography studies the geographic distribution of species.
+What is comparative anatomy?
+Comparative anatomy studies similarities and differences in organism structures.
+What is comparative embryology?
+Comparative embryology studies similarities in embryonic development across species.
+What is molecular evolution?
+Molecular evolution studies changes in DNA and protein sequences over time.
+What is the endosymbiotic theory?
+The endosymbiotic theory proposes that mitochondria and chloroplasts originated from symbiotic bacteria.
+What is the RNA world hypothesis?
+The RNA world hypothesis proposes that RNA was the primary genetic material in early life.
+What is abiogenesis?
+Abiogenesis is the origin of life from non-living matter.
+What are the three domains based on?
+The three domains are based on ribosomal RNA sequences and cellular characteristics.
+What distinguishes Archaea from Bacteria?
+Archaea have different cell wall composition and unique membrane lipids compared to Bacteria.
+What is horizontal gene transfer?
+Horizontal gene transfer is the movement of genetic material between organisms other than parent to offspring.
+What is punctuated equilibrium?
+Punctuated equilibrium proposes that evolution occurs in rapid bursts followed by long stable periods.
+What is gradualism in evolution?
+Gradualism proposes that evolution occurs through slow continuous changes.
+What is microevolution?
+Microevolution is small-scale changes in allele frequencies within populations.
+What is macroevolution?
+Macroevolution is large-scale evolutionary changes resulting in new species or higher taxa.
+What is artificial selection?
+Artificial selection is selective breeding by humans to develop desired traits.
+What is domestication?
+Domestication is the process of adapting wild organisms for human use.
+What is a biological species concept?
+The biological species concept defines species as groups capable of interbreeding and producing fertile offspring.
+What is sexual reproduction?
+Sexual reproduction combines genetic material from two parents producing genetically diverse offspring.
+What is asexual reproduction?
+Asexual reproduction produces genetically identical offspring from a single parent.
+What is parthenogenesis?
+Parthenogenesis is asexual reproduction where eggs develop without fertilization.
+What is binary fission?
+Binary fission is asexual reproduction in prokaryotes where one cell divides into two.
+What is budding?
+Budding is asexual reproduction where a new organism grows from the parent.
+What is fragmentation?
+Fragmentation is asexual reproduction where a parent breaks into pieces that develop into new organisms.
+What is regeneration?
+Regeneration is the regrowth of lost body parts.
+What is hermaphroditism?
+Hermaphroditism is having both male and female reproductive organs.
+What is fertilization?
+Fertilization is the fusion of sperm and egg to form a zygote.
+What is a zygote?
+A zygote is the diploid cell formed by fertilization of gametes.
+What is an embryo?
+An embryo is an organism in early developmental stages after fertilization.
+What is a fetus?
+A fetus is a developing human from eight weeks after fertilization until birth.
+What is gastrulation?
+Gastrulation is embryonic development forming three germ layers.
+What are the three germ layers?
+The three germ layers are ectoderm, mesoderm, and endoderm.
+What forms from ectoderm?
+Ectoderm forms the nervous system and outer skin.
+What forms from mesoderm?
+Mesoderm forms muscles, bones, and circulatory system.
+What forms from endoderm?
+Endoderm forms the digestive tract and internal organs.
+What is metamorphosis?
+Metamorphosis is a dramatic change in body form during development.
+What is complete metamorphosis?
+Complete metamorphosis includes egg, larva, pupa, and adult stages.
+What is incomplete metamorphosis?
+Incomplete metamorphosis includes egg, nymph, and adult stages without a pupal stage.
+What is senescence?
+Senescence is biological aging and deterioration of function over time.
+What is the Hayflick limit?
+The Hayflick limit is the maximum number of times a cell can divide before senescence.
+What is oxidative stress?
+Oxidative stress is cellular damage caused by reactive oxygen species.
+What is a free radical?
+A free radical is a molecule with unpaired electrons that can damage cells.
+What is an antioxidant?
+An antioxidant is a molecule that neutralizes free radicals preventing cellular damage.

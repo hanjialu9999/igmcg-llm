@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Model checkpoints & large artifacts (do NOT commit)
+*.pt
+*.pth
+*.ckpt
+checkpoints/
+best_finetuned_model.pt
+
+# Logs
+*.log
+logs/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp

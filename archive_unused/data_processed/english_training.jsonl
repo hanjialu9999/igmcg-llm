@@ -1,0 +1,503 @@
+{"question": "What is a noun?", "answer": "A noun is a word that names a person, place, thing, or idea."}
+{"question": "What is a verb?", "answer": "A verb is a word that expresses an action or state of being."}
+{"question": "What is an adjective?", "answer": "An adjective is a word that describes or modifies a noun."}
+{"question": "What is an adverb?", "answer": "An adverb is a word that modifies a verb, adjective, or another adverb."}
+{"question": "What is a pronoun?", "answer": "A pronoun is a word that replaces a noun to avoid repetition."}
+{"question": "What are the subject pronouns in English?", "answer": "The subject pronouns are I, you, he, she, it, we, and they."}
+{"question": "What are the object pronouns in English?", "answer": "The object pronouns are me, you, him, her, it, us, and them."}
+{"question": "What is a preposition?", "answer": "A preposition is a word that shows the relationship between a noun and other words in a sentence."}
+{"question": "What are common prepositions?", "answer": "Common prepositions include in, on, at, by, with, from, to, about, and for."}
+{"question": "What is a conjunction?", "answer": "A conjunction is a word that connects words, phrases, or clauses."}
+{"question": "What are coordinating conjunctions?", "answer": "Coordinating conjunctions are for, and, nor, but, or, yet, and so, remembered by the acronym FANBOYS."}
+{"question": "What is an article?", "answer": "An article is a word used before a noun to indicate whether it is specific or general."}
+{"question": "What are the articles in English?", "answer": "The articles in English are a, an, and the."}
+{"question": "When do we use the article a?", "answer": "We use a before words that begin with a consonant sound."}
+{"question": "When do we use the article an?", "answer": "We use an before words that begin with a vowel sound."}
+{"question": "When do we use the article the?", "answer": "We use the to refer to specific or previously mentioned nouns."}
+{"question": "What is the simple present tense?", "answer": "The simple present tense describes habitual actions, general truths, or current states."}
+{"question": "How do we form the simple present tense?", "answer": "For most verbs, use the base form, adding s or es for third person singular subjects."}
+{"question": "What is an example of simple present tense?", "answer": "She walks to school every day."}
+{"question": "What is the present continuous tense?", "answer": "The present continuous tense describes actions happening now or temporary situations."}
+{"question": "How do we form the present continuous tense?", "answer": "Use the verb to be in present tense plus the verb with ing ending."}
+{"question": "What is an example of present continuous tense?", "answer": "I am studying English right now."}
+{"question": "What is the simple past tense?", "answer": "The simple past tense describes completed actions in the past."}
+{"question": "How do we form the simple past tense for regular verbs?", "answer": "Add ed to the base form of regular verbs."}
+{"question": "What is an example of simple past tense?", "answer": "He visited Paris last summer."}
+{"question": "What are irregular verbs?", "answer": "Irregular verbs do not follow the standard ed pattern for past tense."}
+{"question": "Give three examples of irregular verbs.", "answer": "Go becomes went, eat becomes ate, and see becomes saw."}
+{"question": "What is the past continuous tense?", "answer": "The past continuous tense describes actions in progress at a specific time in the past."}
+{"question": "How do we form the past continuous tense?", "answer": "Use was or were plus the verb with ing ending."}
+{"question": "What is an example of past continuous tense?", "answer": "They were watching television when I called."}
+{"question": "What is the present perfect tense?", "answer": "The present perfect tense connects past actions to the present or describes experiences up to now."}
+{"question": "How do we form the present perfect tense?", "answer": "Use have or has plus the past participle of the verb."}
+{"question": "What is an example of present perfect tense?", "answer": "I have lived here for five years."}
+{"question": "What is the difference between present perfect and simple past?", "answer": "Present perfect connects to the present while simple past refers to a specific completed time."}
+{"question": "What is the past perfect tense?", "answer": "The past perfect tense describes an action completed before another past action."}
+{"question": "How do we form the past perfect tense?", "answer": "Use had plus the past participle of the verb."}
+{"question": "What is an example of past perfect tense?", "answer": "She had finished her homework before dinner started."}
+{"question": "What is the future simple tense?", "answer": "The future simple tense describes actions that will happen in the future."}
+{"question": "How do we form the future simple tense?", "answer": "Use will or shall plus the base form of the verb."}
+{"question": "What is an example of future simple tense?", "answer": "We will travel to Japan next year."}
+{"question": "What is another way to express future?", "answer": "We can use going to plus the base verb to express future plans or intentions."}
+{"question": "What is an example using going to?", "answer": "I am going to study abroad next semester."}
+{"question": "What is the future continuous tense?", "answer": "The future continuous tense describes actions that will be in progress at a specific future time."}
+{"question": "How do we form the future continuous tense?", "answer": "Use will be plus the verb with ing ending."}
+{"question": "What is an example of future continuous tense?", "answer": "This time tomorrow, I will be flying to London."}
+{"question": "What is the future perfect tense?", "answer": "The future perfect tense describes actions that will be completed before a specific future time."}
+{"question": "How do we form the future perfect tense?", "answer": "Use will have plus the past participle of the verb."}
+{"question": "What is an example of future perfect tense?", "answer": "By next month, she will have graduated from university."}
+{"question": "What is a modal verb?", "answer": "A modal verb expresses ability, possibility, permission, or obligation."}
+{"question": "What are common modal verbs?", "answer": "Common modal verbs include can, could, may, might, must, shall, should, will, and would."}
+{"question": "What does can express?", "answer": "Can expresses ability or possibility."}
+{"question": "What does must express?", "answer": "Must expresses strong obligation or logical conclusion."}
+{"question": "What does should express?", "answer": "Should expresses advice or recommendation."}
+{"question": "What is the difference between can and could?", "answer": "Can refers to present ability while could refers to past ability or polite requests."}
+{"question": "What is a sentence?", "answer": "A sentence is a group of words that expresses a complete thought."}
+{"question": "What is a simple sentence?", "answer": "A simple sentence contains one independent clause with a subject and verb."}
+{"question": "What is a compound sentence?", "answer": "A compound sentence contains two or more independent clauses joined by a conjunction."}
+{"question": "What is a complex sentence?", "answer": "A complex sentence contains one independent clause and at least one dependent clause."}
+{"question": "What is a compound-complex sentence?", "answer": "A compound-complex sentence contains at least two independent clauses and one dependent clause."}
+{"question": "What is an independent clause?", "answer": "An independent clause expresses a complete thought and can stand alone as a sentence."}
+{"question": "What is a dependent clause?", "answer": "A dependent clause cannot stand alone and depends on an independent clause for meaning."}
+{"question": "What is a subordinating conjunction?", "answer": "A subordinating conjunction introduces a dependent clause, such as because, although, if, when, and while."}
+{"question": "What is subject-verb agreement?", "answer": "Subject-verb agreement means the verb must match the subject in number and person."}
+{"question": "Give an example of subject-verb agreement.", "answer": "The dog runs in the park, but the dogs run in the park."}
+{"question": "What is a countable noun?", "answer": "A countable noun can be counted and has both singular and plural forms."}
+{"question": "What is an uncountable noun?", "answer": "An uncountable noun cannot be counted and typically has no plural form."}
+{"question": "Give examples of uncountable nouns.", "answer": "Water, rice, information, advice, and furniture are uncountable nouns."}
+{"question": "How do we express quantity with uncountable nouns?", "answer": "We use phrases like a glass of water, a piece of advice, or some information."}
+{"question": "What is the difference between much and many?", "answer": "Much is used with uncountable nouns while many is used with countable nouns."}
+{"question": "What is the difference between few and little?", "answer": "Few is used with countable nouns while little is used with uncountable nouns."}
+{"question": "What does a few mean?", "answer": "A few means some, indicating a small positive quantity of countable nouns."}
+{"question": "What does few mean?", "answer": "Few means not many, indicating a small negative quantity of countable nouns."}
+{"question": "What is the comparative form?", "answer": "The comparative form compares two things using er or more."}
+{"question": "How do we form comparatives with short adjectives?", "answer": "Add er to the adjective, such as taller, faster, or smarter."}
+{"question": "How do we form comparatives with long adjectives?", "answer": "Use more before the adjective, such as more beautiful or more interesting."}
+{"question": "What is the superlative form?", "answer": "The superlative form describes the extreme quality among three or more things."}
+{"question": "How do we form superlatives with short adjectives?", "answer": "Add est to the adjective and use the, such as the tallest or the fastest."}
+{"question": "How do we form superlatives with long adjectives?", "answer": "Use the most before the adjective, such as the most beautiful or the most interesting."}
+{"question": "What are irregular comparative and superlative forms?", "answer": "Good becomes better and best, bad becomes worse and worst, and far becomes farther and farthest."}
+{"question": "What is the difference between than and then?", "answer": "Than is used in comparisons while then refers to time or sequence."}
+{"question": "What is an infinitive?", "answer": "An infinitive is the base form of a verb usually preceded by to."}
+{"question": "What is a gerund?", "answer": "A gerund is a verb form ending in ing that functions as a noun."}
+{"question": "What is the difference between infinitive and gerund?", "answer": "Some verbs take infinitives, some take gerunds, and some take both with different meanings."}
+{"question": "Give an example of a verb followed by infinitive.", "answer": "I want to learn Spanish."}
+{"question": "Give an example of a verb followed by gerund.", "answer": "She enjoys reading books."}
+{"question": "What verb changes meaning with infinitive versus gerund?", "answer": "Stop followed by infinitive means stop one activity to do another, while stop followed by gerund means cease doing something."}
+{"question": "What is the passive voice?", "answer": "The passive voice emphasizes the action or receiver rather than the doer."}
+{"question": "How do we form the passive voice?", "answer": "Use the appropriate form of be plus the past participle of the main verb."}
+{"question": "What is an example of passive voice?", "answer": "The book was written by the author."}
+{"question": "When should we use passive voice?", "answer": "Use passive voice when the doer is unknown, unimportant, or obvious from context."}
+{"question": "What is active voice?", "answer": "Active voice emphasizes the subject performing the action."}
+{"question": "What is an example of active voice?", "answer": "The author wrote the book."}
+{"question": "What is direct speech?", "answer": "Direct speech quotes the exact words someone said using quotation marks."}
+{"question": "What is an example of direct speech?", "answer": "She said, I am tired."}
+{"question": "What is indirect speech?", "answer": "Indirect speech reports what someone said without using exact words or quotation marks."}
+{"question": "What is an example of indirect speech?", "answer": "She said that she was tired."}
+{"question": "What changes when converting direct to indirect speech?", "answer": "Pronouns, tense, and time expressions often change to match the reporting context."}
+{"question": "What is a relative clause?", "answer": "A relative clause provides additional information about a noun using relative pronouns."}
+{"question": "What are relative pronouns?", "answer": "Relative pronouns include who, whom, whose, which, and that."}
+{"question": "When do we use who?", "answer": "Use who for people as the subject of the relative clause."}
+{"question": "When do we use which?", "answer": "Use which for things or animals."}
+{"question": "When do we use that?", "answer": "Use that for people or things in defining relative clauses."}
+{"question": "What is a defining relative clause?", "answer": "A defining relative clause provides essential information to identify the noun and has no commas."}
+{"question": "What is a non-defining relative clause?", "answer": "A non-defining relative clause adds extra information and is set off by commas."}
+{"question": "What is a conditional sentence?", "answer": "A conditional sentence expresses a condition and its result using if clauses."}
+{"question": "What is the zero conditional?", "answer": "The zero conditional expresses general truths using present tense in both clauses."}
+{"question": "What is an example of zero conditional?", "answer": "If you heat water to one hundred degrees Celsius, it boils."}
+{"question": "What is the first conditional?", "answer": "The first conditional expresses real or likely future situations using if plus present tense and will."}
+{"question": "What is an example of first conditional?", "answer": "If it rains tomorrow, we will stay home."}
+{"question": "What is the second conditional?", "answer": "The second conditional expresses hypothetical or unlikely present or future situations."}
+{"question": "How do we form the second conditional?", "answer": "Use if plus past simple and would plus base verb."}
+{"question": "What is an example of second conditional?", "answer": "If I won the lottery, I would travel around the world."}
+{"question": "What is the third conditional?", "answer": "The third conditional expresses hypothetical past situations and their imagined results."}
+{"question": "How do we form the third conditional?", "answer": "Use if plus past perfect and would have plus past participle."}
+{"question": "What is an example of third conditional?", "answer": "If I had studied harder, I would have passed the exam."}
+{"question": "What is a phrasal verb?", "answer": "A phrasal verb combines a verb with a preposition or adverb to create a new meaning."}
+{"question": "Give three examples of phrasal verbs.", "answer": "Look after means take care of, give up means quit, and run into means meet unexpectedly."}
+{"question": "What is a separable phrasal verb?", "answer": "A separable phrasal verb allows an object to come between the verb and particle."}
+{"question": "What is an example of separable phrasal verb?", "answer": "Turn off the light or turn the light off."}
+{"question": "What is an inseparable phrasal verb?", "answer": "An inseparable phrasal verb keeps the verb and particle together."}
+{"question": "What is an example of inseparable phrasal verb?", "answer": "Look after my cat, not look my cat after."}
+{"question": "What is the difference between make and do?", "answer": "Make typically creates or produces something while do refers to actions or activities."}
+{"question": "Give examples using make.", "answer": "Make a cake, make a decision, make progress, and make a mistake."}
+{"question": "Give examples using do.", "answer": "Do homework, do exercise, do business, and do the dishes."}
+{"question": "What is the difference between say and tell?", "answer": "Say focuses on words spoken while tell requires an object indicating who receives the information."}
+{"question": "What is the difference between hear and listen?", "answer": "Hear is involuntary perception of sound while listen is intentional attention to sound."}
+{"question": "What is the difference between see, look, and watch?", "answer": "See is involuntary visual perception, look is directing eyes toward something, and watch is observing something over time."}
+{"question": "What is the difference between bring and take?", "answer": "Bring indicates movement toward the speaker while take indicates movement away from the speaker."}
+{"question": "What is the difference between borrow and lend?", "answer": "Borrow means receive temporarily while lend means give temporarily."}
+{"question": "What is the difference between its and it's?", "answer": "Its is the possessive form while it's is the contraction of it is or it has."}
+{"question": "What is the difference between your and you're?", "answer": "Your is the possessive form while you're is the contraction of you are."}
+{"question": "What is the difference between their, there, and they're?", "answer": "Their is possessive, there indicates location, and they're is the contraction of they are."}
+{"question": "What is the difference between to, too, and two?", "answer": "To is a preposition, too means also or excessively, and two is the number."}
+{"question": "What is the difference between affect and effect?", "answer": "Affect is usually a verb meaning to influence while effect is usually a noun meaning result."}
+{"question": "What is the difference between accept and except?", "answer": "Accept means to receive or agree while except means excluding or apart from."}
+{"question": "What is the difference between lose and loose?", "answer": "Lose is a verb meaning to misplace or fail to win while loose is an adjective meaning not tight."}
+{"question": "What is subject complement?", "answer": "A subject complement follows a linking verb and describes or renames the subject."}
+{"question": "What is object complement?", "answer": "An object complement follows and modifies or renames the direct object."}
+{"question": "What are linking verbs?", "answer": "Linking verbs connect the subject to information about it, such as be, seem, become, appear, and feel."}
+{"question": "What is a transitive verb?", "answer": "A transitive verb requires a direct object to complete its meaning."}
+{"question": "What is an intransitive verb?", "answer": "An intransitive verb does not take a direct object."}
+{"question": "What is a direct object?", "answer": "A direct object receives the action of the verb and answers what or whom."}
+{"question": "What is an indirect object?", "answer": "An indirect object receives the direct object and answers to whom or for whom."}
+{"question": "What is parallel structure?", "answer": "Parallel structure uses the same grammatical form for items in a list or comparison."}
+{"question": "Give an example of parallel structure.", "answer": "She likes swimming, hiking, and reading, not she likes swimming, hiking, and to read."}
+{"question": "What is a modifier?", "answer": "A modifier is a word or phrase that describes or limits another word."}
+{"question": "What is a misplaced modifier?", "answer": "A misplaced modifier is positioned too far from the word it modifies causing confusion."}
+{"question": "What is a dangling modifier?", "answer": "A dangling modifier has no clear word in the sentence to modify."}
+{"question": "Give an example of dangling modifier error.", "answer": "Walking down the street, the trees looked beautiful should specify who was walking."}
+{"question": "What is a run-on sentence?", "answer": "A run-on sentence joins two independent clauses without proper punctuation or conjunction."}
+{"question": "What is a sentence fragment?", "answer": "A sentence fragment is an incomplete sentence lacking a subject, verb, or complete thought."}
+{"question": "What is a comma splice?", "answer": "A comma splice incorrectly joins two independent clauses with only a comma."}
+{"question": "How can we fix a run-on sentence?", "answer": "Use a period, semicolon, comma with conjunction, or make one clause dependent."}
+{"question": "What is the Oxford comma?", "answer": "The Oxford comma is the optional comma before the conjunction in a list of three or more items."}
+{"question": "When do we use semicolons?", "answer": "Use semicolons to join closely related independent clauses or separate complex list items."}
+{"question": "When do we use colons?", "answer": "Use colons to introduce lists, explanations, or quotes after an independent clause."}
+{"question": "What is an apostrophe used for?", "answer": "Apostrophes show possession or indicate missing letters in contractions."}
+{"question": "How do we form possessives with singular nouns?", "answer": "Add apostrophe s to singular nouns, such as the cat's toy."}
+{"question": "How do we form possessives with plural nouns ending in s?", "answer": "Add only an apostrophe after the s, such as the cats' toys."}
+{"question": "What about plural nouns not ending in s?", "answer": "Add apostrophe s, such as the children's books."}
+{"question": "What is capitalization?", "answer": "Capitalization is using uppercase letters for proper nouns and sentence beginnings."}
+{"question": "What words should be capitalized?", "answer": "Capitalize proper nouns, the first word of sentences, titles, days, months, and the pronoun I."}
+{"question": "Should we capitalize seasons?", "answer": "No, seasons like spring, summer, fall, and winter are not capitalized unless part of a title."}
+{"question": "What is word order in English?", "answer": "Standard English word order is subject, verb, object."}
+{"question": "What is inverted word order?", "answer": "Inverted word order places the verb before the subject, often in questions or for emphasis."}
+{"question": "How do we form yes-no questions?", "answer": "Use an auxiliary verb before the subject, such as Do you like pizza?"}
+{"question": "How do we form wh-questions?", "answer": "Begin with a question word like who, what, when, where, why, or how followed by inverted word order."}
+{"question": "What is a tag question?", "answer": "A tag question is a short question added to the end of a statement to confirm information."}
+{"question": "What is an example of tag question?", "answer": "You like coffee, don't you?"}
+{"question": "What is emphasis in a sentence?", "answer": "Emphasis highlights important information through word choice, position, or stress."}
+{"question": "How can we add emphasis?", "answer": "Use intensifiers like very or really, inversion, cleft sentences, or stress patterns."}
+{"question": "What is a cleft sentence?", "answer": "A cleft sentence splits information to emphasize a particular element."}
+{"question": "Give an example of cleft sentence.", "answer": "It was John who broke the window, emphasizing John."}
+{"question": "What is reported speech with questions?", "answer": "Reported questions use statement word order without question marks."}
+{"question": "What is an example of reported question?", "answer": "She asked where I lived, not she asked where did I live."}
+{"question": "What are discourse markers?", "answer": "Discourse markers are words that organize speech and show relationships between ideas."}
+{"question": "Give examples of discourse markers.", "answer": "However, moreover, therefore, on the other hand, in conclusion, and by the way."}
+{"question": "What is the difference between formal and informal English?", "answer": "Formal English uses complete sentences, complex vocabulary, and avoids contractions, while informal English is conversational."}
+{"question": "When should we use formal English?", "answer": "Use formal English in academic writing, business communication, and professional contexts."}
+{"question": "What is register in language?", "answer": "Register is the level of formality or style appropriate for a specific situation."}
+{"question": "What is tone in writing?", "answer": "Tone is the attitude or emotion conveyed through word choice and style."}
+{"question": "What is audience in writing?", "answer": "Audience is the intended reader or listener who will receive the message."}
+{"question": "What is purpose in writing?", "answer": "Purpose is the reason for writing, such as to inform, persuade, entertain, or explain."}
+{"question": "What is a thesis statement?", "answer": "A thesis statement is the main argument or point of an essay stated clearly in the introduction."}
+{"question": "What is a topic sentence?", "answer": "A topic sentence states the main idea of a paragraph."}
+{"question": "What is supporting evidence?", "answer": "Supporting evidence includes facts, examples, or quotes that back up the main point."}
+{"question": "What is a conclusion?", "answer": "A conclusion summarizes main points and provides closure to an essay or argument."}
+{"question": "What is coherence in writing?", "answer": "Coherence means ideas flow logically and connect clearly throughout a text."}
+{"question": "What is cohesion in writing?", "answer": "Cohesion uses transitional words and repetition to link sentences and paragraphs."}
+{"question": "What are transition words?", "answer": "Transition words connect ideas, such as furthermore, however, therefore, meanwhile, and consequently."}
+{"question": "What is a paragraph?", "answer": "A paragraph is a group of related sentences about one main idea."}
+{"question": "What is the difference between then and than?", "answer": "Then refers to time while than is used in comparisons."}
+{"question": "What is subject-verb inversion?", "answer": "Subject-verb inversion reverses the normal order, placing the verb before the subject."}
+{"question": "When do we use subject-verb inversion?", "answer": "Use it in questions, after negative adverbs, and in conditional sentences without if."}
+{"question": "What is an example of inversion with negative adverb?", "answer": "Never have I seen such beauty."}
+{"question": "What is the subjunctive mood?", "answer": "The subjunctive mood expresses wishes, suggestions, or hypothetical situations."}
+{"question": "When do we use subjunctive?", "answer": "Use subjunctive after verbs like suggest, recommend, and insist, and in expressions like if I were."}
+{"question": "What is an example of subjunctive?", "answer": "I suggest that he study harder, not studies."}
+{"question": "What is the imperative mood?", "answer": "The imperative mood gives commands or instructions using the base verb form."}
+{"question": "What is an example of imperative?", "answer": "Close the door, please."}
+{"question": "What is a nominal clause?", "answer": "A nominal clause functions as a noun within a sentence."}
+{"question": "What is an adverbial clause?", "answer": "An adverbial clause modifies a verb, adjective, or adverb, often showing time, place, or reason."}
+{"question": "What is an adjective clause?", "answer": "An adjective clause modifies a noun or pronoun."}
+{"question": "What is ellipsis in grammar?", "answer": "Ellipsis omits words that are understood from context to avoid repetition."}
+{"question": "What is an example of ellipsis?", "answer": "I can swim, and she can too, omitting swim after can."}
+{"question": "What is substitution?", "answer": "Substitution replaces a word or phrase with another to avoid repetition."}
+{"question": "What is an example of substitution?", "answer": "I have a blue car, and she has a red one, where one substitutes car."}
+{"question": "What is anaphora?", "answer": "Anaphora refers back to something mentioned earlier, often using pronouns."}
+{"question": "What is cataphora?", "answer": "Cataphora refers forward to something mentioned later in the text."}
+{"question": "What is reference in cohesion?", "answer": "Reference uses pronouns or other words to refer to nouns without repeating them."}
+{"question": "What is lexical cohesion?", "answer": "Lexical cohesion uses related words, synonyms, or repetition to connect ideas."}
+{"question": "What is collocation?", "answer": "Collocation is the habitual pairing of words that naturally go together."}
+{"question": "Give examples of common collocations.", "answer": "Make a decision, take a break, heavy rain, strong coffee, and do homework."}
+{"question": "What is an idiom?", "answer": "An idiom is a phrase whose meaning differs from the literal meaning of the words."}
+{"question": "Give examples of idioms.", "answer": "Break a leg means good luck, piece of cake means very easy, and spill the beans means reveal a secret."}
+{"question": "What is a metaphor?", "answer": "A metaphor compares two unlike things by stating one is the other."}
+{"question": "What is a simile?", "answer": "A simile compares two things using like or as."}
+{"question": "What is personification?", "answer": "Personification gives human qualities to non-human things."}
+{"question": "What is hyperbole?", "answer": "Hyperbole is deliberate exaggeration for emphasis or effect."}
+{"question": "What is understatement?", "answer": "Understatement deliberately makes something seem less important than it is."}
+{"question": "What is irony?", "answer": "Irony is when the actual meaning is opposite to the literal meaning."}
+{"question": "What is alliteration?", "answer": "Alliteration repeats the same initial sound in neighboring words."}
+{"question": "What is assonance?", "answer": "Assonance repeats vowel sounds within nearby words."}
+{"question": "What is onomatopoeia?", "answer": "Onomatopoeia uses words that imitate sounds, such as buzz, hiss, or splash."}
+{"question": "What is imagery?", "answer": "Imagery uses descriptive language to create vivid mental pictures."}
+{"question": "What is symbolism?", "answer": "Symbolism uses objects or actions to represent abstract ideas."}
+{"question": "What is foreshadowing?", "answer": "Foreshadowing hints at events that will occur later in a story."}
+{"question": "What is a prefix?", "answer": "A prefix is a letter group added to the beginning of a word to change its meaning."}
+{"question": "Give examples of common prefixes.", "answer": "Un means not, re means again, pre means before, and mis means wrongly."}
+{"question": "What is a suffix?", "answer": "A suffix is a letter group added to the end of a word to change its meaning or part of speech."}
+{"question": "Give examples of common suffixes.", "answer": "Less means without, ful means full of, ly changes adjectives to adverbs, and tion forms nouns."}
+{"question": "What is a root word?", "answer": "A root word is the base form to which prefixes and suffixes can be added."}
+{"question": "What is etymology?", "answer": "Etymology is the study of word origins and how meanings have changed over time."}
+{"question": "What are cognates?", "answer": "Cognates are words in different languages that share the same root and similar meanings."}
+{"question": "What are false cognates?", "answer": "False cognates are words that appear similar in different languages but have different meanings."}
+{"question": "What is context in reading?", "answer": "Context is the surrounding information that helps determine word meaning."}
+{"question": "What are context clues?", "answer": "Context clues are hints in the text that help readers understand unfamiliar words."}
+{"question": "What is inference?", "answer": "Inference is using evidence and reasoning to reach conclusions not explicitly stated."}
+{"question": "What is main idea?", "answer": "The main idea is the central point or message of a text."}
+{"question": "What are supporting details?", "answer": "Supporting details are facts, examples, or descriptions that develop the main idea."}
+{"question": "What is summarizing?", "answer": "Summarizing condenses main points into a brief overview."}
+{"question": "What is paraphrasing?", "answer": "Paraphrasing restates information in your own words while maintaining the original meaning."}
+{"question": "What is plagiarism?", "answer": "Plagiarism is using someone else's words or ideas without proper credit."}
+{"question": "What is a citation?", "answer": "A citation gives credit to the source of information used in writing."}
+{"question": "What is a bibliography?", "answer": "A bibliography lists all sources consulted or cited in a research paper."}
+{"question": "What is MLA format?", "answer": "MLA format is a citation style commonly used in humanities writing."}
+{"question": "What is APA format?", "answer": "APA format is a citation style commonly used in social sciences writing."}
+{"question": "What is a direct quotation?", "answer": "A direct quotation uses someone's exact words enclosed in quotation marks."}
+{"question": "What is an in-text citation?", "answer": "An in-text citation briefly identifies the source within the body of the paper."}
+{"question": "What is a works cited page?", "answer": "A works cited page lists full details of all sources referenced in MLA format."}
+{"question": "What is a reference page?", "answer": "A reference page lists sources in APA format at the end of a paper."}
+{"question": "What is peer review?", "answer": "Peer review is when others read and provide feedback on your writing."}
+{"question": "What is revision?", "answer": "Revision involves making substantial changes to improve content, organization, and clarity."}
+{"question": "What is editing?", "answer": "Editing corrects grammar, punctuation, spelling, and sentence-level errors."}
+{"question": "What is proofreading?", "answer": "Proofreading is the final check for minor errors before submission."}
+{"question": "What is a rough draft?", "answer": "A rough draft is the first version of writing containing main ideas but needing improvement."}
+{"question": "What is brainstorming?", "answer": "Brainstorming generates ideas without judgment before organizing them."}
+{"question": "What is an outline?", "answer": "An outline organizes main points and supporting details in a hierarchical structure."}
+{"question": "What is free writing?", "answer": "Free writing is continuous writing without stopping to edit, used to generate ideas."}
+{"question": "What is audience awareness?", "answer": "Audience awareness means considering readers' knowledge, interests, and needs when writing."}
+{"question": "What is voice in writing?", "answer": "Voice is the distinctive personality and style that comes through in writing."}
+{"question": "What is first person point of view?", "answer": "First person uses I or we to narrate from the speaker's perspective."}
+{"question": "What is second person point of view?", "answer": "Second person uses you to address the reader directly."}
+{"question": "What is third person point of view?", "answer": "Third person uses he, she, it, or they to narrate from an outside perspective."}
+{"question": "What is third person limited?", "answer": "Third person limited reveals the thoughts of only one character."}
+{"question": "What is third person omniscient?", "answer": "Third person omniscient reveals the thoughts of multiple characters."}
+{"question": "What is narrative writing?", "answer": "Narrative writing tells a story with characters, setting, plot, and conflict."}
+{"question": "What is descriptive writing?", "answer": "Descriptive writing creates vivid images using sensory details."}
+{"question": "What is expository writing?", "answer": "Expository writing explains or informs by presenting facts and information."}
+{"question": "What is persuasive writing?", "answer": "Persuasive writing aims to convince readers to adopt a viewpoint or take action."}
+{"question": "What is argumentative writing?", "answer": "Argumentative writing presents a claim supported by evidence and addresses counterarguments."}
+{"question": "What is a counterargument?", "answer": "A counterargument is an opposing viewpoint that the writer acknowledges and refutes."}
+{"question": "What is a rebuttal?", "answer": "A rebuttal is the response that disproves or weakens a counterargument."}
+{"question": "What is ethos?", "answer": "Ethos is persuasive appeal based on credibility and trustworthiness."}
+{"question": "What is pathos?", "answer": "Pathos is persuasive appeal based on emotion."}
+{"question": "What is logos?", "answer": "Logos is persuasive appeal based on logic and reasoning."}
+{"question": "What is rhetorical question?", "answer": "A rhetorical question is asked for effect without expecting an answer."}
+{"question": "What is repetition in rhetoric?", "answer": "Repetition emphasizes key ideas by restating them."}
+{"question": "What is parallelism in rhetoric?", "answer": "Parallelism uses similar grammatical structures to create rhythm and emphasis."}
+{"question": "What is anecdote?", "answer": "An anecdote is a brief story used to illustrate a point."}
+{"question": "What is a hook in writing?", "answer": "A hook is an attention-grabbing opening that engages readers."}
+{"question": "What are types of hooks?", "answer": "Hooks can be questions, quotes, statistics, anecdotes, or surprising facts."}
+{"question": "What is background information?", "answer": "Background information provides context readers need to understand the topic."}
+{"question": "What is a bridge in an introduction?", "answer": "A bridge connects the hook to the thesis statement."}
+{"question": "What is unity in a paragraph?", "answer": "Unity means all sentences in a paragraph relate to one main idea."}
+{"question": "What is development in a paragraph?", "answer": "Development provides sufficient details and examples to support the topic sentence."}
+{"question": "What is a concluding sentence?", "answer": "A concluding sentence wraps up the paragraph and may transition to the next idea."}
+{"question": "What is a call to action?", "answer": "A call to action urges readers to do something specific."}
+{"question": "What is synthesis?", "answer": "Synthesis combines ideas from multiple sources to create new understanding."}
+{"question": "What is analysis?", "answer": "Analysis examines parts of something to understand the whole."}
+{"question": "What is evaluation?", "answer": "Evaluation judges the quality, value, or significance of something."}
+{"question": "What is comparison?", "answer": "Comparison identifies similarities between two or more things."}
+{"question": "What is contrast?", "answer": "Contrast identifies differences between two or more things."}
+{"question": "What is cause and effect?", "answer": "Cause and effect explains how one event leads to another."}
+{"question": "What is chronological order?", "answer": "Chronological order arranges events in time sequence."}
+{"question": "What is spatial order?", "answer": "Spatial order describes things according to their physical arrangement."}
+{"question": "What is order of importance?", "answer": "Order of importance arranges ideas from most to least significant or vice versa."}
+{"question": "What is a topic?", "answer": "A topic is the general subject of a piece of writing."}
+{"question": "What is narrowing a topic?", "answer": "Narrowing a topic makes a broad subject more specific and manageable."}
+{"question": "What is a research question?", "answer": "A research question guides investigation and shapes the focus of research."}
+{"question": "What is a primary source?", "answer": "A primary source provides firsthand information or original data."}
+{"question": "What is a secondary source?", "answer": "A secondary source analyzes or interprets primary sources."}
+{"question": "What is credibility of a source?", "answer": "Credibility assesses whether a source is trustworthy, accurate, and authoritative."}
+{"question": "What is bias?", "answer": "Bias is a prejudice that may affect the objectivity of information."}
+{"question": "What is objectivity?", "answer": "Objectivity presents information fairly without personal bias."}
+{"question": "What is a fact?", "answer": "A fact is a statement that can be verified as true."}
+{"question": "What is an opinion?", "answer": "An opinion is a personal belief or judgment that cannot be proven."}
+{"question": "What is denotation?", "answer": "Denotation is the literal dictionary definition of a word."}
+{"question": "What is connotation?", "answer": "Connotation is the emotional or cultural associations a word carries beyond its literal meaning."}
+{"question": "What is diction?", "answer": "Diction is the choice of words used in writing or speech."}
+{"question": "What is syntax?", "answer": "Syntax is the arrangement of words and phrases to create sentences."}
+{"question": "What is sentence variety?", "answer": "Sentence variety uses different sentence types and lengths to maintain reader interest."}
+{"question": "What is wordiness?", "answer": "Wordiness uses more words than necessary to express an idea."}
+{"question": "What is conciseness?", "answer": "Conciseness expresses ideas clearly using the fewest words possible."}
+{"question": "What is redundancy?", "answer": "Redundancy unnecessarily repeats the same idea using different words."}
+{"question": "What is a cliché?", "answer": "A cliché is an overused expression that has lost its original impact."}
+{"question": "What is jargon?", "answer": "Jargon is specialized language used within a particular profession or group."}
+{"question": "What is slang?", "answer": "Slang is informal language used in casual conversation, often generation-specific."}
+{"question": "What is euphemism?", "answer": "Euphemism substitutes a mild or pleasant phrase for something harsh or unpleasant."}
+{"question": "What is concrete language?", "answer": "Concrete language refers to specific, tangible things that can be perceived by the senses."}
+{"question": "What is abstract language?", "answer": "Abstract language refers to ideas, concepts, or qualities that cannot be perceived directly."}
+{"question": "What is active reading?", "answer": "Active reading involves engaging with text through questioning, annotating, and making connections."}
+{"question": "What is annotating?", "answer": "Annotating means marking up a text with notes, questions, and reactions."}
+{"question": "What is skimming?", "answer": "Skimming quickly reading through text to get the general idea."}
+{"question": "What is scanning?", "answer": "Scanning is searching text quickly for specific information."}
+{"question": "What is close reading?", "answer": "Close reading carefully examines text details to understand deeper meanings."}
+{"question": "What is prediction in reading?", "answer": "Prediction uses clues to anticipate what will happen next in a text."}
+{"question": "What is visualization?", "answer": "Visualization creates mental images while reading to enhance comprehension."}
+{"question": "What is making connections?", "answer": "Making connections links text to personal experience, other texts, or world knowledge."}
+{"question": "What is questioning while reading?", "answer": "Questioning involves asking about characters, events, and author's purpose during reading."}
+{"question": "What is monitoring comprehension?", "answer": "Monitoring comprehension means checking understanding and fixing confusion while reading."}
+{"question": "What is rereading?", "answer": "Rereading goes through text again to clarify understanding or notice new details."}
+{"question": "What is critical reading?", "answer": "Critical reading analyzes and evaluates ideas rather than accepting them at face value."}
+{"question": "What is literary analysis?", "answer": "Literary analysis examines elements like theme, character, plot, and symbolism in literature."}
+{"question": "What is theme?", "answer": "Theme is the central message or insight about life explored in a literary work."}
+{"question": "What is plot?", "answer": "Plot is the sequence of events in a story."}
+{"question": "What is exposition?", "answer": "Exposition introduces characters, setting, and situation at the beginning of a story."}
+{"question": "What is rising action?", "answer": "Rising action builds tension through conflicts and complications moving toward the climax."}
+{"question": "What is climax?", "answer": "Climax is the turning point or moment of highest tension in a story."}
+{"question": "What is falling action?", "answer": "Falling action shows the consequences of the climax and moves toward resolution."}
+{"question": "What is resolution?", "answer": "Resolution concludes the story by resolving conflicts."}
+{"question": "What is conflict?", "answer": "Conflict is the struggle between opposing forces that drives the plot."}
+{"question": "What is internal conflict?", "answer": "Internal conflict occurs within a character's mind between desires, beliefs, or emotions."}
+{"question": "What is external conflict?", "answer": "External conflict occurs between a character and an outside force."}
+{"question": "What is character versus character conflict?", "answer": "This conflict pits one character against another."}
+{"question": "What is character versus self conflict?", "answer": "This conflict shows a character struggling with internal issues."}
+{"question": "What is character versus society conflict?", "answer": "This conflict shows a character opposing societal norms or expectations."}
+{"question": "What is character versus nature conflict?", "answer": "This conflict pits a character against natural forces or the environment."}
+{"question": "What is character versus fate conflict?", "answer": "This conflict involves a character struggling against destiny or circumstances beyond control."}
+{"question": "What is a protagonist?", "answer": "The protagonist is the main character who drives the story forward."}
+{"question": "What is an antagonist?", "answer": "The antagonist opposes the protagonist creating conflict."}
+{"question": "What is characterization?", "answer": "Characterization is the method an author uses to develop and reveal character traits."}
+{"question": "What is direct characterization?", "answer": "Direct characterization explicitly tells readers about a character's traits."}
+{"question": "What is indirect characterization?", "answer": "Indirect characterization shows traits through actions, thoughts, dialogue, and appearance."}
+{"question": "What is a round character?", "answer": "A round character is complex with multiple traits and realistic depth."}
+{"question": "What is a flat character?", "answer": "A flat character has one or two traits and little complexity."}
+{"question": "What is a dynamic character?", "answer": "A dynamic character undergoes significant internal change throughout the story."}
+{"question": "What is a static character?", "answer": "A static character remains essentially unchanged throughout the story."}
+{"question": "What is setting?", "answer": "Setting is the time and place where a story occurs."}
+{"question": "What is mood?", "answer": "Mood is the emotional atmosphere created by a literary work."}
+{"question": "What is tone?", "answer": "Tone is the author's attitude toward the subject or audience."}
+{"question": "What is foreshadowing in literature?", "answer": "Foreshadowing provides hints about future events to create anticipation."}
+{"question": "What is flashback?", "answer": "Flashback interrupts chronological sequence to show past events."}
+{"question": "What is dramatic irony?", "answer": "Dramatic irony occurs when readers know something characters do not."}
+{"question": "What is situational irony?", "answer": "Situational irony is when the outcome differs from what was expected."}
+{"question": "What is verbal irony?", "answer": "Verbal irony is saying the opposite of what is meant, often sarcastically."}
+{"question": "What is allegory?", "answer": "Allegory is a story where characters and events represent abstract ideas or moral qualities."}
+{"question": "What is allusion?", "answer": "Allusion is a brief reference to a person, event, or work from history or literature."}
+{"question": "What is motif?", "answer": "A motif is a recurring element that has symbolic significance in a story."}
+{"question": "What is archetype?", "answer": "An archetype is a universal symbol or character type found across cultures and literature."}
+{"question": "What is prose?", "answer": "Prose is ordinary written language organized in paragraphs rather than verse."}
+{"question": "What is poetry?", "answer": "Poetry uses condensed language, imagery, and often rhythm or rhyme to express ideas."}
+{"question": "What is a stanza?", "answer": "A stanza is a grouped set of lines in a poem."}
+{"question": "What is rhyme scheme?", "answer": "Rhyme scheme is the pattern of rhyming lines in a poem."}
+{"question": "What is meter?", "answer": "Meter is the rhythmic pattern of stressed and unstressed syllables in poetry."}
+{"question": "What is iambic pentameter?", "answer": "Iambic pentameter has five pairs of unstressed and stressed syllables per line."}
+{"question": "What is free verse?", "answer": "Free verse poetry has no regular meter or rhyme scheme."}
+{"question": "What is a sonnet?", "answer": "A sonnet is a fourteen-line poem with a specific rhyme scheme."}
+{"question": "What is a haiku?", "answer": "A haiku is a three-line poem with five, seven, and five syllables."}
+{"question": "What is blank verse?", "answer": "Blank verse is unrhymed poetry written in iambic pentameter."}
+{"question": "What is enjambment?", "answer": "Enjambment continues a sentence beyond the end of a line without punctuation."}
+{"question": "What is caesura?", "answer": "Caesura is a pause in the middle of a line of poetry."}
+{"question": "What is consonance?", "answer": "Consonance repeats consonant sounds within or at the end of words."}
+{"question": "What is a refrain?", "answer": "A refrain is a repeated line or phrase in a poem or song."}
+{"question": "What is speaker in poetry?", "answer": "The speaker is the voice that narrates the poem."}
+{"question": "What is drama?", "answer": "Drama is literature written to be performed by actors."}
+{"question": "What is dialogue?", "answer": "Dialogue is the conversation between characters."}
+{"question": "What is monologue?", "answer": "A monologue is a long speech by one character."}
+{"question": "What is soliloquy?", "answer": "A soliloquy is when a character speaks thoughts aloud alone on stage."}
+{"question": "What is aside?", "answer": "An aside is a brief remark by a character heard by the audience but not other characters."}
+{"question": "What is stage directions?", "answer": "Stage directions are instructions for actors and production staff about movement and setting."}
+{"question": "What is an act?", "answer": "An act is a major division in a play."}
+{"question": "What is a scene?", "answer": "A scene is a subdivision of an act showing continuous action in one place."}
+{"question": "What is tragic hero?", "answer": "A tragic hero is a noble character whose flaw leads to downfall."}
+{"question": "What is hubris?", "answer": "Hubris is excessive pride that leads to a character's downfall."}
+{"question": "What is catharsis?", "answer": "Catharsis is emotional release experienced by audience through tragedy."}
+{"question": "What is comic relief?", "answer": "Comic relief uses humor to relieve tension in a serious work."}
+{"question": "What is genre?", "answer": "Genre is a category of literature with shared characteristics."}
+{"question": "What is fiction?", "answer": "Fiction is imaginative writing not based strictly on real events."}
+{"question": "What is nonfiction?", "answer": "Nonfiction presents factual information about real people, places, and events."}
+{"question": "What is autobiography?", "answer": "Autobiography is a person's life story written by that person."}
+{"question": "What is biography?", "answer": "Biography is a life story written by someone other than the subject."}
+{"question": "What is memoir?", "answer": "A memoir focuses on specific memories or time periods from someone's life."}
+{"question": "What is essay?", "answer": "An essay is a short nonfiction work on a specific topic."}
+{"question": "What is a personal essay?", "answer": "A personal essay explores the author's experiences, feelings, and insights."}
+{"question": "What is a formal essay?", "answer": "A formal essay presents a serious argument in an impersonal, structured manner."}
+{"question": "What is an informal essay?", "answer": "An informal essay uses conversational tone and may include personal anecdotes."}
+{"question": "What is a reflective essay?", "answer": "A reflective essay examines experiences and what was learned from them."}
+{"question": "What is a compare and contrast essay?", "answer": "This essay examines similarities and differences between subjects."}
+{"question": "What is a cause and effect essay?", "answer": "This essay explains how one event leads to another."}
+{"question": "What is a process essay?", "answer": "A process essay explains how to do something or how something works."}
+{"question": "What is a definition essay?", "answer": "A definition essay explains the meaning of a term or concept in depth."}
+{"question": "What is a classification essay?", "answer": "A classification essay divides a topic into categories with examples."}
+{"question": "What is an analytical essay?", "answer": "An analytical essay breaks down a topic to examine its parts."}
+{"question": "What is an interpretive essay?", "answer": "An interpretive essay explains meaning and significance of a text."}
+{"question": "What is a response essay?", "answer": "A response essay presents personal reactions to a text or experience."}
+{"question": "What is an evaluation essay?", "answer": "An evaluation essay judges the quality or value of something based on criteria."}
+{"question": "What is a problem-solution essay?", "answer": "This essay identifies a problem and proposes solutions."}
+{"question": "What is attribution?", "answer": "Attribution identifies the source of information or quotations."}
+{"question": "What is a signal phrase?", "answer": "A signal phrase introduces a quotation or paraphrase and names the source."}
+{"question": "What is integrating quotations?", "answer": "Integrating quotations smoothly incorporates quoted material into your own sentences."}
+{"question": "What is a block quotation?", "answer": "A block quotation is a long quote set off from the text without quotation marks."}
+{"question": "What is ellipsis in quotations?", "answer": "Ellipsis uses three dots to show words omitted from a quotation."}
+{"question": "What are brackets in quotations?", "answer": "Brackets indicate changes or additions made to original quoted text."}
+{"question": "What is a topic proposal?", "answer": "A topic proposal outlines the subject and approach for a research paper."}
+{"question": "What is a working thesis?", "answer": "A working thesis is a preliminary main argument that may be revised during research."}
+{"question": "What is a literature review?", "answer": "A literature review surveys existing research on a topic."}
+{"question": "What is an annotated bibliography?", "answer": "An annotated bibliography includes citations plus brief summaries and evaluations of sources."}
+{"question": "What is a research paper?", "answer": "A research paper presents an argument supported by evidence from multiple sources."}
+{"question": "What is academic writing?", "answer": "Academic writing is formal scholarly writing for educational contexts."}
+{"question": "What is scholarly source?", "answer": "A scholarly source is peer-reviewed research written by experts."}
+{"question": "What is a popular source?", "answer": "A popular source is written for general audience by journalists or writers."}
+{"question": "What is a database?", "answer": "A database is an organized collection of information accessible electronically."}
+{"question": "What is Boolean search?", "answer": "Boolean search uses operators like AND, OR, and NOT to refine searches."}
+{"question": "What is a keyword?", "answer": "A keyword is a significant word used to search for information."}
+{"question": "What is evaluating sources?", "answer": "Evaluating sources assesses reliability, accuracy, and relevance of information."}
+{"question": "What is the CRAAP test?", "answer": "The CRAAP test evaluates sources by Currency, Relevance, Authority, Accuracy, and Purpose."}
+{"question": "What is confirmation bias?", "answer": "Confirmation bias favors information that confirms existing beliefs."}
+{"question": "What is a logical fallacy?", "answer": "A logical fallacy is an error in reasoning that weakens an argument."}
+{"question": "What is ad hominem fallacy?", "answer": "Ad hominem attacks the person rather than addressing the argument."}
+{"question": "What is straw man fallacy?", "answer": "Straw man misrepresents an opponent's argument to make it easier to attack."}
+{"question": "What is false dilemma?", "answer": "False dilemma presents only two options when more exist."}
+{"question": "What is slippery slope?", "answer": "Slippery slope argues one action will inevitably lead to extreme consequences."}
+{"question": "What is hasty generalization?", "answer": "Hasty generalization draws conclusions from insufficient evidence."}
+{"question": "What is post hoc fallacy?", "answer": "Post hoc assumes that because one event followed another, the first caused the second."}
+{"question": "What is bandwagon fallacy?", "answer": "Bandwagon argues something is correct because many people believe it."}
+{"question": "What is appeal to authority?", "answer": "Appeal to authority uses an expert opinion as proof when expertise is irrelevant."}
+{"question": "What is red herring?", "answer": "Red herring introduces irrelevant information to distract from the real issue."}
+{"question": "What is circular reasoning?", "answer": "Circular reasoning uses the conclusion as support for itself."}
+{"question": "What is false analogy?", "answer": "False analogy compares two things that are not sufficiently similar."}
+{"question": "What is loaded language?", "answer": "Loaded language uses words with strong emotional connotations to manipulate."}
+{"question": "What is appeal to emotion?", "answer": "Appeal to emotion manipulates feelings rather than using logic."}
+{"question": "What is appeal to tradition?", "answer": "Appeal to tradition argues something is good because it has always been done that way."}
+{"question": "What is deductive reasoning?", "answer": "Deductive reasoning moves from general principles to specific conclusions."}
+{"question": "What is inductive reasoning?", "answer": "Inductive reasoning moves from specific observations to general conclusions."}
+{"question": "What is a premise?", "answer": "A premise is a statement offered as evidence in an argument."}
+{"question": "What is a conclusion in logic?", "answer": "A conclusion is the claim supported by premises in an argument."}
+{"question": "What is validity in logic?", "answer": "Validity means if premises are true, the conclusion must be true."}
+{"question": "What is soundness in logic?", "answer": "Soundness means an argument is valid and has true premises."}
+{"question": "What is a claim?", "answer": "A claim is a statement that something is true and requires support."}
+{"question": "What is evidence?", "answer": "Evidence is factual information supporting a claim."}
+{"question": "What is reasoning?", "answer": "Reasoning explains how evidence supports the claim."}
+{"question": "What is a warrant?", "answer": "A warrant is the underlying assumption connecting evidence to claim."}
+{"question": "What is a qualifier?", "answer": "A qualifier limits the scope of a claim using words like usually or probably."}
+{"question": "What is concession?", "answer": "Concession acknowledges valid points in opposing arguments."}
+{"question": "What is refutation?", "answer": "Refutation proves an opposing argument wrong."}
+{"question": "What is Toulmin model?", "answer": "Toulmin model is an argumentation framework with claim, evidence, warrant, backing, qualifier, and rebuttal."}
+{"question": "What is Rogerian argument?", "answer": "Rogerian argument seeks common ground and compromise rather than winning."}
+{"question": "What is classical argument?", "answer": "Classical argument follows traditional structure with introduction, narration, confirmation, refutation, and conclusion."}
+{"question": "What is emotional appeal?", "answer": "Emotional appeal evokes feelings to persuade the audience."}
+{"question": "What is ethical appeal?", "answer": "Ethical appeal establishes credibility and trustworthiness."}
+{"question": "What is logical appeal?", "answer": "Logical appeal uses facts, statistics, and reasoning to persuade."}
+{"question": "What is kairos?", "answer": "Kairos is the rhetorical appeal to timeliness and appropriateness."}
+{"question": "What is exigence?", "answer": "Exigence is the issue or problem that prompts communication."}
+{"question": "What is rhetorical situation?", "answer": "Rhetorical situation includes writer, audience, purpose, and context."}
+{"question": "What is rhetorical triangle?", "answer": "Rhetorical triangle shows the relationship between writer, audience, and subject."}
+{"question": "What is audience analysis?", "answer": "Audience analysis considers readers' knowledge, beliefs, and needs."}
+{"question": "What is purpose statement?", "answer": "A purpose statement clearly identifies what the writing aims to accomplish."}
+{"question": "What is a writing process?", "answer": "Writing process includes prewriting, drafting, revising, editing, and publishing."}
+{"question": "What is prewriting?", "answer": "Prewriting generates and organizes ideas before drafting."}
+{"question": "What is clustering?", "answer": "Clustering creates a visual map of ideas branching from a central topic."}
+{"question": "What is cubing?", "answer": "Cubing examines a topic from six perspectives: describe, compare, associate, analyze, apply, and argue."}
+{"question": "What is journalistic questions?", "answer": "Journalistic questions are who, what, when, where, why, and how."}
+{"question": "What is looping?", "answer": "Looping is freewriting followed by selecting key ideas for further freewriting."}
+{"question": "What is a discovery draft?", "answer": "A discovery draft explores ideas without worrying about organization or correctness."}
+{"question": "What is global revision?", "answer": "Global revision addresses big-picture issues like focus, development, and organization."}
+{"question": "What is local revision?", "answer": "Local revision fixes sentence-level issues like clarity and word choice."}
+{"question": "What is peer editing?", "answer": "Peer editing involves others reviewing and suggesting improvements to writing."}
+{"question": "What is self-editing?", "answer": "Self-editing is reviewing and correcting your own work."}
+{"question": "What is a rubric?", "answer": "A rubric provides criteria and standards for evaluating writing."}
+{"question": "What is formative assessment?", "answer": "Formative assessment provides feedback during the learning process."}
+{"question": "What is summative assessment?", "answer": "Summative assessment evaluates learning at the end of a unit or course."}
+{"question": "What is portfolio?", "answer": "A portfolio is a collection of work showing development and achievement."}
+{"question": "What is reflection in writing?", "answer": "Reflection examines the writing process and what was learned."}
+{"question": "What is metacognition?", "answer": "Metacognition is thinking about one's own thinking and learning processes."}
+{"question": "What is growth mindset?", "answer": "Growth mindset believes abilities can develop through effort and learning."}
+{"question": "What is writing fluency?", "answer": "Writing fluency is the ability to produce writing smoothly and easily."}
+{"question": "What is writer's block?", "answer": "Writer's block is difficulty starting or continuing writing."}
+{"question": "What is scaffolding in learning?", "answer": "Scaffolding provides temporary support helping learners accomplish tasks."}
+{"question": "What is zone of proximal development?", "answer": "Zone of proximal development is the range between what learners can do alone and with help."}
+{"question": "What is transfer in learning?", "answer": "Transfer applies knowledge or skills learned in one context to another."}
+{"question": "What is explicit instruction?", "answer": "Explicit instruction directly teaches skills through clear explanation and modeling."}
+{"question": "What is implicit learning?", "answer": "Implicit learning acquires knowledge unconsciously through exposure and practice."}

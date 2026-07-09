@@ -1,0 +1,522 @@
+{"question": "What is geography?", "answer": "Geography is the study of Earth's physical features, climate, and human populations."}
+{"question": "What are the seven continents?", "answer": "The seven continents are Africa, Antarctica, Asia, Australia, Europe, North America, and South America."}
+{"question": "What are the five oceans?", "answer": "The five oceans are the Pacific, Atlantic, Indian, Southern, and Arctic Oceans."}
+{"question": "What is the equator?", "answer": "The equator is an imaginary line that divides Earth into the Northern and Southern Hemispheres."}
+{"question": "What is latitude?", "answer": "Latitude measures the distance north or south of the equator in degrees."}
+{"question": "What is longitude?", "answer": "Longitude measures the distance east or west of the Prime Meridian in degrees."}
+{"question": "What is the Prime Meridian?", "answer": "The Prime Meridian is the zero-degree line of longitude passing through Greenwich, England."}
+{"question": "What is a hemisphere?", "answer": "A hemisphere is half of the Earth divided by the equator or a meridian."}
+{"question": "What is the largest continent?", "answer": "Asia is the largest continent by both area and population."}
+{"question": "What is the smallest continent?", "answer": "Australia is the smallest continent by land area."}
+{"question": "What is the largest ocean?", "answer": "The Pacific Ocean is the largest ocean covering more area than all land combined."}
+{"question": "What is the deepest ocean?", "answer": "The Pacific Ocean is also the deepest ocean containing the Mariana Trench."}
+{"question": "What is altitude?", "answer": "Altitude is the height of a location above sea level."}
+{"question": "What is sea level?", "answer": "Sea level is the average level of the ocean's surface used as a standard for measuring elevation."}
+{"question": "What is a map?", "answer": "A map is a visual representation of an area showing physical or political features."}
+{"question": "What is a globe?", "answer": "A globe is a spherical model of Earth showing accurate proportions and relationships."}
+{"question": "What is map scale?", "answer": "Map scale shows the relationship between distance on a map and actual distance on Earth."}
+{"question": "What is a legend on a map?", "answer": "A legend explains the symbols and colors used on a map."}
+{"question": "What is a compass rose?", "answer": "A compass rose shows the cardinal directions north, south, east, and west on a map."}
+{"question": "What are the cardinal directions?", "answer": "The cardinal directions are north, south, east, and west."}
+{"question": "What is a topographic map?", "answer": "A topographic map shows elevation changes using contour lines."}
+{"question": "What are contour lines?", "answer": "Contour lines connect points of equal elevation on a map."}
+{"question": "What is physical geography?", "answer": "Physical geography studies natural features like landforms, climate, and ecosystems."}
+{"question": "What is human geography?", "answer": "Human geography studies human activities, cultures, and their relationship with the environment."}
+{"question": "What is a mountain?", "answer": "A mountain is a large natural elevation of Earth's surface rising steeply above surrounding land."}
+{"question": "What is the tallest mountain on Earth?", "answer": "Mount Everest is the tallest mountain above sea level at eight thousand eight hundred forty nine meters."}
+{"question": "What is a volcano?", "answer": "A volcano is an opening in Earth's crust through which molten rock, gases, and ash erupt."}
+{"question": "What is a plateau?", "answer": "A plateau is a flat elevated landform raised sharply above surrounding area on at least one side."}
+{"question": "What is a plain?", "answer": "A plain is a broad area of relatively flat land with low elevation."}
+{"question": "What is a valley?", "answer": "A valley is a low area between hills or mountains often with a river running through it."}
+{"question": "What is a canyon?", "answer": "A canyon is a deep narrow valley with steep sides carved by a river."}
+{"question": "What is erosion?", "answer": "Erosion is the process by which soil and rock are removed and transported by wind, water, or ice."}
+{"question": "What is weathering?", "answer": "Weathering is the breakdown of rocks and minerals at Earth's surface by physical, chemical, or biological processes."}
+{"question": "What is deposition?", "answer": "Deposition is the laying down of sediment carried by wind, water, or ice."}
+{"question": "What is a river?", "answer": "A river is a natural flowing watercourse that usually flows toward an ocean, sea, lake, or another river."}
+{"question": "What is a tributary?", "answer": "A tributary is a stream or river that flows into a larger river or lake."}
+{"question": "What is a delta?", "answer": "A delta is a landform created by deposition of sediment where a river enters a slower-moving body of water."}
+{"question": "What is a watershed?", "answer": "A watershed is an area of land that drains all precipitation to a common outlet."}
+{"question": "What is a lake?", "answer": "A lake is a large body of water surrounded by land."}
+{"question": "What is a peninsula?", "answer": "A peninsula is a piece of land surrounded by water on three sides."}
+{"question": "What is an island?", "answer": "An island is a piece of land completely surrounded by water."}
+{"question": "What is an archipelago?", "answer": "An archipelago is a group or chain of islands."}
+{"question": "What is a strait?", "answer": "A strait is a narrow passage of water connecting two larger bodies of water."}
+{"question": "What is a bay?", "answer": "A bay is a body of water partially enclosed by land."}
+{"question": "What is a gulf?", "answer": "A gulf is a large bay that is deeply indented into the land."}
+{"question": "What is a coast?", "answer": "A coast is the land along the edge of an ocean, sea, or lake."}
+{"question": "What is a beach?", "answer": "A beach is a landform along the shoreline consisting of loose particles like sand or pebbles."}
+{"question": "What is climate?", "answer": "Climate is the average weather conditions in an area over a long period of time."}
+{"question": "What is weather?", "answer": "Weather is the state of the atmosphere at a specific time and place."}
+{"question": "What is temperature?", "answer": "Temperature is a measure of how hot or cold the air is."}
+{"question": "What is precipitation?", "answer": "Precipitation is water that falls from clouds in the form of rain, snow, sleet, or hail."}
+{"question": "What is humidity?", "answer": "Humidity is the amount of water vapor in the air."}
+{"question": "What is wind?", "answer": "Wind is the movement of air from areas of high pressure to areas of low pressure."}
+{"question": "What are trade winds?", "answer": "Trade winds are persistent easterly winds found in the tropics."}
+{"question": "What is the atmosphere?", "answer": "The atmosphere is the layer of gases surrounding Earth."}
+{"question": "What are the layers of the atmosphere?", "answer": "The layers are the troposphere, stratosphere, mesosphere, thermosphere, and exosphere."}
+{"question": "What is the troposphere?", "answer": "The troposphere is the lowest layer of atmosphere where weather occurs."}
+{"question": "What is air pressure?", "answer": "Air pressure is the weight of air pressing down on Earth's surface."}
+{"question": "What is a climate zone?", "answer": "A climate zone is a region with distinct climate characteristics."}
+{"question": "What is a tropical climate?", "answer": "A tropical climate is hot and humid year-round with heavy rainfall."}
+{"question": "What is a desert climate?", "answer": "A desert climate has very little precipitation and extreme temperature variations."}
+{"question": "What is a temperate climate?", "answer": "A temperate climate has moderate temperatures with distinct seasons."}
+{"question": "What is a polar climate?", "answer": "A polar climate has extremely cold temperatures year-round."}
+{"question": "What is the greenhouse effect?", "answer": "The greenhouse effect is the warming of Earth's surface due to heat trapped by atmospheric gases."}
+{"question": "What is global warming?", "answer": "Global warming is the long-term increase in Earth's average surface temperature."}
+{"question": "What is climate change?", "answer": "Climate change refers to long-term changes in temperature, precipitation, and weather patterns."}
+{"question": "What causes seasons?", "answer": "Seasons are caused by Earth's tilted axis as it orbits the sun."}
+{"question": "What is the summer solstice?", "answer": "The summer solstice is the longest day of the year when the sun reaches its highest point."}
+{"question": "What is the winter solstice?", "answer": "The winter solstice is the shortest day of the year when the sun is at its lowest point."}
+{"question": "What is an equinox?", "answer": "An equinox occurs when day and night are approximately equal in length."}
+{"question": "What is a desert?", "answer": "A desert is a dry region receiving less than twenty five centimeters of precipitation annually."}
+{"question": "What is the largest desert?", "answer": "Antarctica is the largest desert followed by the Sahara as the largest hot desert."}
+{"question": "What is a rainforest?", "answer": "A rainforest is a dense forest with high rainfall found in tropical regions."}
+{"question": "What is the Amazon rainforest?", "answer": "The Amazon rainforest is the world's largest tropical rainforest located in South America."}
+{"question": "What is biodiversity?", "answer": "Biodiversity is the variety of plant and animal life in a particular habitat."}
+{"question": "What is a biome?", "answer": "A biome is a large community of plants and animals adapted to specific climate conditions."}
+{"question": "What are the major biomes?", "answer": "Major biomes include tundra, taiga, temperate forest, tropical rainforest, grassland, and desert."}
+{"question": "What is the tundra?", "answer": "Tundra is a treeless biome with permanently frozen subsoil found in polar regions."}
+{"question": "What is permafrost?", "answer": "Permafrost is ground that remains frozen for two or more consecutive years."}
+{"question": "What is a coral reef?", "answer": "A coral reef is an underwater ecosystem built by colonies of tiny animals called coral polyps."}
+{"question": "What is the Great Barrier Reef?", "answer": "The Great Barrier Reef is the world's largest coral reef system located off Australia's coast."}
+{"question": "What is an ecosystem?", "answer": "An ecosystem is a community of living organisms interacting with their physical environment."}
+{"question": "What is a food chain?", "answer": "A food chain shows the transfer of energy from one organism to another through feeding."}
+{"question": "What is a habitat?", "answer": "A habitat is the natural environment where an organism lives."}
+{"question": "What is population?", "answer": "Population is the total number of people or organisms living in a specific area."}
+{"question": "What is population density?", "answer": "Population density is the number of people per unit area."}
+{"question": "What is urbanization?", "answer": "Urbanization is the increase in the proportion of people living in cities."}
+{"question": "What is a city?", "answer": "A city is a large human settlement with dense population and significant infrastructure."}
+{"question": "What is a megacity?", "answer": "A megacity is a metropolitan area with a population exceeding ten million people."}
+{"question": "What is rural?", "answer": "Rural refers to areas in the countryside away from cities with lower population density."}
+{"question": "What is agriculture?", "answer": "Agriculture is the practice of cultivating crops and raising animals for food."}
+{"question": "What is subsistence farming?", "answer": "Subsistence farming is growing food primarily for the farmer's family rather than for sale."}
+{"question": "What is commercial farming?", "answer": "Commercial farming is large-scale production of crops for sale in markets."}
+{"question": "What is irrigation?", "answer": "Irrigation is the artificial application of water to land for agricultural purposes."}
+{"question": "What is deforestation?", "answer": "Deforestation is the clearing or removal of forests for other land uses."}
+{"question": "What is reforestation?", "answer": "Reforestation is the process of replanting trees in areas that have been deforested."}
+{"question": "What is soil?", "answer": "Soil is the upper layer of earth containing minerals, organic matter, water, and air."}
+{"question": "What is topsoil?", "answer": "Topsoil is the uppermost layer of soil rich in nutrients necessary for plant growth."}
+{"question": "What is desertification?", "answer": "Desertification is the process by which fertile land becomes desert due to drought or poor management."}
+{"question": "What is a natural resource?", "answer": "A natural resource is a material from nature that humans use."}
+{"question": "What are renewable resources?", "answer": "Renewable resources can be replenished naturally within a human lifetime."}
+{"question": "What are nonrenewable resources?", "answer": "Nonrenewable resources exist in fixed amounts and cannot be replaced once depleted."}
+{"question": "What is fossil fuel?", "answer": "Fossil fuels are energy sources formed from ancient organic matter including coal, oil, and natural gas."}
+{"question": "What is mining?", "answer": "Mining is the extraction of valuable minerals or other geological materials from the earth."}
+{"question": "What is pollution?", "answer": "Pollution is the introduction of harmful substances into the environment."}
+{"question": "What is conservation?", "answer": "Conservation is the protection and preservation of natural resources and environment."}
+{"question": "What is sustainability?", "answer": "Sustainability is meeting current needs without compromising future generations' ability to meet theirs."}
+{"question": "What is a country?", "answer": "A country is a distinct territorial body or political entity."}
+{"question": "What is a capital city?", "answer": "A capital city is the official seat of government for a country or region."}
+{"question": "What is a border?", "answer": "A border is a line separating two countries or regions."}
+{"question": "What is immigration?", "answer": "Immigration is the movement of people into a country to live permanently."}
+{"question": "What is emigration?", "answer": "Emigration is the movement of people out of a country to live elsewhere."}
+{"question": "What is culture?", "answer": "Culture is the shared beliefs, customs, practices, and social behavior of a group."}
+{"question": "What is language?", "answer": "Language is a system of communication used by a particular community."}
+{"question": "What is religion?", "answer": "Religion is a belief system and worship practices often involving a deity or deities."}
+{"question": "What is GDP?", "answer": "GDP or Gross Domestic Product is the total value of goods and services produced in a country."}
+{"question": "What is a developed country?", "answer": "A developed country has advanced economy, high living standards, and strong infrastructure."}
+{"question": "What is a developing country?", "answer": "A developing country has lower income, less industrialization, and lower living standards."}
+{"question": "What is globalization?", "answer": "Globalization is the increasing interconnection of world economies, cultures, and populations."}
+{"question": "What is trade?", "answer": "Trade is the exchange of goods and services between countries or regions."}
+{"question": "What is an export?", "answer": "An export is a good or service produced domestically and sold to another country."}
+{"question": "What is an import?", "answer": "An import is a good or service brought into a country from abroad."}
+{"question": "What is infrastructure?", "answer": "Infrastructure consists of basic physical systems like roads, bridges, utilities, and communication networks."}
+{"question": "What is transportation?", "answer": "Transportation is the movement of people and goods from one place to another."}
+{"question": "What is a time zone?", "answer": "A time zone is a region where the same standard time is used."}
+{"question": "What is the International Date Line?", "answer": "The International Date Line is an imaginary line roughly along the one hundred eightieth meridian where the date changes."}
+{"question": "What is Earth's structure?", "answer": "Earth has layers including the crust, mantle, outer core, and inner core."}
+{"question": "What is the crust?", "answer": "The crust is Earth's outermost solid layer where we live."}
+{"question": "What is the mantle?", "answer": "The mantle is the thick layer of hot rock between the crust and core."}
+{"question": "What is the core?", "answer": "The core is Earth's innermost layer consisting of a liquid outer core and solid inner core."}
+{"question": "What is plate tectonics?", "answer": "Plate tectonics is the theory that Earth's crust is divided into plates that move over the mantle."}
+{"question": "What are tectonic plates?", "answer": "Tectonic plates are large pieces of Earth's crust that float on the mantle."}
+{"question": "What is a convergent boundary?", "answer": "A convergent boundary is where two tectonic plates move toward each other."}
+{"question": "What is a divergent boundary?", "answer": "A divergent boundary is where two tectonic plates move apart."}
+{"question": "What is a transform boundary?", "answer": "A transform boundary is where two plates slide past each other horizontally."}
+{"question": "What is an earthquake?", "answer": "An earthquake is the shaking of Earth's surface caused by sudden movement of tectonic plates."}
+{"question": "What is the epicenter?", "answer": "The epicenter is the point on Earth's surface directly above where an earthquake originates."}
+{"question": "What is the focus of an earthquake?", "answer": "The focus or hypocenter is the underground point where an earthquake begins."}
+{"question": "What is the Richter scale?", "answer": "The Richter scale measures the magnitude or energy released by an earthquake."}
+{"question": "What is a tsunami?", "answer": "A tsunami is a series of large ocean waves caused by underwater earthquakes or volcanic eruptions."}
+{"question": "What is the Ring of Fire?", "answer": "The Ring of Fire is a zone around the Pacific Ocean with high volcanic and earthquake activity."}
+{"question": "What is magma?", "answer": "Magma is molten rock beneath Earth's surface."}
+{"question": "What is lava?", "answer": "Lava is molten rock that has erupted onto Earth's surface."}
+{"question": "What is a hot spot?", "answer": "A hot spot is an area where magma rises from deep within Earth creating volcanic activity."}
+{"question": "What is the rock cycle?", "answer": "The rock cycle describes the processes that transform one rock type into another over time."}
+{"question": "What are the three types of rocks?", "answer": "The three types are igneous, sedimentary, and metamorphic rocks."}
+{"question": "What is igneous rock?", "answer": "Igneous rock forms from the cooling and solidification of magma or lava."}
+{"question": "What is sedimentary rock?", "answer": "Sedimentary rock forms from the compression and cementation of sediment layers."}
+{"question": "What is metamorphic rock?", "answer": "Metamorphic rock forms when existing rock is transformed by heat and pressure."}
+{"question": "What is a glacier?", "answer": "A glacier is a large mass of ice that moves slowly over land."}
+{"question": "What is an iceberg?", "answer": "An iceberg is a large piece of freshwater ice that has broken off from a glacier and floats in the ocean."}
+{"question": "What is glaciation?", "answer": "Glaciation is the formation, movement, and recession of glaciers."}
+{"question": "What is the Ice Age?", "answer": "The Ice Age refers to periods when Earth's temperature dropped and ice sheets covered large areas."}
+{"question": "What is a fjord?", "answer": "A fjord is a long narrow inlet with steep sides carved by a glacier."}
+{"question": "What is a moraine?", "answer": "A moraine is a mass of rocks and sediment deposited by a glacier."}
+{"question": "What is karst topography?", "answer": "Karst topography is landscape formed by the dissolution of soluble rocks like limestone."}
+{"question": "What is a cave?", "answer": "A cave is a natural underground hollow space large enough for humans to enter."}
+{"question": "What is a stalactite?", "answer": "A stalactite is a mineral formation hanging from a cave ceiling formed by dripping water."}
+{"question": "What is a stalagmite?", "answer": "A stalagmite is a mineral formation rising from a cave floor formed by dripping water."}
+{"question": "What is groundwater?", "answer": "Groundwater is water stored beneath Earth's surface in soil pores and rock fractures."}
+{"question": "What is an aquifer?", "answer": "An aquifer is an underground layer of permeable rock that holds groundwater."}
+{"question": "What is the water cycle?", "answer": "The water cycle is the continuous movement of water on, above, and below Earth's surface."}
+{"question": "What is evaporation?", "answer": "Evaporation is the process by which liquid water becomes water vapor."}
+{"question": "What is condensation?", "answer": "Condensation is the process by which water vapor becomes liquid water."}
+{"question": "What is transpiration?", "answer": "Transpiration is the release of water vapor from plants into the atmosphere."}
+{"question": "What is runoff?", "answer": "Runoff is water from precipitation that flows over land into streams, rivers, and oceans."}
+{"question": "What is infiltration?", "answer": "Infiltration is the process by which water enters the soil."}
+{"question": "What is a water table?", "answer": "The water table is the upper surface of groundwater below which soil is saturated."}
+{"question": "What is drought?", "answer": "Drought is an extended period with significantly below-average precipitation."}
+{"question": "What is a flood?", "answer": "A flood is an overflow of water that submerges normally dry land."}
+{"question": "What is a floodplain?", "answer": "A floodplain is flat land adjacent to a river that floods during high water."}
+{"question": "What is a meander?", "answer": "A meander is a winding curve or bend in a river."}
+{"question": "What is an oxbow lake?", "answer": "An oxbow lake is a curved lake formed when a river meander is cut off from the main channel."}
+{"question": "What is a waterfall?", "answer": "A waterfall is a steep descent of water over a vertical drop in a river."}
+{"question": "What is a geyser?", "answer": "A geyser is a hot spring that periodically erupts with water and steam."}
+{"question": "What is a hot spring?", "answer": "A hot spring is a natural pool of water heated by geothermal energy."}
+{"question": "What is geothermal energy?", "answer": "Geothermal energy is heat from Earth's interior."}
+{"question": "What is continental drift?", "answer": "Continental drift is the hypothesis that continents have slowly moved across Earth's surface over time."}
+{"question": "What is Pangaea?", "answer": "Pangaea was a supercontinent that existed millions of years ago before breaking apart."}
+{"question": "What is subduction?", "answer": "Subduction is the process where one tectonic plate slides beneath another into the mantle."}
+{"question": "What is seafloor spreading?", "answer": "Seafloor spreading is the formation of new oceanic crust at mid-ocean ridges."}
+{"question": "What is a mid-ocean ridge?", "answer": "A mid-ocean ridge is an underwater mountain range formed by seafloor spreading."}
+{"question": "What is a trench?", "answer": "An ocean trench is a deep depression in the seafloor formed at subduction zones."}
+{"question": "What is an atoll?", "answer": "An atoll is a ring-shaped coral reef surrounding a lagoon."}
+{"question": "What is a lagoon?", "answer": "A lagoon is a shallow body of water separated from the sea by a barrier."}
+{"question": "What is a barrier island?", "answer": "A barrier island is a long narrow sandy island parallel to the mainland coast."}
+{"question": "What is a sand dune?", "answer": "A sand dune is a hill of sand formed by wind or water flow."}
+{"question": "What is loess?", "answer": "Loess is fine sediment deposited by wind."}
+{"question": "What is a monsoon?", "answer": "A monsoon is a seasonal wind pattern bringing heavy rains to certain regions."}
+{"question": "What is El Niño?", "answer": "El Niño is a climate pattern characterized by warming of Pacific Ocean surface waters."}
+{"question": "What is La Niña?", "answer": "La Niña is a climate pattern characterized by cooling of Pacific Ocean surface waters."}
+{"question": "What is the jet stream?", "answer": "The jet stream is a fast-flowing narrow air current in the upper atmosphere."}
+{"question": "What is a hurricane?", "answer": "A hurricane is a powerful tropical storm with winds exceeding one hundred nineteen kilometers per hour."}
+{"question": "What is a typhoon?", "answer": "A typhoon is a tropical cyclone occurring in the Northwest Pacific, equivalent to a hurricane."}
+{"question": "What is a cyclone?", "answer": "A cyclone is a system of winds rotating around a low-pressure center."}
+{"question": "What is a tornado?", "answer": "A tornado is a violently rotating column of air extending from a thunderstorm to the ground."}
+{"question": "What is a thunderstorm?", "answer": "A thunderstorm is a storm with lightning, thunder, heavy rain, and sometimes hail."}
+{"question": "What is lightning?", "answer": "Lightning is an electrical discharge between clouds or between a cloud and the ground."}
+{"question": "What is thunder?", "answer": "Thunder is the sound produced by the rapid expansion of air heated by lightning."}
+{"question": "What is fog?", "answer": "Fog is a cloud at ground level reducing visibility."}
+{"question": "What is a cloud?", "answer": "A cloud is a visible mass of water droplets or ice crystals suspended in the atmosphere."}
+{"question": "What are the main cloud types?", "answer": "The main types are cirrus, cumulus, and stratus clouds."}
+{"question": "What is a front in meteorology?", "answer": "A front is the boundary between two air masses with different temperatures."}
+{"question": "What is a cold front?", "answer": "A cold front occurs when cold air pushes under warm air causing storms."}
+{"question": "What is a warm front?", "answer": "A warm front occurs when warm air rises over cold air bringing steady precipitation."}
+{"question": "What is an air mass?", "answer": "An air mass is a large body of air with uniform temperature and humidity."}
+{"question": "What is the Coriolis effect?", "answer": "The Coriolis effect is the deflection of moving objects caused by Earth's rotation."}
+{"question": "What is a land breeze?", "answer": "A land breeze is wind blowing from land to sea at night when land cools faster."}
+{"question": "What is a sea breeze?", "answer": "A sea breeze is wind blowing from sea to land during day when land heats faster."}
+{"question": "What is albedo?", "answer": "Albedo is the measure of how much sunlight is reflected by a surface."}
+{"question": "What is insolation?", "answer": "Insolation is incoming solar radiation received by Earth."}
+{"question": "What is the ozone layer?", "answer": "The ozone layer is a region in the stratosphere that absorbs most ultraviolet radiation from the sun."}
+{"question": "What is ozone depletion?", "answer": "Ozone depletion is the thinning of the ozone layer caused by chemicals like chlorofluorocarbons."}
+{"question": "What is acid rain?", "answer": "Acid rain is precipitation with high acidity caused by atmospheric pollution."}
+{"question": "What is smog?", "answer": "Smog is air pollution that reduces visibility, formed from vehicle emissions and industrial pollutants."}
+{"question": "What is the carbon cycle?", "answer": "The carbon cycle is the movement of carbon through Earth's systems including atmosphere, oceans, and living organisms."}
+{"question": "What is photosynthesis?", "answer": "Photosynthesis is the process by which plants use sunlight to convert carbon dioxide and water into glucose."}
+{"question": "What is respiration?", "answer": "Respiration is the process by which organisms release energy from food and produce carbon dioxide."}
+{"question": "What is a carbon sink?", "answer": "A carbon sink is a natural system that absorbs more carbon than it releases."}
+{"question": "What is a carbon source?", "answer": "A carbon source is a system that releases more carbon than it absorbs."}
+{"question": "What is nitrogen fixation?", "answer": "Nitrogen fixation is the conversion of atmospheric nitrogen into forms usable by plants."}
+{"question": "What is the phosphorus cycle?", "answer": "The phosphorus cycle describes the movement of phosphorus through rocks, water, soil, and living organisms."}
+{"question": "What is eutrophication?", "answer": "Eutrophication is excessive nutrient enrichment in water bodies causing algae overgrowth."}
+{"question": "What is an invasive species?", "answer": "An invasive species is an organism introduced to an area where it causes ecological harm."}
+{"question": "What is extinction?", "answer": "Extinction is the complete disappearance of a species from Earth."}
+{"question": "What is an endangered species?", "answer": "An endangered species faces a high risk of extinction in the near future."}
+{"question": "What is a national park?", "answer": "A national park is a protected area of land preserved for conservation and recreation."}
+{"question": "What is a UNESCO World Heritage Site?", "answer": "A UNESCO World Heritage Site is a landmark with cultural or natural significance recognized globally."}
+{"question": "What is ecotourism?", "answer": "Ecotourism is responsible travel to natural areas that conserves the environment."}
+{"question": "What is carrying capacity?", "answer": "Carrying capacity is the maximum population size an environment can sustain indefinitely."}
+{"question": "What is overpopulation?", "answer": "Overpopulation occurs when population exceeds the environment's carrying capacity."}
+{"question": "What is demographic transition?", "answer": "Demographic transition is the shift from high birth and death rates to low birth and death rates."}
+{"question": "What is birth rate?", "answer": "Birth rate is the number of births per thousand people per year."}
+{"question": "What is death rate?", "answer": "Death rate is the number of deaths per thousand people per year."}
+{"question": "What is life expectancy?", "answer": "Life expectancy is the average number of years a person is expected to live."}
+{"question": "What is infant mortality?", "answer": "Infant mortality is the death rate of infants under one year old."}
+{"question": "What is fertility rate?", "answer": "Fertility rate is the average number of children born to women during their lifetime."}
+{"question": "What is population pyramid?", "answer": "A population pyramid is a graph showing age and gender distribution of a population."}
+{"question": "What is migration?", "answer": "Migration is the movement of people from one place to another to live."}
+{"question": "What is push factor?", "answer": "A push factor is a condition that drives people away from their home area."}
+{"question": "What is pull factor?", "answer": "A pull factor is a condition that attracts people to a new area."}
+{"question": "What is refugee?", "answer": "A refugee is a person forced to leave their country due to persecution, war, or violence."}
+{"question": "What is asylum?", "answer": "Asylum is protection granted by a country to refugees from another country."}
+{"question": "What is brain drain?", "answer": "Brain drain is the emigration of highly skilled or educated people from a country."}
+{"question": "What is remittance?", "answer": "Remittance is money sent back home by migrants to their families."}
+{"question": "What is a census?", "answer": "A census is an official count of a population with demographic details."}
+{"question": "What is urban sprawl?", "answer": "Urban sprawl is the uncontrolled expansion of urban areas into surrounding countryside."}
+{"question": "What is gentrification?", "answer": "Gentrification is the renovation of deteriorated urban areas leading to influx of wealthier residents."}
+{"question": "What is segregation?", "answer": "Segregation is the separation of different groups often based on race, class, or ethnicity."}
+{"question": "What is a slum?", "answer": "A slum is a densely populated urban area with inadequate infrastructure and poor living conditions."}
+{"question": "What is suburbanization?", "answer": "Suburbanization is the population shift from urban cores to residential areas on the outskirts."}
+{"question": "What is central business district?", "answer": "A central business district is the commercial center of a city with high concentration of offices and shops."}
+{"question": "What is zoning?", "answer": "Zoning is the division of land into areas designated for specific uses like residential or commercial."}
+{"question": "What is public transportation?", "answer": "Public transportation is shared passenger transport available for public use."}
+{"question": "What is a metropolitan area?", "answer": "A metropolitan area is a region consisting of a densely populated urban core and surrounding areas."}
+{"question": "What is site?", "answer": "Site is the physical characteristics of a location where something is positioned."}
+{"question": "What is situation?", "answer": "Situation is the location of a place relative to other places."}
+{"question": "What is absolute location?", "answer": "Absolute location is the exact position of a place on Earth using coordinates."}
+{"question": "What is relative location?", "answer": "Relative location describes where a place is in relation to other places."}
+{"question": "What is distance decay?", "answer": "Distance decay is the principle that interaction between places decreases as distance increases."}
+{"question": "What is spatial interaction?", "answer": "Spatial interaction is the flow of people, goods, or information between places."}
+{"question": "What is gravity model?", "answer": "The gravity model predicts interaction between places based on their size and distance."}
+{"question": "What is diffusion?", "answer": "Diffusion is the spread of ideas, innovations, or cultural practices across space."}
+{"question": "What is hierarchical diffusion?", "answer": "Hierarchical diffusion spreads from larger to smaller places or from influential to less influential people."}
+{"question": "What is contagious diffusion?", "answer": "Contagious diffusion spreads rapidly through direct contact like disease transmission."}
+{"question": "What is relocation diffusion?", "answer": "Relocation diffusion occurs when people migrate and bring their culture to new locations."}
+{"question": "What is stimulus diffusion?", "answer": "Stimulus diffusion occurs when an idea spreads but changes as it moves to new areas."}
+{"question": "What is cultural landscape?", "answer": "Cultural landscape is the visible imprint of human activity on the physical environment."}
+{"question": "What is sense of place?", "answer": "Sense of place is the emotional attachment people have to specific locations."}
+{"question": "What is vernacular region?", "answer": "A vernacular region is an area defined by people's perceptions and cultural identity rather than official boundaries."}
+{"question": "What is functional region?", "answer": "A functional region is organized around a focal point with interactions throughout the area."}
+{"question": "What is formal region?", "answer": "A formal region is defined by a common characteristic shared throughout the area."}
+{"question": "What is a boundary dispute?", "answer": "A boundary dispute is a disagreement between countries or regions over border location."}
+{"question": "What is sovereignty?", "answer": "Sovereignty is supreme authority of a state to govern itself without external interference."}
+{"question": "What is a nation?", "answer": "A nation is a group of people sharing common culture, history, and identity."}
+{"question": "What is a state?", "answer": "A state is a politically organized territory with permanent population, government, and sovereignty."}
+{"question": "What is a nation-state?", "answer": "A nation-state is a state whose borders coincide with the territory of a particular nation."}
+{"question": "What is a multinational state?", "answer": "A multinational state contains multiple nations within its borders."}
+{"question": "What is colonialism?", "answer": "Colonialism is the practice of acquiring political control over another country for economic exploitation."}
+{"question": "What is imperialism?", "answer": "Imperialism is the policy of extending a country's power through diplomacy or military force."}
+{"question": "What is decolonization?", "answer": "Decolonization is the process by which colonies gain independence from colonial powers."}
+{"question": "What is balkanization?", "answer": "Balkanization is the fragmentation of a region into smaller hostile states."}
+{"question": "What is irredentism?", "answer": "Irredentism is the advocacy for annexing territories based on ethnic or historical claims."}
+{"question": "What is supranationalism?", "answer": "Supranationalism is cooperation among nations where authority transcends national boundaries."}
+{"question": "What is the European Union?", "answer": "The European Union is a political and economic union of European countries promoting integration."}
+{"question": "What is NAFTA?", "answer": "NAFTA was the North American Free Trade Agreement between the United States, Canada, and Mexico, now replaced by USMCA."}
+{"question": "What is ASEAN?", "answer": "ASEAN is the Association of Southeast Asian Nations promoting economic and political cooperation."}
+{"question": "What is the United Nations?", "answer": "The United Nations is an international organization promoting peace, security, and cooperation among nations."}
+{"question": "What is NATO?", "answer": "NATO is the North Atlantic Treaty Organization, a military alliance of North American and European countries."}
+{"question": "What is the World Bank?", "answer": "The World Bank is an international financial institution providing loans to developing countries."}
+{"question": "What is the IMF?", "answer": "The IMF or International Monetary Fund promotes global monetary cooperation and financial stability."}
+{"question": "What is the WTO?", "answer": "The WTO or World Trade Organization regulates international trade between nations."}
+{"question": "What is fair trade?", "answer": "Fair trade is trade that ensures producers receive fair prices and ethical working conditions."}
+{"question": "What is a free trade zone?", "answer": "A free trade zone is an area where goods can be imported, manufactured, and exported without customs duties."}
+{"question": "What is comparative advantage?", "answer": "Comparative advantage is the ability to produce goods at lower opportunity cost than others."}
+{"question": "What is outsourcing?", "answer": "Outsourcing is contracting work to external organizations often in other countries."}
+{"question": "What is offshoring?", "answer": "Offshoring is relocating business operations to another country to reduce costs."}
+{"question": "What is a special economic zone?", "answer": "A special economic zone has different economic regulations to attract foreign investment."}
+{"question": "What is dependency theory?", "answer": "Dependency theory argues that wealthy countries exploit resources of poorer countries maintaining their dependence."}
+{"question": "What is world systems theory?", "answer": "World systems theory divides countries into core, periphery, and semi-periphery based on economic development."}
+{"question": "What is neocolonialism?", "answer": "Neocolonialism is indirect control of developing countries by developed nations through economic or cultural means."}
+{"question": "What is foreign direct investment?", "answer": "Foreign direct investment is investment by a company in business operations in another country."}
+{"question": "What is microfinance?", "answer": "Microfinance provides small loans to entrepreneurs in developing countries."}
+{"question": "What is the digital divide?", "answer": "The digital divide is the gap between those with access to technology and those without."}
+{"question": "What is genetically modified crops?", "answer": "Genetically modified crops have DNA altered for desired traits like pest resistance."}
+{"question": "What is the Green Revolution?", "answer": "The Green Revolution was the period of agricultural advancement through technology increasing crop yields."}
+{"question": "What is organic farming?", "answer": "Organic farming avoids synthetic pesticides and fertilizers using natural methods."}
+{"question": "What is aquaculture?", "answer": "Aquaculture is the farming of fish and other aquatic organisms."}
+{"question": "What is pastoral nomadism?", "answer": "Pastoral nomadism is a traditional lifestyle where people move with herds seeking pasture."}
+{"question": "What is shifting cultivation?", "answer": "Shifting cultivation involves clearing land, farming it briefly, then moving to new land."}
+{"question": "What is monoculture?", "answer": "Monoculture is growing a single crop over large areas."}
+{"question": "What is crop rotation?", "answer": "Crop rotation is alternating different crops in the same field to maintain soil fertility."}
+{"question": "What is terracing?", "answer": "Terracing creates flat platforms on hillsides for agriculture preventing erosion."}
+{"question": "What is the Dust Bowl?", "answer": "The Dust Bowl was severe drought and dust storms in 1930s America causing agricultural devastation."}
+{"question": "What is salinization?", "answer": "Salinization is the accumulation of salts in soil reducing agricultural productivity."}
+{"question": "What is land degradation?", "answer": "Land degradation is the decline in land quality from human activities or natural processes."}
+{"question": "What is urban agriculture?", "answer": "Urban agriculture is growing food within cities on rooftops, vacant lots, or gardens."}
+{"question": "What is food security?", "answer": "Food security means all people have access to sufficient safe nutritious food."}
+{"question": "What is food desert?", "answer": "A food desert is an area with limited access to affordable healthy food."}
+{"question": "What is vertical farming?", "answer": "Vertical farming grows crops in stacked layers often indoors using controlled environments."}
+{"question": "What is precision agriculture?", "answer": "Precision agriculture uses technology like GPS to optimize crop yields and reduce waste."}
+{"question": "What is a commodity?", "answer": "A commodity is a raw material or agricultural product that can be bought and sold."}
+{"question": "What is supply chain?", "answer": "A supply chain is the network of production and distribution from raw materials to consumers."}
+{"question": "What is just-in-time manufacturing?", "answer": "Just-in-time manufacturing produces goods only as needed reducing inventory costs."}
+{"question": "What is industrial revolution?", "answer": "The Industrial Revolution was the transition to machine-based manufacturing beginning in the late eighteenth century."}
+{"question": "What is deindustrialization?", "answer": "Deindustrialization is the decline of industrial activity in a region or economy."}
+{"question": "What is a technopole?", "answer": "A technopole is a center of high-tech research and development."}
+{"question": "What is Silicon Valley?", "answer": "Silicon Valley is a region in California known as a global center for technology and innovation."}
+{"question": "What is quaternary economic activity?", "answer": "Quaternary economic activity involves knowledge-based services like information processing and research."}
+{"question": "What is quinary economic activity?", "answer": "Quinary economic activity includes top decision-making roles in government, science, and business."}
+{"question": "What is primary economic sector?", "answer": "The primary sector extracts raw materials from nature through activities like farming, mining, and fishing."}
+{"question": "What is secondary economic sector?", "answer": "The secondary sector transforms raw materials into finished goods through manufacturing and construction."}
+{"question": "What is tertiary economic sector?", "answer": "The tertiary sector provides services like retail, education, and healthcare."}
+{"question": "What is gross national income?", "answer": "Gross national income is the total income earned by a country's citizens regardless of location."}
+{"question": "What is purchasing power parity?", "answer": "Purchasing power parity adjusts income to reflect the cost of living in different countries."}
+{"question": "What is the Human Development Index?", "answer": "The Human Development Index measures quality of life based on health, education, and income."}
+{"question": "What is the Gini coefficient?", "answer": "The Gini coefficient measures income inequality within a country on a scale from zero to one."}
+{"question": "What is gender inequality?", "answer": "Gender inequality refers to unequal treatment or opportunities based on gender."}
+{"question": "What is literacy rate?", "answer": "Literacy rate is the percentage of people who can read and write."}
+{"question": "What is universal health care?", "answer": "Universal health care provides health services to all citizens regardless of ability to pay."}
+{"question": "What is infrastructure gap?", "answer": "Infrastructure gap is the difference between existing infrastructure and what is needed for development."}
+{"question": "What is brownfield site?", "answer": "A brownfield site is abandoned or underused industrial land often contaminated."}
+{"question": "What is greenfield site?", "answer": "A greenfield site is undeveloped land with no previous construction."}
+{"question": "What is smart growth?", "answer": "Smart growth is urban planning that focuses on sustainable compact development."}
+{"question": "What is new urbanism?", "answer": "New urbanism is a design movement promoting walkable neighborhoods with mixed-use development."}
+{"question": "What is transit-oriented development?", "answer": "Transit-oriented development concentrates growth near public transportation hubs."}
+{"question": "What is mixed-use development?", "answer": "Mixed-use development combines residential, commercial, and sometimes industrial uses in one area."}
+{"question": "What is LEED certification?", "answer": "LEED certification recognizes environmentally responsible building design and construction."}
+{"question": "What is green building?", "answer": "Green building minimizes environmental impact through energy efficiency and sustainable materials."}
+{"question": "What is carbon footprint?", "answer": "Carbon footprint is the total greenhouse gas emissions caused by an individual or organization."}
+{"question": "What is ecological footprint?", "answer": "Ecological footprint measures human demand on nature in terms of land area needed to sustain consumption."}
+{"question": "What is cap and trade?", "answer": "Cap and trade is a system that sets emission limits and allows trading of emission permits."}
+{"question": "What is carbon tax?", "answer": "Carbon tax is a fee imposed on burning fossil fuels to reduce carbon emissions."}
+{"question": "What is renewable energy?", "answer": "Renewable energy comes from sources that naturally replenish like solar, wind, and hydro power."}
+{"question": "What is solar energy?", "answer": "Solar energy is power derived from the sun's radiation."}
+{"question": "What is wind energy?", "answer": "Wind energy is electricity generated by wind turbines."}
+{"question": "What is hydroelectric power?", "answer": "Hydroelectric power generates electricity using flowing water."}
+{"question": "What is geothermal power?", "answer": "Geothermal power uses heat from Earth's interior to generate electricity."}
+{"question": "What is nuclear energy?", "answer": "Nuclear energy is power produced by splitting atoms in a controlled reaction."}
+{"question": "What is biomass energy?", "answer": "Biomass energy comes from organic materials like wood, crops, and waste."}
+{"question": "What is energy security?", "answer": "Energy security means having reliable access to affordable energy sources."}
+{"question": "What is peak oil?", "answer": "Peak oil is the point when maximum oil extraction is reached before declining."}
+{"question": "What is fracking?", "answer": "Fracking is hydraulic fracturing that extracts oil and gas by injecting high-pressure fluid into rock."}
+{"question": "What is OPEC?", "answer": "OPEC is the Organization of Petroleum Exporting Countries coordinating oil production policies."}
+{"question": "What is energy transition?", "answer": "Energy transition is the shift from fossil fuels to renewable energy sources."}
+{"question": "What is circular economy?", "answer": "Circular economy is an economic system aimed at eliminating waste through reuse and recycling."}
+{"question": "What is waste management?", "answer": "Waste management involves collection, transport, treatment, and disposal of waste materials."}
+{"question": "What is recycling?", "answer": "Recycling is processing used materials into new products."}
+{"question": "What is composting?", "answer": "Composting is decomposing organic waste to create nutrient-rich soil amendment."}
+{"question": "What is landfill?", "answer": "A landfill is a site for disposal of waste by burying it."}
+{"question": "What is incineration?", "answer": "Incineration is burning waste at high temperatures to reduce volume."}
+{"question": "What is hazardous waste?", "answer": "Hazardous waste is dangerous material posing risks to health or environment."}
+{"question": "What is e-waste?", "answer": "E-waste is discarded electronic devices like computers and phones."}
+{"question": "What is plastic pollution?", "answer": "Plastic pollution is accumulation of plastic in the environment harming wildlife and ecosystems."}
+{"question": "What is the Great Pacific Garbage Patch?", "answer": "The Great Pacific Garbage Patch is a large area of marine debris in the North Pacific Ocean."}
+{"question": "What is microplastics?", "answer": "Microplastics are tiny plastic particles less than five millimeters in size."}
+{"question": "What is ocean acidification?", "answer": "Ocean acidification is the ongoing decrease in ocean pH due to absorption of carbon dioxide."}
+{"question": "What is coral bleaching?", "answer": "Coral bleaching occurs when stressed corals expel algae causing them to turn white."}
+{"question": "What is overfishing?", "answer": "Overfishing is catching fish faster than they can reproduce."}
+{"question": "What is bycatch?", "answer": "Bycatch is unwanted fish or other marine life caught during commercial fishing."}
+{"question": "What is aquifer depletion?", "answer": "Aquifer depletion is the excessive use of groundwater faster than it can be replenished."}
+{"question": "What is water scarcity?", "answer": "Water scarcity is insufficient freshwater resources to meet demand."}
+{"question": "What is virtual water?", "answer": "Virtual water is the hidden water used to produce goods and services."}
+{"question": "What is water footprint?", "answer": "Water footprint measures total water used directly and indirectly by an individual or organization."}
+{"question": "What is desalination?", "answer": "Desalination is the process of removing salt from seawater to produce freshwater."}
+{"question": "What is water pollution?", "answer": "Water pollution is contamination of water bodies by harmful substances."}
+{"question": "What is eutrophication?", "answer": "Eutrophication is excessive nutrient enrichment causing algae blooms that deplete oxygen."}
+{"question": "What is biological oxygen demand?", "answer": "Biological oxygen demand measures organic pollution in water by oxygen consumption."}
+{"question": "What is watershed management?", "answer": "Watershed management coordinates land and water use to protect water quality and supply."}
+{"question": "What is riparian zone?", "answer": "A riparian zone is the interface between land and a river or stream."}
+{"question": "What is wetland?", "answer": "A wetland is an area saturated with water supporting aquatic plants."}
+{"question": "What is a marsh?", "answer": "A marsh is a wetland dominated by herbaceous plants."}
+{"question": "What is a swamp?", "answer": "A swamp is a wetland dominated by trees."}
+{"question": "What is a bog?", "answer": "A bog is a wetland that accumulates peat and has acidic water."}
+{"question": "What is peat?", "answer": "Peat is partially decomposed organic matter accumulating in wetlands."}
+{"question": "What is mangrove?", "answer": "Mangroves are trees and shrubs growing in coastal saline or brackish water."}
+{"question": "What is coastal erosion?", "answer": "Coastal erosion is the wearing away of land by ocean waves and currents."}
+{"question": "What is longshore drift?", "answer": "Longshore drift is the movement of sediment along a coast by waves approaching at an angle."}
+{"question": "What is a spit?", "answer": "A spit is a narrow projection of sand extending from shore into water."}
+{"question": "What is a tombolo?", "answer": "A tombolo is a sand or gravel bar connecting an island to mainland."}
+{"question": "What is a sea stack?", "answer": "A sea stack is a vertical rock formation isolated from shore by erosion."}
+{"question": "What is a sea arch?", "answer": "A sea arch is a natural rock arch formed by coastal erosion."}
+{"question": "What is sea level rise?", "answer": "Sea level rise is the increase in ocean height due to warming and melting ice."}
+{"question": "What is thermal expansion?", "answer": "Thermal expansion is the increase in water volume as temperature rises."}
+{"question": "What is an ice sheet?", "answer": "An ice sheet is a mass of glacier ice covering more than fifty thousand square kilometers."}
+{"question": "What is the Greenland Ice Sheet?", "answer": "The Greenland Ice Sheet is the second largest ice body after Antarctica covering most of Greenland."}
+{"question": "What is the Antarctic Ice Sheet?", "answer": "The Antarctic Ice Sheet is the largest single mass of ice on Earth."}
+{"question": "What is ice shelf?", "answer": "An ice shelf is a floating extension of land ice."}
+{"question": "What is calving?", "answer": "Calving is when chunks of ice break off from glaciers or ice shelves."}
+{"question": "What is albedo feedback?", "answer": "Albedo feedback is when melting ice reduces reflectivity causing more warming."}
+{"question": "What is permafrost thaw?", "answer": "Permafrost thaw is the melting of permanently frozen ground due to warming."}
+{"question": "What is methane release?", "answer": "Methane release from thawing permafrost contributes to greenhouse gas emissions."}
+{"question": "What is tipping point?", "answer": "A tipping point is a threshold beyond which a system undergoes rapid change."}
+{"question": "What is climate feedback?", "answer": "Climate feedback is a process that amplifies or dampens climate change."}
+{"question": "What is positive feedback?", "answer": "Positive feedback amplifies changes in a system."}
+{"question": "What is negative feedback?", "answer": "Negative feedback reduces changes in a system."}
+{"question": "What is climate mitigation?", "answer": "Climate mitigation involves actions to reduce greenhouse gas emissions."}
+{"question": "What is climate adaptation?", "answer": "Climate adaptation involves adjustments to reduce vulnerability to climate change impacts."}
+{"question": "What is the Paris Agreement?", "answer": "The Paris Agreement is an international treaty on climate change mitigation signed in 2015."}
+{"question": "What is carbon neutrality?", "answer": "Carbon neutrality means balancing carbon emissions with carbon removal."}
+{"question": "What is net zero?", "answer": "Net zero means reducing greenhouse gas emissions to as close to zero as possible."}
+{"question": "What is carbon capture?", "answer": "Carbon capture is technology that traps carbon dioxide from emission sources."}
+{"question": "What is carbon sequestration?", "answer": "Carbon sequestration is long-term storage of carbon dioxide from the atmosphere."}
+{"question": "What is afforestation?", "answer": "Afforestation is establishing forests on land that has not been forested recently."}
+{"question": "What is blue carbon?", "answer": "Blue carbon is carbon captured by ocean and coastal ecosystems."}
+{"question": "What is climate refugees?", "answer": "Climate refugees are people displaced by environmental changes related to climate change."}
+{"question": "What is environmental justice?", "answer": "Environmental justice ensures fair treatment and involvement of all people regarding environmental policies."}
+{"question": "What is environmental racism?", "answer": "Environmental racism is disproportionate impact of environmental hazards on racial minority communities."}
+{"question": "What is NIMBY?", "answer": "NIMBY stands for not in my backyard, opposing development near one's residence."}
+{"question": "What is a greenbelt?", "answer": "A greenbelt is a policy designating land around cities to remain undeveloped."}
+{"question": "What is urban heat island?", "answer": "Urban heat island is the phenomenon where cities are warmer than surrounding rural areas."}
+{"question": "What is light pollution?", "answer": "Light pollution is excessive artificial light brightening the night sky."}
+{"question": "What is noise pollution?", "answer": "Noise pollution is harmful levels of noise in the environment."}
+{"question": "What is the precautionary principle?", "answer": "The precautionary principle advocates preventing harm when scientific uncertainty exists."}
+{"question": "What is sustainable development?", "answer": "Sustainable development meets present needs without compromising future generations' needs."}
+{"question": "What is the tragedy of the commons?", "answer": "The tragedy of the commons occurs when individuals overuse a shared resource depleting it."}
+{"question": "What is common-pool resource?", "answer": "A common-pool resource is a natural resource available to many people."}
+{"question": "What is payment for ecosystem services?", "answer": "Payment for ecosystem services compensates landowners for maintaining environmental benefits."}
+{"question": "What is natural capital?", "answer": "Natural capital is the world's stock of natural resources providing ecosystem services."}
+{"question": "What is ecosystem services?", "answer": "Ecosystem services are benefits humans obtain from ecosystems."}
+{"question": "What is provisioning service?", "answer": "Provisioning services provide products like food, water, and timber."}
+{"question": "What is regulating service?", "answer": "Regulating services control climate, floods, disease, and water quality."}
+{"question": "What is cultural service?", "answer": "Cultural services provide recreational, aesthetic, and spiritual benefits."}
+{"question": "What is supporting service?", "answer": "Supporting services enable other ecosystem services through nutrient cycling and soil formation."}
+{"question": "What is resilience in ecology?", "answer": "Resilience is the capacity of an ecosystem to recover from disturbances."}
+{"question": "What is ecological succession?", "answer": "Ecological succession is the gradual process of ecosystem change over time."}
+{"question": "What is primary succession?", "answer": "Primary succession occurs on newly formed land with no soil."}
+{"question": "What is secondary succession?", "answer": "Secondary succession occurs after disturbance in an area with existing soil."}
+{"question": "What is a keystone species?", "answer": "A keystone species has disproportionate impact on ecosystem structure relative to its abundance."}
+{"question": "What is an indicator species?", "answer": "An indicator species reflects environmental quality or change."}
+{"question": "What is a pioneer species?", "answer": "Pioneer species are first organisms to colonize disturbed or barren land."}
+{"question": "What is a climax community?", "answer": "A climax community is a stable ecosystem at the end of succession."}
+{"question": "What is niche?", "answer": "A niche is the role and position a species has in its environment."}
+{"question": "What is competitive exclusion?", "answer": "Competitive exclusion states that two species competing for identical resources cannot coexist."}
+{"question": "What is predator-prey relationship?", "answer": "Predator-prey relationship describes the interaction where one organism hunts another for food."}
+{"question": "What is symbiosis?", "answer": "Symbiosis is a close relationship between two different species."}
+{"question": "What is mutualism?", "answer": "Mutualism is a symbiotic relationship where both species benefit."}
+{"question": "What is commensalism?", "answer": "Commensalism is a relationship where one species benefits and the other is unaffected."}
+{"question": "What is parasitism?", "answer": "Parasitism is a relationship where one species benefits at the expense of another."}
+{"question": "What is trophic level?", "answer": "Trophic level is the position an organism occupies in a food chain."}
+{"question": "What is biomagnification?", "answer": "Biomagnification is the increasing concentration of toxins at higher trophic levels."}
+{"question": "What is bioaccumulation?", "answer": "Bioaccumulation is the buildup of substances in an organism over time."}
+{"question": "What is DDT?", "answer": "DDT is a pesticide that bioaccumulates and was banned in many countries."}
+{"question": "What is integrated pest management?", "answer": "Integrated pest management uses multiple strategies to control pests while minimizing environmental impact."}
+{"question": "What is biological control?", "answer": "Biological control uses natural predators or parasites to manage pest populations."}
+{"question": "What is genetic diversity?", "answer": "Genetic diversity is variety of genes within a species."}
+{"question": "What is species diversity?", "answer": "Species diversity is variety of species in an ecosystem."}
+{"question": "What is ecosystem diversity?", "answer": "Ecosystem diversity is variety of ecosystems in a region."}
+{"question": "What is habitat fragmentation?", "answer": "Habitat fragmentation is breaking up continuous habitat into smaller isolated patches."}
+{"question": "What is habitat loss?", "answer": "Habitat loss is destruction or degradation of natural environment."}
+{"question": "What is wildlife corridor?", "answer": "A wildlife corridor is a habitat link allowing movement between isolated populations."}
+{"question": "What is edge effect?", "answer": "Edge effect is the change in population or community structures at the boundary of habitats."}
+{"question": "What is island biogeography?", "answer": "Island biogeography studies how island size and isolation affect species diversity."}
+{"question": "What is endemism?", "answer": "Endemism refers to species found exclusively in a specific geographic location."}
+{"question": "What is a biodiversity hotspot?", "answer": "A biodiversity hotspot is a region with exceptional biodiversity facing severe threats."}
+{"question": "What is in-situ conservation?", "answer": "In-situ conservation protects species in their natural habitats."}
+{"question": "What is ex-situ conservation?", "answer": "Ex-situ conservation maintains species outside their natural habitats like in zoos."}
+{"question": "What is a seed bank?", "answer": "A seed bank stores seeds to preserve genetic diversity."}
+{"question": "What is rewilding?", "answer": "Rewilding is restoring natural ecosystems with minimal human intervention."}
+{"question": "What is assisted migration?", "answer": "Assisted migration is deliberately moving species to more suitable habitats."}
+{"question": "What is genetic rescue?", "answer": "Genetic rescue introduces new individuals to increase genetic diversity in small populations."}
+{"question": "What is the Red List?", "answer": "The Red List is a global inventory of conservation status of species maintained by IUCN."}
+{"question": "What is CITES?", "answer": "CITES is the Convention on International Trade in Endangered Species regulating wildlife trade."}
+{"question": "What is the Endangered Species Act?", "answer": "The Endangered Species Act is US legislation protecting threatened and endangered species."}
+{"question": "What is poaching?", "answer": "Poaching is illegal hunting or capturing of wild animals."}
+{"question": "What is bushmeat?", "answer": "Bushmeat is meat from wild animals hunted in tropical regions."}
+{"question": "What is wildlife trafficking?", "answer": "Wildlife trafficking is illegal trade of animals, plants, and their products."}
+{"question": "What is ivory trade?", "answer": "Ivory trade involves buying and selling elephant tusks often illegally."}
+{"question": "What is rhino horn trade?", "answer": "Rhino horn trade is illegal commerce in rhinoceros horns."}
+{"question": "What is trophy hunting?", "answer": "Trophy hunting is killing animals for recreation with parts kept as trophies."}
+{"question": "What is captive breeding?", "answer": "Captive breeding is breeding animals in controlled environments for conservation."}
+{"question": "What is species reintroduction?", "answer": "Species reintroduction releases captive-bred or relocated animals into their native habitat."}
+{"question": "What is habitat restoration?", "answer": "Habitat restoration repairs degraded ecosystems to improve biodiversity."}
+{"question": "What is ecological engineering?", "answer": "Ecological engineering designs sustainable ecosystems integrating human society with natural environment."}
+{"question": "What is green infrastructure?", "answer": "Green infrastructure uses vegetation and natural systems to manage water and create healthier environments."}
+{"question": "What is constructed wetland?", "answer": "A constructed wetland is engineered system mimicking natural wetlands for water treatment."}
+{"question": "What is bioswale?", "answer": "A bioswale is a vegetated channel managing stormwater runoff."}
+{"question": "What is rain garden?", "answer": "A rain garden is a planted depression absorbing rainwater runoff."}
+{"question": "What is green roof?", "answer": "A green roof is a roof covered with vegetation reducing runoff and providing insulation."}
+{"question": "What is permeable pavement?", "answer": "Permeable pavement allows water to infiltrate through the surface reducing runoff."}
+{"question": "What is urban forestry?", "answer": "Urban forestry manages trees and forests in urban environments."}
+{"question": "What is street tree?", "answer": "A street tree is planted along streets providing shade and environmental benefits."}
+{"question": "What is tree canopy?", "answer": "Tree canopy is the layer formed by tree crowns providing shade and habitat."}
+{"question": "What is urban park?", "answer": "An urban park is a green space in cities for recreation and nature."}
+{"question": "What is pocket park?", "answer": "A pocket park is a small urban open space often created on vacant lots."}
+{"question": "What is linear park?", "answer": "A linear park is a long narrow park often along rivers or former rail lines."}
+{"question": "What is greenway?", "answer": "A greenway is a corridor of undeveloped land preserved for recreation or conservation."}
+{"question": "What is complete streets?", "answer": "Complete streets are designed for safe access by all users including pedestrians and cyclists."}
+{"question": "What is walkability?", "answer": "Walkability measures how friendly an area is for walking."}
+{"question": "What is bikeability?", "answer": "Bikeability assesses how suitable an area is for cycling."}
+{"question": "What is pedestrian zone?", "answer": "A pedestrian zone is an area restricted to foot traffic."}
+{"question": "What is car-free zone?", "answer": "A car-free zone prohibits motor vehicle traffic."}
+{"question": "What is congestion pricing?", "answer": "Congestion pricing charges fees to drive in crowded urban areas during peak hours."}
+{"question": "What is park and ride?", "answer": "Park and ride facilities allow commuters to park and transfer to public transportation."}
+{"question": "What is bus rapid transit?", "answer": "Bus rapid transit is high-quality bus service with dedicated lanes and frequent service."}
+{"question": "What is light rail?", "answer": "Light rail is a form of urban rail transit lighter than heavy rail systems."}
+{"question": "What is subway?", "answer": "A subway is an underground rapid transit system."}
+{"question": "What is commuter rail?", "answer": "Commuter rail provides passenger service between a city and suburbs."}
+{"question": "What is high-speed rail?", "answer": "High-speed rail is passenger train service operating at speeds over two hundred fifty kilometers per hour."}
+{"question": "What is maglev?", "answer": "Maglev trains use magnetic levitation to travel at very high speeds without touching tracks."}
+{"question": "What is intermodal transportation?", "answer": "Intermodal transportation uses multiple modes of transport in a single journey."}
+{"question": "What is last-mile problem?", "answer": "Last-mile problem is the challenge of connecting transportation hubs to final destinations."}

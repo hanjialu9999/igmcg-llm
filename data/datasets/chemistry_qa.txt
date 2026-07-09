@@ -1,0 +1,694 @@
+What is chemistry?
+Chemistry is the scientific study of matter and its properties.
+What is an atom?
+An atom is the smallest unit of an element that retains its chemical properties.
+What is an element?
+An element is a pure substance consisting of only one type of atom.
+What is a molecule?
+A molecule is two or more atoms bonded together.
+What is the chemical symbol for sodium?
+The chemical symbol for sodium is Na.
+What is the chemical symbol for potassium?
+The chemical symbol for potassium is K.
+What is the chemical symbol for carbon?
+The chemical symbol for carbon is C.
+What is the chemical symbol for nitrogen?
+The chemical symbol for nitrogen is N.
+What is the chemical symbol for sulfur?
+The chemical symbol for sulfur is S.
+What is the chemical symbol for phosphorus?
+The chemical symbol for phosphorus is P.
+How many elements are naturally occurring?
+There are ninety-four naturally occurring elements.
+What is the lightest element?
+Hydrogen is the lightest element.
+What is a compound?
+A compound is a substance formed when two or more elements chemically bond together.
+What is the difference between an atom and a molecule?
+An atom is a single particle while a molecule contains two or more atoms bonded together.
+What are the three states of matter?
+The three states of matter are solid, liquid, and gas.
+What is a chemical bond?
+A chemical bond is a force that holds atoms together in molecules.
+What is an ionic bond?
+An ionic bond is formed when electrons are transferred from one atom to another.
+What is a covalent bond?
+A covalent bond is formed when atoms share electrons.
+What is the pH scale?
+The pH scale measures how acidic or basic a solution is from zero to fourteen.
+What pH value indicates a neutral solution?
+A pH value of seven indicates a neutral solution.
+What is an acid?
+An acid is a substance that donates hydrogen ions in solution.
+What is a base?
+A base is a substance that accepts hydrogen ions or donates hydroxide ions in solution.
+What is salt in chemistry?
+Salt is an ionic compound formed from the neutralization reaction between an acid and a base.
+What is the periodic table?
+The periodic table is an organized chart of all known chemical elements.
+Who created the periodic table?
+Dmitri Mendeleev is credited with creating the periodic table.
+What are the rows in the periodic table called?
+The rows in the periodic table are called periods.
+What are the columns in the periodic table called?
+The columns in the periodic table are called groups or families.
+What is an isotope?
+An isotope is a variant of an element with the same number of protons but different number of neutrons.
+What is atomic number?
+Atomic number is the number of protons in an atom's nucleus.
+What is atomic mass?
+Atomic mass is the total mass of protons and neutrons in an atom's nucleus.
+What is a proton?
+A proton is a positively charged particle found in the nucleus of an atom.
+What is a neutron?
+A neutron is a particle with no electric charge found in the nucleus of an atom.
+What is an electron?
+An electron is a negatively charged particle that orbits the nucleus of an atom.
+What is the charge of a proton?
+A proton has a positive charge of plus one.
+What is the charge of an electron?
+An electron has a negative charge of minus one.
+What is the charge of a neutron?
+A neutron has no electrical charge.
+What is valence?
+Valence is the combining capacity of an element determined by its outermost electrons.
+What are valence electrons?
+Valence electrons are the electrons in the outermost shell of an atom.
+What is an ion?
+An ion is an atom or molecule that has gained or lost electrons and has a net electric charge.
+What is a cation?
+A cation is a positively charged ion that has lost one or more electrons.
+What is an anion?
+An anion is a negatively charged ion that has gained one or more electrons.
+What is oxidation?
+Oxidation is the loss of electrons by a substance during a chemical reaction.
+What is reduction?
+Reduction is the gain of electrons by a substance during a chemical reaction.
+What is a redox reaction?
+A redox reaction is a chemical reaction involving both oxidation and reduction.
+What is a catalyst?
+A catalyst is a substance that increases the rate of a chemical reaction without being consumed.
+What is the law of conservation of mass?
+The law of conservation of mass states that matter cannot be created or destroyed in a chemical reaction.
+What is Avogadro's number?
+Avogadro's number is six point zero two times ten to the twenty-third power.
+What is a mole in chemistry?
+A mole is a unit representing six point zero two times ten to the twenty-third particles of a substance.
+What is molarity?
+Molarity is the concentration of a solution expressed as moles of solute per liter of solution.
+What is a solute?
+A solute is the substance that is dissolved in a solvent to form a solution.
+What is a solvent?
+A solvent is the substance that dissolves the solute to form a solution.
+What is a solution?
+A solution is a homogeneous mixture of two or more substances.
+What is a mixture?
+A mixture is a combination of two or more substances that are not chemically bonded.
+What is a homogeneous mixture?
+A homogeneous mixture has a uniform composition throughout.
+What is a heterogeneous mixture?
+A heterogeneous mixture has a non-uniform composition with visibly different parts.
+What is distillation?
+Distillation is a separation technique based on differences in boiling points.
+What is filtration?
+Filtration is a separation method that uses a barrier to separate solids from liquids or gases.
+What is chromatography?
+Chromatography is a technique for separating mixtures based on different affinities to a mobile and stationary phase.
+What is precipitation?
+Precipitation is the formation of a solid from a solution during a chemical reaction.
+What is a precipitate?
+A precipitate is the solid that forms when two solutions are mixed in a chemical reaction.
+What is an exothermic reaction?
+An exothermic reaction is a chemical reaction that releases heat energy.
+What is an endothermic reaction?
+An endothermic reaction is a chemical reaction that absorbs heat energy.
+What is enthalpy?
+Enthalpy is a measure of the total heat content in a thermodynamic system.
+What is entropy?
+Entropy is a measure of disorder or randomness in a system.
+What is activation energy?
+Activation energy is the minimum energy required for a chemical reaction to occur.
+What is equilibrium in chemistry?
+Equilibrium is the state where the forward and reverse reactions occur at equal rates.
+What is Le Chatelier's principle?
+Le Chatelier's principle states that a system at equilibrium will shift to counteract any applied stress.
+What is a buffer solution?
+A buffer solution is a solution that resists changes in pH when small amounts of acid or base are added.
+What is hydrolysis?
+Hydrolysis is a chemical reaction where water breaks down a compound into smaller molecules.
+What is electronegativity?
+Electronegativity is the ability of an atom to attract electrons in a chemical bond.
+Which element has the highest electronegativity?
+Fluorine has the highest electronegativity of all elements.
+What is a polar bond?
+A polar bond is a covalent bond where electrons are shared unequally between atoms.
+What is a nonpolar bond?
+A nonpolar bond is a covalent bond where electrons are shared equally between atoms.
+What is a dipole moment?
+A dipole moment is a measure of the separation of positive and negative charges in a molecule.
+What is hydrogen bonding?
+Hydrogen bonding is a strong intermolecular force between hydrogen and highly electronegative atoms.
+What are intermolecular forces?
+Intermolecular forces are attractive forces between molecules.
+What are van der Waals forces?
+Van der Waals forces are weak intermolecular forces including dipole and dispersion forces.
+What is sublimation?
+Sublimation is the phase transition from solid directly to gas without passing through liquid.
+What is deposition?
+Deposition is the phase transition from gas directly to solid without passing through liquid.
+What is condensation?
+Condensation is the phase transition from gas to liquid.
+What is vaporization?
+Vaporization is the phase transition from liquid to gas.
+What is melting?
+Melting is the phase transition from solid to liquid.
+What is freezing?
+Freezing is the phase transition from liquid to solid.
+What is the noble gas configuration?
+Noble gas configuration refers to the electron arrangement of noble gases with filled outer shells.
+What are noble gases?
+Noble gases are elements in group eighteen that are chemically inert due to filled electron shells.
+What are halogens?
+Halogens are elements in group seventeen that are highly reactive nonmetals.
+What are alkali metals?
+Alkali metals are elements in group one that are highly reactive metals.
+What are alkaline earth metals?
+Alkaline earth metals are elements in group two that are reactive metals.
+What are transition metals?
+Transition metals are elements in groups three through twelve with partially filled d orbitals.
+What is a metalloid?
+A metalloid is an element with properties intermediate between metals and nonmetals.
+What is combustion?
+Combustion is a chemical reaction between a fuel and oxygen that produces heat and light.
+What is complete combustion?
+Complete combustion occurs when a fuel burns in excess oxygen producing carbon dioxide and water.
+What is incomplete combustion?
+Incomplete combustion occurs when a fuel burns in limited oxygen producing carbon monoxide and soot.
+What is a hydrocarbon?
+A hydrocarbon is an organic compound consisting only of hydrogen and carbon atoms.
+What is organic chemistry?
+Organic chemistry is the study of carbon-containing compounds and their reactions.
+What is inorganic chemistry?
+Inorganic chemistry is the study of compounds that do not contain carbon-hydrogen bonds.
+What is a functional group?
+A functional group is a specific group of atoms that determines the chemical properties of organic molecules.
+What is an alkane?
+An alkane is a saturated hydrocarbon with only single bonds between carbon atoms.
+What is an alkene?
+An alkene is an unsaturated hydrocarbon with at least one carbon-carbon double bond.
+What is an alkyne?
+An alkyne is an unsaturated hydrocarbon with at least one carbon-carbon triple bond.
+What is an alcohol?
+An alcohol is an organic compound containing a hydroxyl group bonded to a carbon atom.
+What is an aldehyde?
+An aldehyde is an organic compound containing a carbonyl group bonded to at least one hydrogen atom.
+What is a ketone?
+A ketone is an organic compound containing a carbonyl group bonded to two carbon atoms.
+What is a carboxylic acid?
+A carboxylic acid is an organic compound containing a carboxyl group.
+What is an ester?
+An ester is an organic compound formed from the reaction between an alcohol and a carboxylic acid.
+What is an ether?
+An ether is an organic compound containing an oxygen atom bonded to two carbon atoms.
+What is an amine?
+An amine is an organic compound derived from ammonia with one or more hydrogen atoms replaced by alkyl groups.
+What is polymerization?
+Polymerization is a chemical reaction that combines monomers to form polymer chains.
+What is a monomer?
+A monomer is a small molecule that can bond with other monomers to form polymers.
+What is a polymer?
+A polymer is a large molecule composed of repeating monomer units.
+What is addition polymerization?
+Addition polymerization is a process where monomers add together without loss of atoms.
+What is condensation polymerization?
+Condensation polymerization is a process where monomers join with the loss of small molecules like water.
+What is isomerism?
+Isomerism is the existence of compounds with the same molecular formula but different structures.
+What are structural isomers?
+Structural isomers are compounds with the same molecular formula but different connectivity of atoms.
+What are stereoisomers?
+Stereoisomers are compounds with the same connectivity but different spatial arrangements of atoms.
+What are enantiomers?
+Enantiomers are stereoisomers that are non-superimposable mirror images of each other.
+What is chirality?
+Chirality is a property of molecules that are not superimposable on their mirror images.
+What is optical activity?
+Optical activity is the ability of chiral compounds to rotate plane-polarized light.
+What is benzene?
+Benzene is an aromatic hydrocarbon with a six-carbon ring and alternating double bonds.
+What is aromaticity?
+Aromaticity is a property of cyclic planar molecules with delocalized pi electrons that provide extra stability.
+What is resonance?
+Resonance is the delocalization of electrons across multiple bonds in a molecule.
+What is Huckel's rule?
+Huckel's rule states that aromatic compounds have four n plus two pi electrons where n is an integer.
+What is a carbocation?
+A carbocation is a positively charged carbon atom with only six electrons in its valence shell.
+What is a carbanion?
+A carbanion is a negatively charged carbon atom with eight electrons in its valence shell.
+What is a free radical?
+A free radical is a species with an unpaired electron.
+What is nucleophilic substitution?
+Nucleophilic substitution is a reaction where a nucleophile replaces a leaving group in a molecule.
+What is electrophilic addition?
+Electrophilic addition is a reaction where an electrophile adds to a carbon-carbon multiple bond.
+What is a nucleophile?
+A nucleophile is a species that donates an electron pair to form a chemical bond.
+What is an electrophile?
+An electrophile is a species that accepts an electron pair to form a chemical bond.
+What is a leaving group?
+A leaving group is an atom or group that departs during a substitution or elimination reaction.
+What is elimination reaction?
+An elimination reaction is a process where atoms are removed from a molecule forming a double or triple bond.
+What is Markovnikov's rule?
+Markovnikov's rule states that in addition reactions the hydrogen adds to the carbon with more hydrogens.
+What is anti-Markovnikov addition?
+Anti-Markovnikov addition occurs when the hydrogen adds to the carbon with fewer hydrogens.
+What is the SN1 mechanism?
+The SN1 mechanism is a two-step nucleophilic substitution with carbocation intermediate formation.
+What is the SN2 mechanism?
+The SN2 mechanism is a one-step nucleophilic substitution with simultaneous bond formation and breaking.
+What is the E1 mechanism?
+The E1 mechanism is a two-step elimination reaction with carbocation intermediate formation.
+What is the E2 mechanism?
+The E2 mechanism is a one-step elimination reaction occurring in a single concerted step.
+What is tautomerization?
+Tautomerization is the reversible interconversion between two structural isomers called tautomers.
+What is keto-enol tautomerism?
+Keto-enol tautomerism is the equilibrium between a ketone and its corresponding enol form.
+What is saponification?
+Saponification is the hydrolysis of an ester with a base to produce soap.
+What is esterification?
+Esterification is the reaction between an alcohol and carboxylic acid to form an ester and water.
+What is oxidation number?
+Oxidation number is a number assigned to an element indicating its degree of oxidation.
+What is a coordination compound?
+A coordination compound is a complex containing a central metal atom bonded to surrounding ligands.
+What is a ligand?
+A ligand is a molecule or ion that donates electron pairs to a central metal atom.
+What is the coordination number?
+The coordination number is the number of ligand attachment points to the central metal atom.
+What is crystal field theory?
+Crystal field theory explains the electronic structure of transition metal complexes based on electrostatic interactions.
+What is ligand field theory?
+Ligand field theory is an extension of crystal field theory incorporating covalent bonding aspects.
+What are d-orbitals?
+D-orbitals are the five atomic orbitals with angular momentum quantum number l equals two.
+What is crystal field splitting?
+Crystal field splitting is the energy difference between d-orbitals caused by ligand interactions.
+What is a strong field ligand?
+A strong field ligand causes large crystal field splitting and often leads to low-spin complexes.
+What is a weak field ligand?
+A weak field ligand causes small crystal field splitting and often leads to high-spin complexes.
+What is a high-spin complex?
+A high-spin complex has the maximum number of unpaired electrons in its d-orbitals.
+What is a low-spin complex?
+A low-spin complex has electrons paired in lower energy d-orbitals when possible.
+What is the spectrochemical series?
+The spectrochemical series ranks ligands by their ability to cause crystal field splitting.
+What is color in coordination compounds?
+Color arises from electronic transitions between d-orbitals when light is absorbed.
+What is paramagnetism?
+Paramagnetism is a property of substances with unpaired electrons that are attracted to magnetic fields.
+What is diamagnetism?
+Diamagnetism is a property of substances with all paired electrons that are slightly repelled by magnetic fields.
+What is ferromagnetism?
+Ferromagnetism is strong permanent magnetism resulting from aligned magnetic moments in materials.
+What is thermodynamics?
+Thermodynamics is the study of energy transformations and relationships between heat and work.
+What is the first law of thermodynamics?
+The first law states that energy cannot be created or destroyed only converted between forms.
+What is the second law of thermodynamics?
+The second law states that the entropy of an isolated system always increases over time.
+What is the third law of thermodynamics?
+The third law states that the entropy of a perfect crystal at absolute zero is zero.
+What is Gibbs free energy?
+Gibbs free energy is a thermodynamic potential that predicts the spontaneity of reactions at constant temperature and pressure.
+What is the relationship between Gibbs energy and equilibrium?
+At equilibrium the Gibbs free energy change is zero.
+What does negative Gibbs free energy indicate?
+Negative Gibbs free energy indicates a spontaneous reaction under given conditions.
+What does positive Gibbs free energy indicate?
+Positive Gibbs free energy indicates a non-spontaneous reaction under given conditions.
+What is standard state?
+Standard state refers to conditions of one atmosphere pressure and a specified temperature usually twenty-five degrees Celsius.
+What is reaction quotient?
+The reaction quotient Q is the ratio of product to reactant concentrations at any point during a reaction.
+What is the equilibrium constant?
+The equilibrium constant K is the ratio of product to reactant concentrations at equilibrium.
+What is the relationship between K and Gibbs energy?
+The standard Gibbs energy change equals negative RT times the natural logarithm of K.
+What is the rate law?
+The rate law expresses the relationship between reaction rate and reactant concentrations.
+What is reaction order?
+Reaction order is the sum of exponents in the rate law equation.
+What is a zero-order reaction?
+A zero-order reaction has a rate independent of reactant concentration.
+What is a first-order reaction?
+A first-order reaction has a rate directly proportional to one reactant concentration.
+What is a second-order reaction?
+A second-order reaction has a rate proportional to the square of concentration or product of two concentrations.
+What is half-life?
+Half-life is the time required for the concentration of a reactant to decrease to half its initial value.
+What is the Arrhenius equation?
+The Arrhenius equation relates reaction rate constant to temperature and activation energy.
+What is the rate-determining step?
+The rate-determining step is the slowest step in a reaction mechanism that controls the overall rate.
+What is a reaction mechanism?
+A reaction mechanism is the series of elementary steps that occur during a chemical reaction.
+What is an elementary step?
+An elementary step is a single molecular event in a reaction mechanism.
+What is molecularity?
+Molecularity is the number of molecules participating in an elementary step.
+What is a unimolecular reaction?
+A unimolecular reaction is an elementary step involving a single molecule.
+What is a bimolecular reaction?
+A bimolecular reaction is an elementary step involving two molecules.
+What is a termolecular reaction?
+A termolecular reaction is an elementary step involving three molecules.
+What is the steady-state approximation?
+The steady-state approximation assumes the concentration of reactive intermediates remains constant during reaction.
+What is pre-equilibrium approximation?
+Pre-equilibrium approximation assumes fast equilibrium established before the rate-determining step.
+What is enzyme catalysis?
+Enzyme catalysis is biological catalysis where enzymes accelerate specific biochemical reactions.
+What is the Michaelis-Menten equation?
+The Michaelis-Menten equation describes the rate of enzyme-catalyzed reactions as a function of substrate concentration.
+What is heterogeneous catalysis?
+Heterogeneous catalysis occurs when the catalyst and reactants are in different phases.
+What is homogeneous catalysis?
+Homogeneous catalysis occurs when the catalyst and reactants are in the same phase.
+What is the Haber process?
+The Haber process is the industrial synthesis of ammonia from nitrogen and hydrogen using an iron catalyst.
+What is the contact process?
+The contact process is the industrial production of sulfuric acid using vanadium pentoxide as catalyst.
+What is quantum chemistry?
+Quantum chemistry applies quantum mechanics principles to study electronic structure and chemical bonding.
+What is the Schrodinger equation?
+The Schrodinger equation is a fundamental equation in quantum mechanics describing wave functions.
+What is a wave function?
+A wave function is a mathematical description of the quantum state of a system.
+What is the Heisenberg uncertainty principle?
+The Heisenberg uncertainty principle states that position and momentum cannot be simultaneously known with arbitrary precision.
+What is electron spin?
+Electron spin is an intrinsic quantum property of electrons with values of plus or minus one half.
+What is the Pauli exclusion principle?
+The Pauli exclusion principle states that no two electrons can have identical quantum numbers.
+What is Hund's rule?
+Hund's rule states that electrons fill degenerate orbitals singly before pairing up.
+What is the aufbau principle?
+The aufbau principle states that electrons fill atomic orbitals from lowest to highest energy.
+What is hybridization?
+Hybridization is the mixing of atomic orbitals to form new hybrid orbitals for bonding.
+What is sp3 hybridization?
+SP3 hybridization involves mixing one s and three p orbitals to form four equivalent hybrid orbitals.
+What is sp2 hybridization?
+SP2 hybridization involves mixing one s and two p orbitals to form three equivalent hybrid orbitals.
+What is sp hybridization?
+SP hybridization involves mixing one s and one p orbital to form two equivalent hybrid orbitals.
+What is molecular orbital theory?
+Molecular orbital theory describes bonding through formation of molecular orbitals from atomic orbitals.
+What is a bonding orbital?
+A bonding orbital is a molecular orbital with lower energy than the constituent atomic orbitals.
+What is an antibonding orbital?
+An antibonding orbital is a molecular orbital with higher energy than the constituent atomic orbitals.
+What is bond order?
+Bond order is half the difference between the number of bonding and antibonding electrons.
+What is VSEPR theory?
+VSEPR theory predicts molecular geometry based on minimizing electron pair repulsions.
+What is a linear molecular geometry?
+Linear geometry occurs with two electron groups around the central atom with a one hundred eighty degree bond angle.
+What is a trigonal planar geometry?
+Trigonal planar geometry occurs with three electron groups with one hundred twenty degree bond angles.
+What is a tetrahedral geometry?
+Tetrahedral geometry occurs with four electron groups with one hundred nine point five degree bond angles.
+What is a trigonal bipyramidal geometry?
+Trigonal bipyramidal geometry occurs with five electron groups with ninety and one hundred twenty degree bond angles.
+What is an octahedral geometry?
+Octahedral geometry occurs with six electron groups arranged with ninety degree bond angles.
+What is electrochemistry?
+Electrochemistry studies chemical reactions involving the transfer of electrons through external circuits.
+What is an electrochemical cell?
+An electrochemical cell is a device that converts chemical energy into electrical energy or vice versa.
+What is a galvanic cell?
+A galvanic cell is an electrochemical cell that spontaneously generates electrical energy from redox reactions.
+What is an electrolytic cell?
+An electrolytic cell uses electrical energy to drive non-spontaneous chemical reactions.
+What is the anode?
+The anode is the electrode where oxidation occurs.
+What is the cathode?
+The cathode is the electrode where reduction occurs.
+What is standard electrode potential?
+Standard electrode potential is the voltage of a half-cell under standard conditions relative to the standard hydrogen electrode.
+What is the Nernst equation?
+The Nernst equation relates electrode potential to standard potential and concentrations of species involved.
+What is electrolysis?
+Electrolysis is the decomposition of a compound by passing electric current through it.
+What is Faraday's law of electrolysis?
+Faraday's law states that the amount of substance deposited is proportional to the charge passed.
+What is overpotential?
+Overpotential is the extra voltage required beyond thermodynamic potential to drive an electrochemical reaction.
+What is corrosion?
+Corrosion is the deterioration of metals through electrochemical oxidation reactions.
+What is a fuel cell?
+A fuel cell is an electrochemical device that continuously converts chemical energy from fuel into electricity.
+What is surface chemistry?
+Surface chemistry studies phenomena occurring at interfaces between phases.
+What is adsorption?
+Adsorption is the accumulation of molecules on a surface.
+What is absorption?
+Absorption is the incorporation of molecules throughout the bulk of a material.
+What is physisorption?
+Physisorption is weak adsorption through van der Waals forces.
+What is chemisorption?
+Chemisorption is strong adsorption involving chemical bond formation.
+What is the Langmuir isotherm?
+The Langmuir isotherm describes adsorption on surfaces with a finite number of identical sites.
+What is the BET theory?
+BET theory extends Langmuir theory to multilayer adsorption on surfaces.
+What is a colloid?
+A colloid is a mixture where particles are dispersed but not dissolved in a continuous medium.
+What is the Tyndall effect?
+The Tyndall effect is the scattering of light by colloidal particles making the beam visible.
+What is Brownian motion?
+Brownian motion is the random movement of particles suspended in a fluid due to molecular collisions.
+What is coagulation?
+Coagulation is the aggregation of colloidal particles into larger clusters.
+What is the critical micelle concentration?
+Critical micelle concentration is the concentration above which surfactant molecules form micelles.
+What is a micelle?
+A micelle is an aggregate of surfactant molecules with hydrophobic tails inside and hydrophilic heads outside.
+What is emulsification?
+Emulsification is the process of mixing two immiscible liquids using an emulsifying agent.
+What is nuclear chemistry?
+Nuclear chemistry studies reactions involving changes in atomic nuclei.
+What is radioactivity?
+Radioactivity is the spontaneous emission of particles or radiation from unstable atomic nuclei.
+What is alpha decay?
+Alpha decay is radioactive decay emitting a helium nucleus from the parent nucleus.
+What is beta decay?
+Beta decay is radioactive decay where a neutron converts to a proton emitting an electron.
+What is gamma decay?
+Gamma decay is the emission of high-energy photons from an excited nucleus.
+What is half-life in nuclear chemistry?
+Nuclear half-life is the time required for half the atoms in a radioactive sample to decay.
+What is nuclear fission?
+Nuclear fission is the splitting of heavy atomic nuclei into lighter nuclei releasing energy.
+What is nuclear fusion?
+Nuclear fusion is the combination of light atomic nuclei to form heavier nuclei releasing energy.
+What is the mass defect?
+Mass defect is the difference between the mass of a nucleus and the sum of its constituent particles.
+What is binding energy?
+Binding energy is the energy required to disassemble a nucleus into its constituent protons and neutrons.
+What is the strong nuclear force?
+The strong nuclear force is the fundamental force that binds protons and neutrons together in atomic nuclei.
+What is transmutation?
+Transmutation is the conversion of one element into another through nuclear reactions.
+What is a chain reaction?
+A chain reaction is a self-sustaining nuclear reaction where products initiate further reactions.
+What is critical mass?
+Critical mass is the minimum amount of fissile material needed to sustain a nuclear chain reaction.
+What is supramolecular chemistry?
+Supramolecular chemistry studies non-covalent interactions between molecules and assemblies beyond single molecules.
+What is host-guest chemistry?
+Host-guest chemistry involves selective binding between a host molecule and a guest molecule.
+What is molecular recognition?
+Molecular recognition is the specific binding between molecules through complementary interactions.
+What is a crown ether?
+A crown ether is a cyclic polyether that selectively binds metal cations.
+What is a cryptand?
+A cryptand is a bicyclic ligand that encapsulates metal ions with high selectivity.
+What are self-assembled monolayers?
+Self-assembled monolayers are ordered molecular assemblies formed spontaneously on surfaces.
+What is a rotaxane?
+A rotaxane is a mechanically interlocked molecule with a ring threaded onto a dumbbell-shaped molecule.
+What is a catenane?
+A catenane is a mechanically interlocked molecule consisting of two or more interlocking rings.
+What is molecular machinery?
+Molecular machinery refers to molecules that perform mechanical movements in response to external stimuli.
+What is green chemistry?
+Green chemistry is the design of chemical products and processes that reduce or eliminate hazardous substances.
+What are the twelve principles of green chemistry?
+The twelve principles guide sustainable chemical design including waste prevention, atom economy, and energy efficiency.
+What is atom economy?
+Atom economy measures the fraction of reactant atoms incorporated into the desired product.
+What is the E-factor?
+The E-factor is the mass ratio of waste to desired product in a chemical process.
+What is biocatalysis?
+Biocatalysis uses biological catalysts like enzymes to perform chemical transformations.
+What is metabolic engineering?
+Metabolic engineering modifies cellular metabolic pathways to produce desired compounds.
+What is click chemistry?
+Click chemistry is a set of highly efficient and selective reactions that quickly join molecular units.
+What is the azide-alkyne cycloaddition?
+The azide-alkyne cycloaddition is a click reaction forming triazoles from azides and terminal alkynes.
+What is photochemistry?
+Photochemistry studies chemical reactions initiated by absorption of light.
+What is the Jablonski diagram?
+The Jablonski diagram illustrates electronic energy levels and transitions in molecules upon light absorption.
+What is fluorescence?
+Fluorescence is emission of light during relaxation from an excited singlet state to ground state.
+What is phosphorescence?
+Phosphorescence is emission of light during relaxation from an excited triplet state to ground state.
+What is quantum yield?
+Quantum yield is the ratio of molecules reacting or emitting photons to photons absorbed.
+What is singlet oxygen?
+Singlet oxygen is an excited state of molecular oxygen that is highly reactive.
+What is photosensitization?
+Photosensitization is energy transfer from an excited photosensitizer molecule to another molecule.
+What is chemiluminescence?
+Chemiluminescence is emission of light resulting from a chemical reaction without external light source.
+What is bioluminescence?
+Bioluminescence is chemiluminescence produced by living organisms through enzymatic reactions.
+What is computational chemistry?
+Computational chemistry uses computer simulations to solve chemical problems and predict molecular properties.
+What is molecular dynamics?
+Molecular dynamics simulates the motion of atoms and molecules over time using classical mechanics.
+What is density functional theory?
+Density functional theory is a quantum mechanical method using electron density to determine molecular properties.
+What is the Hartree-Fock method?
+The Hartree-Fock method approximates the electronic wave function as a single determinant of molecular orbitals.
+What is ab initio calculation?
+Ab initio calculation derives molecular properties from first principles without empirical parameters.
+What is basis set?
+A basis set is a mathematical set of functions used to represent molecular orbitals in quantum calculations.
+What is molecular docking?
+Molecular docking predicts the binding orientation and affinity between molecules typically proteins and ligands.
+What is QSAR?
+QSAR is quantitative structure-activity relationship that correlates molecular structure with biological activity.
+What is the Born-Oppenheimer approximation?
+The Born-Oppenheimer approximation separates electronic and nuclear motion based on their mass difference.
+What is configuration interaction?
+Configuration interaction improves wave functions by mixing multiple electronic configurations.
+What is perturbation theory?
+Perturbation theory approximates complex quantum systems by adding corrections to solvable simpler systems.
+What is coupled cluster theory?
+Coupled cluster theory is a highly accurate method for calculating electronic structure using exponential wave function operators.
+What is the Thomas-Fermi model?
+The Thomas-Fermi model is an early approximation of electron distribution using statistical mechanics.
+What is electronegativity equalization?
+Electronegativity equalization principle states that electrons distribute to equalize electronegativity across a molecule.
+What is hard-soft acid-base theory?
+HSAB theory classifies acids and bases as hard or soft based on polarizability and predicts reaction preferences.
+What is frontier molecular orbital theory?
+Frontier molecular orbital theory uses HOMO and LUMO interactions to predict chemical reactivity.
+What is the HOMO?
+HOMO is the highest occupied molecular orbital containing electrons in a molecule.
+What is the LUMO?
+LUMO is the lowest unoccupied molecular orbital available for electron acceptance.
+What is the woodward-hoffmann rules?
+Woodward-Hoffmann rules predict stereochemistry of pericyclic reactions based on orbital symmetry conservation.
+What are pericyclic reactions?
+Pericyclic reactions are concerted processes with cyclic transition states involving reorganization of electrons.
+What is a Diels-Alder reaction?
+The Diels-Alder reaction is a cycloaddition between a conjugated diene and a dienophile forming a six-membered ring.
+What is sigmatropic rearrangement?
+Sigmatropic rearrangement is a pericyclic reaction where a sigma bond migrates across a pi system.
+What is electrocyclic reaction?
+An electrocyclic reaction is a pericyclic process where a conjugated polyene forms a cyclic compound.
+What is the Cope rearrangement?
+The Cope rearrangement is a sigmatropic rearrangement of one-five dienes to isomeric one-five dienes.
+What is the Claisen rearrangement?
+The Claisen rearrangement is a sigmatropic rearrangement of allyl vinyl ethers to gamma-delta unsaturated carbonyl compounds.
+What is retrosynthetic analysis?
+Retrosynthetic analysis is working backward from target molecule to available starting materials.
+What is a synthon?
+A synthon is an idealized fragment used in retrosynthetic analysis representing a synthetic equivalent.
+What is a protecting group?
+A protecting group temporarily masks a reactive functional group during multi-step synthesis.
+What is regioselectivity?
+Regioselectivity is the preferential formation of one constitutional isomer over others in a reaction.
+What is stereoselectivity?
+Stereoselectivity is the preferential formation of one stereoisomer over others in a reaction.
+What is enantioselectivity?
+Enantioselectivity is the preferential formation of one enantiomer over the other in a reaction.
+What is asymmetric synthesis?
+Asymmetric synthesis produces chiral molecules with preferential formation of one enantiomer.
+What is a chiral auxiliary?
+A chiral auxiliary is a chiral group temporarily attached to guide stereoselective reactions.
+What is enzymatic resolution?
+Enzymatic resolution separates enantiomers using enzyme specificity for one enantiomer.
+What is kinetic resolution?
+Kinetic resolution separates enantiomers by selective reaction of one enantiomer at a faster rate.
+What is dynamic kinetic resolution?
+Dynamic kinetic resolution combines racemization with kinetic resolution to convert all starting material to one product.
+What is organometallic chemistry?
+Organometallic chemistry studies compounds containing metal-carbon bonds.
+What is a Grignard reagent?
+A Grignard reagent is an organomagnesium compound used as a strong nucleophile in organic synthesis.
+What is a Gilman reagent?
+A Gilman reagent is an organocuprate compound used for conjugate addition and coupling reactions.
+What is the Suzuki coupling?
+The Suzuki coupling is a palladium-catalyzed cross-coupling between organoboron compounds and organic halides.
+What is the Heck reaction?
+The Heck reaction is a palladium-catalyzed coupling between alkenes and aryl or vinyl halides.
+What is metathesis?
+Metathesis is a catalytic reaction where substituents are exchanged between similar chemical species.
+What is olefin metathesis?
+Olefin metathesis exchanges alkylidene groups between alkenes using metal carbene catalysts.
+What is ring-opening metathesis polymerization?
+ROMP is polymerization of cyclic olefins through successive metathesis reactions creating polymer chains.
+What is the Grubbs catalyst?
+The Grubbs catalyst is a ruthenium-based carbene complex used for olefin metathesis reactions.
+What is oxidative addition?
+Oxidative addition is insertion of a substrate into a metal complex increasing oxidation state by two.
+What is reductive elimination?
+Reductive elimination is ejection of two ligands from a metal forming a new bond and reducing metal oxidation state.
+What is transmetallation?
+Transmetallation is transfer of organic groups from one metal to another.
+What is beta-hydride elimination?
+Beta-hydride elimination is removal of a beta hydrogen forming a metal hydride and an alkene.
+What is migratory insertion?
+Migratory insertion is a reaction where a ligand inserts into a metal-ligand bond.
+What is the eighteen-electron rule?
+The eighteen-electron rule states that stable transition metal complexes tend to have eighteen valence electrons.
+What is a pi-complex?
+A pi-complex is a coordination compound where a pi system coordinates to a metal center.
+What is back-bonding?
+Back-bonding is electron donation from filled metal d-orbitals to empty pi-antibonding orbitals of ligands.
+What is synergistic bonding?
+Synergistic bonding involves both sigma donation from ligand to metal and pi back-donation from metal to ligand.
+What is medicinal chemistry?
+Medicinal chemistry is the design and development of pharmaceutical drugs.
+What is a pharmacophore?
+A pharmacophore is the ensemble of molecular features necessary for biological activity.
+What is drug metabolism?
+Drug metabolism is biochemical modification of drugs by living organisms typically making them more water-soluble for excretion.
+What are cytochrome P450 enzymes?
+Cytochrome P450 enzymes are a family of enzymes responsible for metabolizing most drugs in the body.
+What is bioavailability?
+Bioavailability is the fraction of administered drug that reaches systemic circulation unchanged.
+What is the blood-brain barrier?
+The blood-brain barrier is a selective membrane preventing most substances from entering the brain from blood.
+What is a prodrug?
+A prodrug is an inactive compound that becomes active after metabolic conversion in the body.
+What is structure-activity relationship?
+SAR correlates changes in molecular structure with changes in biological activity.
+What is Lipinski's rule of five?
+Lipinski's rule predicts drug-likeness based on molecular weight, lipophilicity, hydrogen bond donors, and acceptors.
+What is high-throughput screening?
+High-throughput screening rapidly tests large numbers of compounds for biological activity.
+What is combinatorial chemistry?
+Combinatorial chemistry synthesizes large libraries of related compounds systematically.
+What is fragment-based drug discovery?
+Fragment-based drug discovery identifies small molecular fragments that bind weakly then elaborates them into drug candidates.

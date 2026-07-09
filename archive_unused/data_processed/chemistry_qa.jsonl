@@ -1,0 +1,347 @@
+{"question": "What is chemistry?", "answer": "Chemistry is the scientific study of matter and its properties."}
+{"question": "What is an atom?", "answer": "An atom is the smallest unit of an element that retains its chemical properties."}
+{"question": "What is an element?", "answer": "An element is a pure substance consisting of only one type of atom."}
+{"question": "What is a molecule?", "answer": "A molecule is two or more atoms bonded together."}
+{"question": "What is the chemical symbol for sodium?", "answer": "The chemical symbol for sodium is Na."}
+{"question": "What is the chemical symbol for potassium?", "answer": "The chemical symbol for potassium is K."}
+{"question": "What is the chemical symbol for carbon?", "answer": "The chemical symbol for carbon is C."}
+{"question": "What is the chemical symbol for nitrogen?", "answer": "The chemical symbol for nitrogen is N."}
+{"question": "What is the chemical symbol for sulfur?", "answer": "The chemical symbol for sulfur is S."}
+{"question": "What is the chemical symbol for phosphorus?", "answer": "The chemical symbol for phosphorus is P."}
+{"question": "How many elements are naturally occurring?", "answer": "There are ninety-four naturally occurring elements."}
+{"question": "What is the lightest element?", "answer": "Hydrogen is the lightest element."}
+{"question": "What is a compound?", "answer": "A compound is a substance formed when two or more elements chemically bond together."}
+{"question": "What is the difference between an atom and a molecule?", "answer": "An atom is a single particle while a molecule contains two or more atoms bonded together."}
+{"question": "What are the three states of matter?", "answer": "The three states of matter are solid, liquid, and gas."}
+{"question": "What is a chemical bond?", "answer": "A chemical bond is a force that holds atoms together in molecules."}
+{"question": "What is an ionic bond?", "answer": "An ionic bond is formed when electrons are transferred from one atom to another."}
+{"question": "What is a covalent bond?", "answer": "A covalent bond is formed when atoms share electrons."}
+{"question": "What is the pH scale?", "answer": "The pH scale measures how acidic or basic a solution is from zero to fourteen."}
+{"question": "What pH value indicates a neutral solution?", "answer": "A pH value of seven indicates a neutral solution."}
+{"question": "What is an acid?", "answer": "An acid is a substance that donates hydrogen ions in solution."}
+{"question": "What is a base?", "answer": "A base is a substance that accepts hydrogen ions or donates hydroxide ions in solution."}
+{"question": "What is salt in chemistry?", "answer": "Salt is an ionic compound formed from the neutralization reaction between an acid and a base."}
+{"question": "What is the periodic table?", "answer": "The periodic table is an organized chart of all known chemical elements."}
+{"question": "Who created the periodic table?", "answer": "Dmitri Mendeleev is credited with creating the periodic table."}
+{"question": "What are the rows in the periodic table called?", "answer": "The rows in the periodic table are called periods."}
+{"question": "What are the columns in the periodic table called?", "answer": "The columns in the periodic table are called groups or families."}
+{"question": "What is an isotope?", "answer": "An isotope is a variant of an element with the same number of protons but different number of neutrons."}
+{"question": "What is atomic number?", "answer": "Atomic number is the number of protons in an atom's nucleus."}
+{"question": "What is atomic mass?", "answer": "Atomic mass is the total mass of protons and neutrons in an atom's nucleus."}
+{"question": "What is a proton?", "answer": "A proton is a positively charged particle found in the nucleus of an atom."}
+{"question": "What is a neutron?", "answer": "A neutron is a particle with no electric charge found in the nucleus of an atom."}
+{"question": "What is an electron?", "answer": "An electron is a negatively charged particle that orbits the nucleus of an atom."}
+{"question": "What is the charge of a proton?", "answer": "A proton has a positive charge of plus one."}
+{"question": "What is the charge of an electron?", "answer": "An electron has a negative charge of minus one."}
+{"question": "What is the charge of a neutron?", "answer": "A neutron has no electrical charge."}
+{"question": "What is valence?", "answer": "Valence is the combining capacity of an element determined by its outermost electrons."}
+{"question": "What are valence electrons?", "answer": "Valence electrons are the electrons in the outermost shell of an atom."}
+{"question": "What is an ion?", "answer": "An ion is an atom or molecule that has gained or lost electrons and has a net electric charge."}
+{"question": "What is a cation?", "answer": "A cation is a positively charged ion that has lost one or more electrons."}
+{"question": "What is an anion?", "answer": "An anion is a negatively charged ion that has gained one or more electrons."}
+{"question": "What is oxidation?", "answer": "Oxidation is the loss of electrons by a substance during a chemical reaction."}
+{"question": "What is reduction?", "answer": "Reduction is the gain of electrons by a substance during a chemical reaction."}
+{"question": "What is a redox reaction?", "answer": "A redox reaction is a chemical reaction involving both oxidation and reduction."}
+{"question": "What is a catalyst?", "answer": "A catalyst is a substance that increases the rate of a chemical reaction without being consumed."}
+{"question": "What is the law of conservation of mass?", "answer": "The law of conservation of mass states that matter cannot be created or destroyed in a chemical reaction."}
+{"question": "What is Avogadro's number?", "answer": "Avogadro's number is six point zero two times ten to the twenty-third power."}
+{"question": "What is a mole in chemistry?", "answer": "A mole is a unit representing six point zero two times ten to the twenty-third particles of a substance."}
+{"question": "What is molarity?", "answer": "Molarity is the concentration of a solution expressed as moles of solute per liter of solution."}
+{"question": "What is a solute?", "answer": "A solute is the substance that is dissolved in a solvent to form a solution."}
+{"question": "What is a solvent?", "answer": "A solvent is the substance that dissolves the solute to form a solution."}
+{"question": "What is a solution?", "answer": "A solution is a homogeneous mixture of two or more substances."}
+{"question": "What is a mixture?", "answer": "A mixture is a combination of two or more substances that are not chemically bonded."}
+{"question": "What is a homogeneous mixture?", "answer": "A homogeneous mixture has a uniform composition throughout."}
+{"question": "What is a heterogeneous mixture?", "answer": "A heterogeneous mixture has a non-uniform composition with visibly different parts."}
+{"question": "What is distillation?", "answer": "Distillation is a separation technique based on differences in boiling points."}
+{"question": "What is filtration?", "answer": "Filtration is a separation method that uses a barrier to separate solids from liquids or gases."}
+{"question": "What is chromatography?", "answer": "Chromatography is a technique for separating mixtures based on different affinities to a mobile and stationary phase."}
+{"question": "What is precipitation?", "answer": "Precipitation is the formation of a solid from a solution during a chemical reaction."}
+{"question": "What is a precipitate?", "answer": "A precipitate is the solid that forms when two solutions are mixed in a chemical reaction."}
+{"question": "What is an exothermic reaction?", "answer": "An exothermic reaction is a chemical reaction that releases heat energy."}
+{"question": "What is an endothermic reaction?", "answer": "An endothermic reaction is a chemical reaction that absorbs heat energy."}
+{"question": "What is enthalpy?", "answer": "Enthalpy is a measure of the total heat content in a thermodynamic system."}
+{"question": "What is entropy?", "answer": "Entropy is a measure of disorder or randomness in a system."}
+{"question": "What is activation energy?", "answer": "Activation energy is the minimum energy required for a chemical reaction to occur."}
+{"question": "What is equilibrium in chemistry?", "answer": "Equilibrium is the state where the forward and reverse reactions occur at equal rates."}
+{"question": "What is Le Chatelier's principle?", "answer": "Le Chatelier's principle states that a system at equilibrium will shift to counteract any applied stress."}
+{"question": "What is a buffer solution?", "answer": "A buffer solution is a solution that resists changes in pH when small amounts of acid or base are added."}
+{"question": "What is hydrolysis?", "answer": "Hydrolysis is a chemical reaction where water breaks down a compound into smaller molecules."}
+{"question": "What is electronegativity?", "answer": "Electronegativity is the ability of an atom to attract electrons in a chemical bond."}
+{"question": "Which element has the highest electronegativity?", "answer": "Fluorine has the highest electronegativity of all elements."}
+{"question": "What is a polar bond?", "answer": "A polar bond is a covalent bond where electrons are shared unequally between atoms."}
+{"question": "What is a nonpolar bond?", "answer": "A nonpolar bond is a covalent bond where electrons are shared equally between atoms."}
+{"question": "What is a dipole moment?", "answer": "A dipole moment is a measure of the separation of positive and negative charges in a molecule."}
+{"question": "What is hydrogen bonding?", "answer": "Hydrogen bonding is a strong intermolecular force between hydrogen and highly electronegative atoms."}
+{"question": "What are intermolecular forces?", "answer": "Intermolecular forces are attractive forces between molecules."}
+{"question": "What are van der Waals forces?", "answer": "Van der Waals forces are weak intermolecular forces including dipole and dispersion forces."}
+{"question": "What is sublimation?", "answer": "Sublimation is the phase transition from solid directly to gas without passing through liquid."}
+{"question": "What is deposition?", "answer": "Deposition is the phase transition from gas directly to solid without passing through liquid."}
+{"question": "What is condensation?", "answer": "Condensation is the phase transition from gas to liquid."}
+{"question": "What is vaporization?", "answer": "Vaporization is the phase transition from liquid to gas."}
+{"question": "What is melting?", "answer": "Melting is the phase transition from solid to liquid."}
+{"question": "What is freezing?", "answer": "Freezing is the phase transition from liquid to solid."}
+{"question": "What is the noble gas configuration?", "answer": "Noble gas configuration refers to the electron arrangement of noble gases with filled outer shells."}
+{"question": "What are noble gases?", "answer": "Noble gases are elements in group eighteen that are chemically inert due to filled electron shells."}
+{"question": "What are halogens?", "answer": "Halogens are elements in group seventeen that are highly reactive nonmetals."}
+{"question": "What are alkali metals?", "answer": "Alkali metals are elements in group one that are highly reactive metals."}
+{"question": "What are alkaline earth metals?", "answer": "Alkaline earth metals are elements in group two that are reactive metals."}
+{"question": "What are transition metals?", "answer": "Transition metals are elements in groups three through twelve with partially filled d orbitals."}
+{"question": "What is a metalloid?", "answer": "A metalloid is an element with properties intermediate between metals and nonmetals."}
+{"question": "What is combustion?", "answer": "Combustion is a chemical reaction between a fuel and oxygen that produces heat and light."}
+{"question": "What is complete combustion?", "answer": "Complete combustion occurs when a fuel burns in excess oxygen producing carbon dioxide and water."}
+{"question": "What is incomplete combustion?", "answer": "Incomplete combustion occurs when a fuel burns in limited oxygen producing carbon monoxide and soot."}
+{"question": "What is a hydrocarbon?", "answer": "A hydrocarbon is an organic compound consisting only of hydrogen and carbon atoms."}
+{"question": "What is organic chemistry?", "answer": "Organic chemistry is the study of carbon-containing compounds and their reactions."}
+{"question": "What is inorganic chemistry?", "answer": "Inorganic chemistry is the study of compounds that do not contain carbon-hydrogen bonds."}
+{"question": "What is a functional group?", "answer": "A functional group is a specific group of atoms that determines the chemical properties of organic molecules."}
+{"question": "What is an alkane?", "answer": "An alkane is a saturated hydrocarbon with only single bonds between carbon atoms."}
+{"question": "What is an alkene?", "answer": "An alkene is an unsaturated hydrocarbon with at least one carbon-carbon double bond."}
+{"question": "What is an alkyne?", "answer": "An alkyne is an unsaturated hydrocarbon with at least one carbon-carbon triple bond."}
+{"question": "What is an alcohol?", "answer": "An alcohol is an organic compound containing a hydroxyl group bonded to a carbon atom."}
+{"question": "What is an aldehyde?", "answer": "An aldehyde is an organic compound containing a carbonyl group bonded to at least one hydrogen atom."}
+{"question": "What is a ketone?", "answer": "A ketone is an organic compound containing a carbonyl group bonded to two carbon atoms."}
+{"question": "What is a carboxylic acid?", "answer": "A carboxylic acid is an organic compound containing a carboxyl group."}
+{"question": "What is an ester?", "answer": "An ester is an organic compound formed from the reaction between an alcohol and a carboxylic acid."}
+{"question": "What is an ether?", "answer": "An ether is an organic compound containing an oxygen atom bonded to two carbon atoms."}
+{"question": "What is an amine?", "answer": "An amine is an organic compound derived from ammonia with one or more hydrogen atoms replaced by alkyl groups."}
+{"question": "What is polymerization?", "answer": "Polymerization is a chemical reaction that combines monomers to form polymer chains."}
+{"question": "What is a monomer?", "answer": "A monomer is a small molecule that can bond with other monomers to form polymers."}
+{"question": "What is a polymer?", "answer": "A polymer is a large molecule composed of repeating monomer units."}
+{"question": "What is addition polymerization?", "answer": "Addition polymerization is a process where monomers add together without loss of atoms."}
+{"question": "What is condensation polymerization?", "answer": "Condensation polymerization is a process where monomers join with the loss of small molecules like water."}
+{"question": "What is isomerism?", "answer": "Isomerism is the existence of compounds with the same molecular formula but different structures."}
+{"question": "What are structural isomers?", "answer": "Structural isomers are compounds with the same molecular formula but different connectivity of atoms."}
+{"question": "What are stereoisomers?", "answer": "Stereoisomers are compounds with the same connectivity but different spatial arrangements of atoms."}
+{"question": "What are enantiomers?", "answer": "Enantiomers are stereoisomers that are non-superimposable mirror images of each other."}
+{"question": "What is chirality?", "answer": "Chirality is a property of molecules that are not superimposable on their mirror images."}
+{"question": "What is optical activity?", "answer": "Optical activity is the ability of chiral compounds to rotate plane-polarized light."}
+{"question": "What is benzene?", "answer": "Benzene is an aromatic hydrocarbon with a six-carbon ring and alternating double bonds."}
+{"question": "What is aromaticity?", "answer": "Aromaticity is a property of cyclic planar molecules with delocalized pi electrons that provide extra stability."}
+{"question": "What is resonance?", "answer": "Resonance is the delocalization of electrons across multiple bonds in a molecule."}
+{"question": "What is Huckel's rule?", "answer": "Huckel's rule states that aromatic compounds have four n plus two pi electrons where n is an integer."}
+{"question": "What is a carbocation?", "answer": "A carbocation is a positively charged carbon atom with only six electrons in its valence shell."}
+{"question": "What is a carbanion?", "answer": "A carbanion is a negatively charged carbon atom with eight electrons in its valence shell."}
+{"question": "What is a free radical?", "answer": "A free radical is a species with an unpaired electron."}
+{"question": "What is nucleophilic substitution?", "answer": "Nucleophilic substitution is a reaction where a nucleophile replaces a leaving group in a molecule."}
+{"question": "What is electrophilic addition?", "answer": "Electrophilic addition is a reaction where an electrophile adds to a carbon-carbon multiple bond."}
+{"question": "What is a nucleophile?", "answer": "A nucleophile is a species that donates an electron pair to form a chemical bond."}
+{"question": "What is an electrophile?", "answer": "An electrophile is a species that accepts an electron pair to form a chemical bond."}
+{"question": "What is a leaving group?", "answer": "A leaving group is an atom or group that departs during a substitution or elimination reaction."}
+{"question": "What is elimination reaction?", "answer": "An elimination reaction is a process where atoms are removed from a molecule forming a double or triple bond."}
+{"question": "What is Markovnikov's rule?", "answer": "Markovnikov's rule states that in addition reactions the hydrogen adds to the carbon with more hydrogens."}
+{"question": "What is anti-Markovnikov addition?", "answer": "Anti-Markovnikov addition occurs when the hydrogen adds to the carbon with fewer hydrogens."}
+{"question": "What is the SN1 mechanism?", "answer": "The SN1 mechanism is a two-step nucleophilic substitution with carbocation intermediate formation."}
+{"question": "What is the SN2 mechanism?", "answer": "The SN2 mechanism is a one-step nucleophilic substitution with simultaneous bond formation and breaking."}
+{"question": "What is the E1 mechanism?", "answer": "The E1 mechanism is a two-step elimination reaction with carbocation intermediate formation."}
+{"question": "What is the E2 mechanism?", "answer": "The E2 mechanism is a one-step elimination reaction occurring in a single concerted step."}
+{"question": "What is tautomerization?", "answer": "Tautomerization is the reversible interconversion between two structural isomers called tautomers."}
+{"question": "What is keto-enol tautomerism?", "answer": "Keto-enol tautomerism is the equilibrium between a ketone and its corresponding enol form."}
+{"question": "What is saponification?", "answer": "Saponification is the hydrolysis of an ester with a base to produce soap."}
+{"question": "What is esterification?", "answer": "Esterification is the reaction between an alcohol and carboxylic acid to form an ester and water."}
+{"question": "What is oxidation number?", "answer": "Oxidation number is a number assigned to an element indicating its degree of oxidation."}
+{"question": "What is a coordination compound?", "answer": "A coordination compound is a complex containing a central metal atom bonded to surrounding ligands."}
+{"question": "What is a ligand?", "answer": "A ligand is a molecule or ion that donates electron pairs to a central metal atom."}
+{"question": "What is the coordination number?", "answer": "The coordination number is the number of ligand attachment points to the central metal atom."}
+{"question": "What is crystal field theory?", "answer": "Crystal field theory explains the electronic structure of transition metal complexes based on electrostatic interactions."}
+{"question": "What is ligand field theory?", "answer": "Ligand field theory is an extension of crystal field theory incorporating covalent bonding aspects."}
+{"question": "What are d-orbitals?", "answer": "D-orbitals are the five atomic orbitals with angular momentum quantum number l equals two."}
+{"question": "What is crystal field splitting?", "answer": "Crystal field splitting is the energy difference between d-orbitals caused by ligand interactions."}
+{"question": "What is a strong field ligand?", "answer": "A strong field ligand causes large crystal field splitting and often leads to low-spin complexes."}
+{"question": "What is a weak field ligand?", "answer": "A weak field ligand causes small crystal field splitting and often leads to high-spin complexes."}
+{"question": "What is a high-spin complex?", "answer": "A high-spin complex has the maximum number of unpaired electrons in its d-orbitals."}
+{"question": "What is a low-spin complex?", "answer": "A low-spin complex has electrons paired in lower energy d-orbitals when possible."}
+{"question": "What is the spectrochemical series?", "answer": "The spectrochemical series ranks ligands by their ability to cause crystal field splitting."}
+{"question": "What is color in coordination compounds?", "answer": "Color arises from electronic transitions between d-orbitals when light is absorbed."}
+{"question": "What is paramagnetism?", "answer": "Paramagnetism is a property of substances with unpaired electrons that are attracted to magnetic fields."}
+{"question": "What is diamagnetism?", "answer": "Diamagnetism is a property of substances with all paired electrons that are slightly repelled by magnetic fields."}
+{"question": "What is ferromagnetism?", "answer": "Ferromagnetism is strong permanent magnetism resulting from aligned magnetic moments in materials."}
+{"question": "What is thermodynamics?", "answer": "Thermodynamics is the study of energy transformations and relationships between heat and work."}
+{"question": "What is the first law of thermodynamics?", "answer": "The first law states that energy cannot be created or destroyed only converted between forms."}
+{"question": "What is the second law of thermodynamics?", "answer": "The second law states that the entropy of an isolated system always increases over time."}
+{"question": "What is the third law of thermodynamics?", "answer": "The third law states that the entropy of a perfect crystal at absolute zero is zero."}
+{"question": "What is Gibbs free energy?", "answer": "Gibbs free energy is a thermodynamic potential that predicts the spontaneity of reactions at constant temperature and pressure."}
+{"question": "What is the relationship between Gibbs energy and equilibrium?", "answer": "At equilibrium the Gibbs free energy change is zero."}
+{"question": "What does negative Gibbs free energy indicate?", "answer": "Negative Gibbs free energy indicates a spontaneous reaction under given conditions."}
+{"question": "What does positive Gibbs free energy indicate?", "answer": "Positive Gibbs free energy indicates a non-spontaneous reaction under given conditions."}
+{"question": "What is standard state?", "answer": "Standard state refers to conditions of one atmosphere pressure and a specified temperature usually twenty-five degrees Celsius."}
+{"question": "What is reaction quotient?", "answer": "The reaction quotient Q is the ratio of product to reactant concentrations at any point during a reaction."}
+{"question": "What is the equilibrium constant?", "answer": "The equilibrium constant K is the ratio of product to reactant concentrations at equilibrium."}
+{"question": "What is the relationship between K and Gibbs energy?", "answer": "The standard Gibbs energy change equals negative RT times the natural logarithm of K."}
+{"question": "What is the rate law?", "answer": "The rate law expresses the relationship between reaction rate and reactant concentrations."}
+{"question": "What is reaction order?", "answer": "Reaction order is the sum of exponents in the rate law equation."}
+{"question": "What is a zero-order reaction?", "answer": "A zero-order reaction has a rate independent of reactant concentration."}
+{"question": "What is a first-order reaction?", "answer": "A first-order reaction has a rate directly proportional to one reactant concentration."}
+{"question": "What is a second-order reaction?", "answer": "A second-order reaction has a rate proportional to the square of concentration or product of two concentrations."}
+{"question": "What is half-life?", "answer": "Half-life is the time required for the concentration of a reactant to decrease to half its initial value."}
+{"question": "What is the Arrhenius equation?", "answer": "The Arrhenius equation relates reaction rate constant to temperature and activation energy."}
+{"question": "What is the rate-determining step?", "answer": "The rate-determining step is the slowest step in a reaction mechanism that controls the overall rate."}
+{"question": "What is a reaction mechanism?", "answer": "A reaction mechanism is the series of elementary steps that occur during a chemical reaction."}
+{"question": "What is an elementary step?", "answer": "An elementary step is a single molecular event in a reaction mechanism."}
+{"question": "What is molecularity?", "answer": "Molecularity is the number of molecules participating in an elementary step."}
+{"question": "What is a unimolecular reaction?", "answer": "A unimolecular reaction is an elementary step involving a single molecule."}
+{"question": "What is a bimolecular reaction?", "answer": "A bimolecular reaction is an elementary step involving two molecules."}
+{"question": "What is a termolecular reaction?", "answer": "A termolecular reaction is an elementary step involving three molecules."}
+{"question": "What is the steady-state approximation?", "answer": "The steady-state approximation assumes the concentration of reactive intermediates remains constant during reaction."}
+{"question": "What is pre-equilibrium approximation?", "answer": "Pre-equilibrium approximation assumes fast equilibrium established before the rate-determining step."}
+{"question": "What is enzyme catalysis?", "answer": "Enzyme catalysis is biological catalysis where enzymes accelerate specific biochemical reactions."}
+{"question": "What is the Michaelis-Menten equation?", "answer": "The Michaelis-Menten equation describes the rate of enzyme-catalyzed reactions as a function of substrate concentration."}
+{"question": "What is heterogeneous catalysis?", "answer": "Heterogeneous catalysis occurs when the catalyst and reactants are in different phases."}
+{"question": "What is homogeneous catalysis?", "answer": "Homogeneous catalysis occurs when the catalyst and reactants are in the same phase."}
+{"question": "What is the Haber process?", "answer": "The Haber process is the industrial synthesis of ammonia from nitrogen and hydrogen using an iron catalyst."}
+{"question": "What is the contact process?", "answer": "The contact process is the industrial production of sulfuric acid using vanadium pentoxide as catalyst."}
+{"question": "What is quantum chemistry?", "answer": "Quantum chemistry applies quantum mechanics principles to study electronic structure and chemical bonding."}
+{"question": "What is the Schrodinger equation?", "answer": "The Schrodinger equation is a fundamental equation in quantum mechanics describing wave functions."}
+{"question": "What is a wave function?", "answer": "A wave function is a mathematical description of the quantum state of a system."}
+{"question": "What is the Heisenberg uncertainty principle?", "answer": "The Heisenberg uncertainty principle states that position and momentum cannot be simultaneously known with arbitrary precision."}
+{"question": "What is electron spin?", "answer": "Electron spin is an intrinsic quantum property of electrons with values of plus or minus one half."}
+{"question": "What is the Pauli exclusion principle?", "answer": "The Pauli exclusion principle states that no two electrons can have identical quantum numbers."}
+{"question": "What is Hund's rule?", "answer": "Hund's rule states that electrons fill degenerate orbitals singly before pairing up."}
+{"question": "What is the aufbau principle?", "answer": "The aufbau principle states that electrons fill atomic orbitals from lowest to highest energy."}
+{"question": "What is hybridization?", "answer": "Hybridization is the mixing of atomic orbitals to form new hybrid orbitals for bonding."}
+{"question": "What is sp3 hybridization?", "answer": "SP3 hybridization involves mixing one s and three p orbitals to form four equivalent hybrid orbitals."}
+{"question": "What is sp2 hybridization?", "answer": "SP2 hybridization involves mixing one s and two p orbitals to form three equivalent hybrid orbitals."}
+{"question": "What is sp hybridization?", "answer": "SP hybridization involves mixing one s and one p orbital to form two equivalent hybrid orbitals."}
+{"question": "What is molecular orbital theory?", "answer": "Molecular orbital theory describes bonding through formation of molecular orbitals from atomic orbitals."}
+{"question": "What is a bonding orbital?", "answer": "A bonding orbital is a molecular orbital with lower energy than the constituent atomic orbitals."}
+{"question": "What is an antibonding orbital?", "answer": "An antibonding orbital is a molecular orbital with higher energy than the constituent atomic orbitals."}
+{"question": "What is bond order?", "answer": "Bond order is half the difference between the number of bonding and antibonding electrons."}
+{"question": "What is VSEPR theory?", "answer": "VSEPR theory predicts molecular geometry based on minimizing electron pair repulsions."}
+{"question": "What is a linear molecular geometry?", "answer": "Linear geometry occurs with two electron groups around the central atom with a one hundred eighty degree bond angle."}
+{"question": "What is a trigonal planar geometry?", "answer": "Trigonal planar geometry occurs with three electron groups with one hundred twenty degree bond angles."}
+{"question": "What is a tetrahedral geometry?", "answer": "Tetrahedral geometry occurs with four electron groups with one hundred nine point five degree bond angles."}
+{"question": "What is a trigonal bipyramidal geometry?", "answer": "Trigonal bipyramidal geometry occurs with five electron groups with ninety and one hundred twenty degree bond angles."}
+{"question": "What is an octahedral geometry?", "answer": "Octahedral geometry occurs with six electron groups arranged with ninety degree bond angles."}
+{"question": "What is electrochemistry?", "answer": "Electrochemistry studies chemical reactions involving the transfer of electrons through external circuits."}
+{"question": "What is an electrochemical cell?", "answer": "An electrochemical cell is a device that converts chemical energy into electrical energy or vice versa."}
+{"question": "What is a galvanic cell?", "answer": "A galvanic cell is an electrochemical cell that spontaneously generates electrical energy from redox reactions."}
+{"question": "What is an electrolytic cell?", "answer": "An electrolytic cell uses electrical energy to drive non-spontaneous chemical reactions."}
+{"question": "What is the anode?", "answer": "The anode is the electrode where oxidation occurs."}
+{"question": "What is the cathode?", "answer": "The cathode is the electrode where reduction occurs."}
+{"question": "What is standard electrode potential?", "answer": "Standard electrode potential is the voltage of a half-cell under standard conditions relative to the standard hydrogen electrode."}
+{"question": "What is the Nernst equation?", "answer": "The Nernst equation relates electrode potential to standard potential and concentrations of species involved."}
+{"question": "What is electrolysis?", "answer": "Electrolysis is the decomposition of a compound by passing electric current through it."}
+{"question": "What is Faraday's law of electrolysis?", "answer": "Faraday's law states that the amount of substance deposited is proportional to the charge passed."}
+{"question": "What is overpotential?", "answer": "Overpotential is the extra voltage required beyond thermodynamic potential to drive an electrochemical reaction."}
+{"question": "What is corrosion?", "answer": "Corrosion is the deterioration of metals through electrochemical oxidation reactions."}
+{"question": "What is a fuel cell?", "answer": "A fuel cell is an electrochemical device that continuously converts chemical energy from fuel into electricity."}
+{"question": "What is surface chemistry?", "answer": "Surface chemistry studies phenomena occurring at interfaces between phases."}
+{"question": "What is adsorption?", "answer": "Adsorption is the accumulation of molecules on a surface."}
+{"question": "What is absorption?", "answer": "Absorption is the incorporation of molecules throughout the bulk of a material."}
+{"question": "What is physisorption?", "answer": "Physisorption is weak adsorption through van der Waals forces."}
+{"question": "What is chemisorption?", "answer": "Chemisorption is strong adsorption involving chemical bond formation."}
+{"question": "What is the Langmuir isotherm?", "answer": "The Langmuir isotherm describes adsorption on surfaces with a finite number of identical sites."}
+{"question": "What is the BET theory?", "answer": "BET theory extends Langmuir theory to multilayer adsorption on surfaces."}
+{"question": "What is a colloid?", "answer": "A colloid is a mixture where particles are dispersed but not dissolved in a continuous medium."}
+{"question": "What is the Tyndall effect?", "answer": "The Tyndall effect is the scattering of light by colloidal particles making the beam visible."}
+{"question": "What is Brownian motion?", "answer": "Brownian motion is the random movement of particles suspended in a fluid due to molecular collisions."}
+{"question": "What is coagulation?", "answer": "Coagulation is the aggregation of colloidal particles into larger clusters."}
+{"question": "What is the critical micelle concentration?", "answer": "Critical micelle concentration is the concentration above which surfactant molecules form micelles."}
+{"question": "What is a micelle?", "answer": "A micelle is an aggregate of surfactant molecules with hydrophobic tails inside and hydrophilic heads outside."}
+{"question": "What is emulsification?", "answer": "Emulsification is the process of mixing two immiscible liquids using an emulsifying agent."}
+{"question": "What is nuclear chemistry?", "answer": "Nuclear chemistry studies reactions involving changes in atomic nuclei."}
+{"question": "What is radioactivity?", "answer": "Radioactivity is the spontaneous emission of particles or radiation from unstable atomic nuclei."}
+{"question": "What is alpha decay?", "answer": "Alpha decay is radioactive decay emitting a helium nucleus from the parent nucleus."}
+{"question": "What is beta decay?", "answer": "Beta decay is radioactive decay where a neutron converts to a proton emitting an electron."}
+{"question": "What is gamma decay?", "answer": "Gamma decay is the emission of high-energy photons from an excited nucleus."}
+{"question": "What is half-life in nuclear chemistry?", "answer": "Nuclear half-life is the time required for half the atoms in a radioactive sample to decay."}
+{"question": "What is nuclear fission?", "answer": "Nuclear fission is the splitting of heavy atomic nuclei into lighter nuclei releasing energy."}
+{"question": "What is nuclear fusion?", "answer": "Nuclear fusion is the combination of light atomic nuclei to form heavier nuclei releasing energy."}
+{"question": "What is the mass defect?", "answer": "Mass defect is the difference between the mass of a nucleus and the sum of its constituent particles."}
+{"question": "What is binding energy?", "answer": "Binding energy is the energy required to disassemble a nucleus into its constituent protons and neutrons."}
+{"question": "What is the strong nuclear force?", "answer": "The strong nuclear force is the fundamental force that binds protons and neutrons together in atomic nuclei."}
+{"question": "What is transmutation?", "answer": "Transmutation is the conversion of one element into another through nuclear reactions."}
+{"question": "What is a chain reaction?", "answer": "A chain reaction is a self-sustaining nuclear reaction where products initiate further reactions."}
+{"question": "What is critical mass?", "answer": "Critical mass is the minimum amount of fissile material needed to sustain a nuclear chain reaction."}
+{"question": "What is supramolecular chemistry?", "answer": "Supramolecular chemistry studies non-covalent interactions between molecules and assemblies beyond single molecules."}
+{"question": "What is host-guest chemistry?", "answer": "Host-guest chemistry involves selective binding between a host molecule and a guest molecule."}
+{"question": "What is molecular recognition?", "answer": "Molecular recognition is the specific binding between molecules through complementary interactions."}
+{"question": "What is a crown ether?", "answer": "A crown ether is a cyclic polyether that selectively binds metal cations."}
+{"question": "What is a cryptand?", "answer": "A cryptand is a bicyclic ligand that encapsulates metal ions with high selectivity."}
+{"question": "What are self-assembled monolayers?", "answer": "Self-assembled monolayers are ordered molecular assemblies formed spontaneously on surfaces."}
+{"question": "What is a rotaxane?", "answer": "A rotaxane is a mechanically interlocked molecule with a ring threaded onto a dumbbell-shaped molecule."}
+{"question": "What is a catenane?", "answer": "A catenane is a mechanically interlocked molecule consisting of two or more interlocking rings."}
+{"question": "What is molecular machinery?", "answer": "Molecular machinery refers to molecules that perform mechanical movements in response to external stimuli."}
+{"question": "What is green chemistry?", "answer": "Green chemistry is the design of chemical products and processes that reduce or eliminate hazardous substances."}
+{"question": "What are the twelve principles of green chemistry?", "answer": "The twelve principles guide sustainable chemical design including waste prevention, atom economy, and energy efficiency."}
+{"question": "What is atom economy?", "answer": "Atom economy measures the fraction of reactant atoms incorporated into the desired product."}
+{"question": "What is the E-factor?", "answer": "The E-factor is the mass ratio of waste to desired product in a chemical process."}
+{"question": "What is biocatalysis?", "answer": "Biocatalysis uses biological catalysts like enzymes to perform chemical transformations."}
+{"question": "What is metabolic engineering?", "answer": "Metabolic engineering modifies cellular metabolic pathways to produce desired compounds."}
+{"question": "What is click chemistry?", "answer": "Click chemistry is a set of highly efficient and selective reactions that quickly join molecular units."}
+{"question": "What is the azide-alkyne cycloaddition?", "answer": "The azide-alkyne cycloaddition is a click reaction forming triazoles from azides and terminal alkynes."}
+{"question": "What is photochemistry?", "answer": "Photochemistry studies chemical reactions initiated by absorption of light."}
+{"question": "What is the Jablonski diagram?", "answer": "The Jablonski diagram illustrates electronic energy levels and transitions in molecules upon light absorption."}
+{"question": "What is fluorescence?", "answer": "Fluorescence is emission of light during relaxation from an excited singlet state to ground state."}
+{"question": "What is phosphorescence?", "answer": "Phosphorescence is emission of light during relaxation from an excited triplet state to ground state."}
+{"question": "What is quantum yield?", "answer": "Quantum yield is the ratio of molecules reacting or emitting photons to photons absorbed."}
+{"question": "What is singlet oxygen?", "answer": "Singlet oxygen is an excited state of molecular oxygen that is highly reactive."}
+{"question": "What is photosensitization?", "answer": "Photosensitization is energy transfer from an excited photosensitizer molecule to another molecule."}
+{"question": "What is chemiluminescence?", "answer": "Chemiluminescence is emission of light resulting from a chemical reaction without external light source."}
+{"question": "What is bioluminescence?", "answer": "Bioluminescence is chemiluminescence produced by living organisms through enzymatic reactions."}
+{"question": "What is computational chemistry?", "answer": "Computational chemistry uses computer simulations to solve chemical problems and predict molecular properties."}
+{"question": "What is molecular dynamics?", "answer": "Molecular dynamics simulates the motion of atoms and molecules over time using classical mechanics."}
+{"question": "What is density functional theory?", "answer": "Density functional theory is a quantum mechanical method using electron density to determine molecular properties."}
+{"question": "What is the Hartree-Fock method?", "answer": "The Hartree-Fock method approximates the electronic wave function as a single determinant of molecular orbitals."}
+{"question": "What is ab initio calculation?", "answer": "Ab initio calculation derives molecular properties from first principles without empirical parameters."}
+{"question": "What is basis set?", "answer": "A basis set is a mathematical set of functions used to represent molecular orbitals in quantum calculations."}
+{"question": "What is molecular docking?", "answer": "Molecular docking predicts the binding orientation and affinity between molecules typically proteins and ligands."}
+{"question": "What is QSAR?", "answer": "QSAR is quantitative structure-activity relationship that correlates molecular structure with biological activity."}
+{"question": "What is the Born-Oppenheimer approximation?", "answer": "The Born-Oppenheimer approximation separates electronic and nuclear motion based on their mass difference."}
+{"question": "What is configuration interaction?", "answer": "Configuration interaction improves wave functions by mixing multiple electronic configurations."}
+{"question": "What is perturbation theory?", "answer": "Perturbation theory approximates complex quantum systems by adding corrections to solvable simpler systems."}
+{"question": "What is coupled cluster theory?", "answer": "Coupled cluster theory is a highly accurate method for calculating electronic structure using exponential wave function operators."}
+{"question": "What is the Thomas-Fermi model?", "answer": "The Thomas-Fermi model is an early approximation of electron distribution using statistical mechanics."}
+{"question": "What is electronegativity equalization?", "answer": "Electronegativity equalization principle states that electrons distribute to equalize electronegativity across a molecule."}
+{"question": "What is hard-soft acid-base theory?", "answer": "HSAB theory classifies acids and bases as hard or soft based on polarizability and predicts reaction preferences."}
+{"question": "What is frontier molecular orbital theory?", "answer": "Frontier molecular orbital theory uses HOMO and LUMO interactions to predict chemical reactivity."}
+{"question": "What is the HOMO?", "answer": "HOMO is the highest occupied molecular orbital containing electrons in a molecule."}
+{"question": "What is the LUMO?", "answer": "LUMO is the lowest unoccupied molecular orbital available for electron acceptance."}
+{"question": "What is the woodward-hoffmann rules?", "answer": "Woodward-Hoffmann rules predict stereochemistry of pericyclic reactions based on orbital symmetry conservation."}
+{"question": "What are pericyclic reactions?", "answer": "Pericyclic reactions are concerted processes with cyclic transition states involving reorganization of electrons."}
+{"question": "What is a Diels-Alder reaction?", "answer": "The Diels-Alder reaction is a cycloaddition between a conjugated diene and a dienophile forming a six-membered ring."}
+{"question": "What is sigmatropic rearrangement?", "answer": "Sigmatropic rearrangement is a pericyclic reaction where a sigma bond migrates across a pi system."}
+{"question": "What is electrocyclic reaction?", "answer": "An electrocyclic reaction is a pericyclic process where a conjugated polyene forms a cyclic compound."}
+{"question": "What is the Cope rearrangement?", "answer": "The Cope rearrangement is a sigmatropic rearrangement of one-five dienes to isomeric one-five dienes."}
+{"question": "What is the Claisen rearrangement?", "answer": "The Claisen rearrangement is a sigmatropic rearrangement of allyl vinyl ethers to gamma-delta unsaturated carbonyl compounds."}
+{"question": "What is retrosynthetic analysis?", "answer": "Retrosynthetic analysis is working backward from target molecule to available starting materials."}
+{"question": "What is a synthon?", "answer": "A synthon is an idealized fragment used in retrosynthetic analysis representing a synthetic equivalent."}
+{"question": "What is a protecting group?", "answer": "A protecting group temporarily masks a reactive functional group during multi-step synthesis."}
+{"question": "What is regioselectivity?", "answer": "Regioselectivity is the preferential formation of one constitutional isomer over others in a reaction."}
+{"question": "What is stereoselectivity?", "answer": "Stereoselectivity is the preferential formation of one stereoisomer over others in a reaction."}
+{"question": "What is enantioselectivity?", "answer": "Enantioselectivity is the preferential formation of one enantiomer over the other in a reaction."}
+{"question": "What is asymmetric synthesis?", "answer": "Asymmetric synthesis produces chiral molecules with preferential formation of one enantiomer."}
+{"question": "What is a chiral auxiliary?", "answer": "A chiral auxiliary is a chiral group temporarily attached to guide stereoselective reactions."}
+{"question": "What is enzymatic resolution?", "answer": "Enzymatic resolution separates enantiomers using enzyme specificity for one enantiomer."}
+{"question": "What is kinetic resolution?", "answer": "Kinetic resolution separates enantiomers by selective reaction of one enantiomer at a faster rate."}
+{"question": "What is dynamic kinetic resolution?", "answer": "Dynamic kinetic resolution combines racemization with kinetic resolution to convert all starting material to one product."}
+{"question": "What is organometallic chemistry?", "answer": "Organometallic chemistry studies compounds containing metal-carbon bonds."}
+{"question": "What is a Grignard reagent?", "answer": "A Grignard reagent is an organomagnesium compound used as a strong nucleophile in organic synthesis."}
+{"question": "What is a Gilman reagent?", "answer": "A Gilman reagent is an organocuprate compound used for conjugate addition and coupling reactions."}
+{"question": "What is the Suzuki coupling?", "answer": "The Suzuki coupling is a palladium-catalyzed cross-coupling between organoboron compounds and organic halides."}
+{"question": "What is the Heck reaction?", "answer": "The Heck reaction is a palladium-catalyzed coupling between alkenes and aryl or vinyl halides."}
+{"question": "What is metathesis?", "answer": "Metathesis is a catalytic reaction where substituents are exchanged between similar chemical species."}
+{"question": "What is olefin metathesis?", "answer": "Olefin metathesis exchanges alkylidene groups between alkenes using metal carbene catalysts."}
+{"question": "What is ring-opening metathesis polymerization?", "answer": "ROMP is polymerization of cyclic olefins through successive metathesis reactions creating polymer chains."}
+{"question": "What is the Grubbs catalyst?", "answer": "The Grubbs catalyst is a ruthenium-based carbene complex used for olefin metathesis reactions."}
+{"question": "What is oxidative addition?", "answer": "Oxidative addition is insertion of a substrate into a metal complex increasing oxidation state by two."}
+{"question": "What is reductive elimination?", "answer": "Reductive elimination is ejection of two ligands from a metal forming a new bond and reducing metal oxidation state."}
+{"question": "What is transmetallation?", "answer": "Transmetallation is transfer of organic groups from one metal to another."}
+{"question": "What is beta-hydride elimination?", "answer": "Beta-hydride elimination is removal of a beta hydrogen forming a metal hydride and an alkene."}
+{"question": "What is migratory insertion?", "answer": "Migratory insertion is a reaction where a ligand inserts into a metal-ligand bond."}
+{"question": "What is the eighteen-electron rule?", "answer": "The eighteen-electron rule states that stable transition metal complexes tend to have eighteen valence electrons."}
+{"question": "What is a pi-complex?", "answer": "A pi-complex is a coordination compound where a pi system coordinates to a metal center."}
+{"question": "What is back-bonding?", "answer": "Back-bonding is electron donation from filled metal d-orbitals to empty pi-antibonding orbitals of ligands."}
+{"question": "What is synergistic bonding?", "answer": "Synergistic bonding involves both sigma donation from ligand to metal and pi back-donation from metal to ligand."}
+{"question": "What is medicinal chemistry?", "answer": "Medicinal chemistry is the design and development of pharmaceutical drugs."}
+{"question": "What is a pharmacophore?", "answer": "A pharmacophore is the ensemble of molecular features necessary for biological activity."}
+{"question": "What is drug metabolism?", "answer": "Drug metabolism is biochemical modification of drugs by living organisms typically making them more water-soluble for excretion."}
+{"question": "What are cytochrome P450 enzymes?", "answer": "Cytochrome P450 enzymes are a family of enzymes responsible for metabolizing most drugs in the body."}
+{"question": "What is bioavailability?", "answer": "Bioavailability is the fraction of administered drug that reaches systemic circulation unchanged."}
+{"question": "What is the blood-brain barrier?", "answer": "The blood-brain barrier is a selective membrane preventing most substances from entering the brain from blood."}
+{"question": "What is a prodrug?", "answer": "A prodrug is an inactive compound that becomes active after metabolic conversion in the body."}
+{"question": "What is structure-activity relationship?", "answer": "SAR correlates changes in molecular structure with changes in biological activity."}
+{"question": "What is Lipinski's rule of five?", "answer": "Lipinski's rule predicts drug-likeness based on molecular weight, lipophilicity, hydrogen bond donors, and acceptors."}
+{"question": "What is high-throughput screening?", "answer": "High-throughput screening rapidly tests large numbers of compounds for biological activity."}
+{"question": "What is combinatorial chemistry?", "answer": "Combinatorial chemistry synthesizes large libraries of related compounds systematically."}
+{"question": "What is fragment-based drug discovery?", "answer": "Fragment-based drug discovery identifies small molecular fragments that bind weakly then elaborates them into drug candidates."}

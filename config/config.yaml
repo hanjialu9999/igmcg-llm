@@ -1,0 +1,39 @@
+# Model Configuration
+model:
+  vocab_size: 8731
+  embedding_dim: 512
+  num_heads: 8
+  num_layers: 6
+  hidden_dim: 1024
+  max_seq_length: 64
+  dropout: 0.1
+
+# Training Configuration
+training:
+  batch_size: 128  # Further increased from 64 to 128
+  epochs: 200
+  learning_rate: 0.0005
+  weight_decay: 0.0001
+  gradient_clip: 1.0
+  warmup_steps: 30
+  early_stop_patience: 10
+  
+# Data Configuration
+data:
+  train_file: "data/train_data_final.txt"
+  vocab_size: 8731
+  max_seq_length: 64
+  num_workers: 0  # Windows requires 0 (no multiprocessing data loading)
+  prefetch: 2
+  test_split: 0.1
+  
+# Paths
+paths:
+  checkpoint_dir: "checkpoints"
+  log_dir: "logs"
+  
+# Device
+device: "cuda"  # or "cpu"
+
+# Seed for reproducibility
+seed: 42
