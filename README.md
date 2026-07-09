@@ -72,6 +72,24 @@ pip install -r requirements.txt
 设备选择由 `models/device.py` 的 `get_device()` 统一处理，配置项 `config.yaml` 的
 `device: "auto"` 即为自动探测（也可显式写 `"cuda"` / `"cpu"` / `"dml"`）。
 
+## 专用环境（AMD / Intel 核显，Windows）
+
+本机若只有核显（如 AMD Radeon 780M），推荐单独建一个 Python 3.11 虚拟环境来启用 DirectML
+（torch-directml 不支持过新的 Python）：
+
+```bash
+py -3.11 -m venv .amd_venv
+.amd_venv\Scripts\activate
+pip install -r requirements-amd.txt
+```
+
+之后用该环境运行训练/生成，`device: "auto"` 会自动探测到 DirectML 并在核显上计算。
+
+> 说明：torch-directml 在**训练（train 模式）**下主体算子（注意力 / 线性层）都在核显上跑，
+> 仅优化器的个别小算子会回退 CPU，因此训练可获加速；**生成（eval 模式）**时 Transformer
+> 编码层的融合算子 DirectML 暂不支持、会回退 CPU，但功能正常、不影响结果。这是后端限制，
+> 非代码问题。如追求生成也在 GPU 上跑，建议使用 ROCm（Linux）环境。
+
 ## 快速开始
 
 ```bash

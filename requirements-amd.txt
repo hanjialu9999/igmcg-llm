@@ -1,0 +1,17 @@
+# 专用环境：Windows + AMD / Intel 核显或独显，通过 DirectML 使用 GPU
+#
+# 重要：torch-directml 需要 Python 3.10 / 3.11（不支持更新的 Python 版本），
+# 且会自行拉取兼容的 torch（当前为 torch 2.4.x），因此本文件不再固定 torch 版本。
+#
+# 创建与使用：
+#   py -3.11 -m venv .amd_venv
+#   .amd_venv\Scripts\activate
+#   pip install -r requirements-amd.txt
+#
+# 之后正常训练/生成即可，device 设为 "auto" 时会自动探测并启用 DirectML：
+#   python scripts/train.py --config config/config.yaml
+
+torch-directml
+pyyaml==6.0
+numpy==1.24.3
+tqdm

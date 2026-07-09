@@ -6,6 +6,11 @@ __pycache__/
 build/
 dist/
 
+# Virtual environments (don't commit)
+.my_venv/
+.amd_venv/
+venv/
+
 # Model checkpoints & large artifacts (do NOT commit)
 *.pt
 *.pth
