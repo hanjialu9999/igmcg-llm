@@ -13,6 +13,12 @@ from datetime import datetime
 import json
 import numpy as np
 
+try:
+    from tqdm import tqdm
+    HAS_TQDM = True
+except ImportError:
+    HAS_TQDM = False
+
 # Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
@@ -82,7 +88,8 @@ def compute_lr(eff_step, total_eff, warmup_target, base_lr, eta_min, lr_schedule
 def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
                 warmup_steps=0, base_lr=0.0005, gradient_clip=1.0, scaler=None,
                 use_amp=True, autocast_dtype=torch.float32, grad_accum_steps=1,
-                lr_schedule='cosine', eta_min=0.0, wsd_decay_frac=0.1):
+                lr_schedule='cosine', eta_min=0.0, wsd_decay_frac=0.1,
+                show_progress=True):
     """Train one epoch with warmup, gradient accumulation and mixed precision.
 
     - warmup_steps: 预热步数。若 <1 则按"占整个 epoch 有效步数的比例"解释（如 0.1=前 10% 步预热）。
@@ -100,7 +107,10 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
     accumulated = 0
     eff_step = 0
 
-    for batch_idx, batch in enumerate(dataloader):
+    progress = tqdm(dataloader, desc=f"Epoch {epoch}", total=total_steps,
+                    leave=True) if (HAS_TQDM and show_progress) else None
+
+    for batch_idx, batch in enumerate(progress if progress is not None else dataloader):
         input_ids = batch['input_ids'].to(device)
         target_ids = batch['target_ids'].to(device)
 
@@ -145,9 +155,15 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
 
         loss_meter.update(loss.item() * grad_accum_steps)
 
-        if (batch_idx + 1) % 10 == 0:
+        if progress is not None:
+            progress.set_postfix(loss=f"{loss_meter.avg:.4f}",
+                                 lr=f"{optimizer.param_groups[0]['lr']:.6f}")
+        elif (batch_idx + 1) % 10 == 0:
             print(f"Epoch {epoch} | Batch {batch_idx + 1}/{total_steps} | "
                   f"Loss: {loss_meter.avg:.4f} | LR: {optimizer.param_groups[0]['lr']:.6f}")
+
+    if progress is not None:
+        progress.close()
 
     # Flush any leftover accumulated gradients
     if accumulated % grad_accum_steps != 0:
