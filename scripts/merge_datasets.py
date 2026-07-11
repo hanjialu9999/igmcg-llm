@@ -79,5 +79,5 @@ if __name__ == '__main__':
         stats()
     else:
         merge_datasets()
-        print("\n提示: 修改 config/config.yaml 中的 train_file 为:")
+        print("\n提示: 修改 configs/pretrain.yaml 中的 train_file 为:")
         print('      train_file: "data/train_data_combined.txt"')

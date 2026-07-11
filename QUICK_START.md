@@ -23,7 +23,7 @@ python scripts/process_data.py         # 转换为 jsonl（可选）
 ## 3. 训练语言模型（基座模型）
 
 ```bash
-python scripts/train.py --config config/pretrain.yaml
+python scripts/train.py --config configs/pretrain.yaml
 ```
 
 训练结束后会在 `checkpoints/` 下生成：
@@ -66,6 +66,6 @@ python scripts/tuning/showcase_optimal_params.py  # 展示最优参数并回写 
 ## 常见问题
 
 - **`FileNotFoundError: vocab.json`**：先执行第 3 步训练（或单独构建词表）。
-- **想换模型结构**：只改 `config/config.yaml` 的 `model` 段，所有脚本会自动同步。
+- **想换模型结构**：只改 `configs/pretrain.yaml` 的 `model` 段，所有脚本会自动同步。
 - **显存不足**：在 `config.yaml` 调小 `training.batch_size`，或在 `train_finetune.py`
   中减小 `DataLoader` 的 `batch_size`。

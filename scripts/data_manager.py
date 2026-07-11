@@ -185,7 +185,7 @@ def merge_datasets():
     print(f"输出文件: {output_path}")
     print(f"总句数: {total_lines}")
     print(f"\n接下来的步骤:")
-    print(f"1. 编辑 config/config.yaml")
+    print(f"1. 编辑 configs/pretrain.yaml")
     print(f'2. 修改 train_file: "{output}"')
     print(f"3. 运行 python scripts/train.py")
     print("="*60)

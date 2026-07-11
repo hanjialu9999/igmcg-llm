@@ -183,31 +183,25 @@ class TextDataset(Dataset):
         return len(self.texts)
     
     def __getitem__(self, idx):
-        """Lazy encoding - encode on demand"""
-        # Check cache first
-        if idx not in self.encoded_cache:
-            text = self.texts[idx]
-            tokens = self.vocab.encode(text)
-            self.encoded_cache[idx] = tokens
-        else:
-            tokens = self.encoded_cache[idx]
-        
-        # Ensure sequence length
-        if len(tokens) > self.max_seq_length + 1:
-            tokens = tokens[:self.max_seq_length + 1]
-        elif len(tokens) < self.max_seq_length + 1:
-            padding = [self.vocab.pad_idx] * (self.max_seq_length + 1 - len(tokens))
-            tokens = tokens + padding
-        
-        # Create input and target
-        input_ids = tokens[:-1]
-        target_ids = tokens[1:]
-        
-        return {
-            'input_ids': torch.tensor(input_ids, dtype=torch.long),
-            'target_ids': torch.tensor(target_ids, dtype=torch.long),
-            'length': torch.tensor(len(input_ids), dtype=torch.long)
+        """返回预填充并转为 long tensor 的样本；结果按 idx 缓存，
+        避免每个 epoch 重复做 tokenize / 截padding / 张量分配（训练热路径上的主要主机开销）。"""
+        if idx in self.encoded_cache:
+            return self.encoded_cache[idx]
+
+        tokens = self.vocab.encode(self.texts[idx])
+        L = self.max_seq_length + 1
+        if len(tokens) > L:
+            tokens = tokens[:L]
+        elif len(tokens) < L:
+            tokens = tokens + [self.vocab.pad_idx] * (L - len(tokens))
+
+        item = {
+            'input_ids': torch.tensor(tokens[:-1], dtype=torch.long),
+            'target_ids': torch.tensor(tokens[1:], dtype=torch.long),
+            'length': torch.tensor(L - 1, dtype=torch.long),
         }
+        self.encoded_cache[idx] = item
+        return item
 
 
 def load_data(data_file, vocab_size=5000, max_seq_length=32, min_freq=1):

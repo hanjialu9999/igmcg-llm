@@ -1,0 +1,47 @@
+# 混合架构配置（中度融合：attn / ssm 交替 + 可选滑动窗口/相对偏置）
+# 与 configs/config_test.yaml 同尺寸，仅加入 layer_plan 与 SSM/注意力增强选项
+model:
+  vocab_size: 12000
+  embedding_dim: 512
+  num_heads: 8
+  num_layers: 6
+  hidden_dim: 1024
+  max_seq_length: 64
+  dropout: 0.1
+  gradient_checkpointing: true
+  # ---- 混合架构（核心融合点）----
+  layer_plan: "attn,ssm,attn,ssm,attn,ssm"   # 每层类型：attn / ssm / hybrid
+  ssm_d_state: 16                            # SSM 状态维度
+  ssm_d_inner_factor: 1                      # SSM 内部维度 = dim * factor
+  attn_window: 0                             # >0 启用滑动窗口（0=全因果）；字符级局部性可试 32
+  attn_rel_bias: false                       # true 启用可学习相对位置偏置
+
+training:
+  batch_size: 32
+  epochs: 2
+  learning_rate: 3.0e-4
+  weight_decay: 0.01
+  gradient_clip: 1.0
+  warmup_steps: 5
+  early_stop_patience: 3
+  label_smoothing: 0.1
+  cpu_threads: 4
+  precision: "fp32"
+  grad_accum_steps: 1
+  compile: false
+
+data:
+  train_file: "data/pretrain_corpus/merged_sample.txt"
+  vocab_size: 12000
+  max_seq_length: 64
+  num_workers: 0
+  prefetch: 2
+  test_split: 0.1
+
+paths:
+  checkpoint_dir: "checkpoints_hybrid"
+  log_dir: "logs_hybrid"
+
+device: "auto"
+
+seed: 42

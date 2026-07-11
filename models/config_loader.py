@@ -10,7 +10,7 @@ from models.transformer import TransformerModel
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
-def load_config(config_path='config/config.yaml'):
+def load_config(config_path='configs/pretrain.yaml'):
     """Load configuration from a YAML file (resolved relative to project root)."""
     path = Path(config_path)
     if not path.is_absolute():
@@ -20,7 +20,10 @@ def load_config(config_path='config/config.yaml'):
 
 
 def build_model(config, device=None):
-    """Build a TransformerModel from a loaded config dict (config['model'])."""
+    """Build a TransformerModel from a loaded config dict (config['model']).
+
+     兼容混合架构：读取 layer_plan / ssm_* / attn_window / attn_rel_bias 等可选字段。
+    """
     mc = config['model']
     model = TransformerModel(
         vocab_size=mc['vocab_size'],
@@ -32,6 +35,12 @@ def build_model(config, device=None):
         dropout=mc.get('dropout', 0.0),
         tie_weights=mc.get('tie_weights', True),
         gradient_checkpointing=mc.get('gradient_checkpointing', True),
+        layer_plan=mc.get('layer_plan', None),
+        ssm_d_state=mc.get('ssm_d_state', 16),
+        ssm_d_inner_factor=mc.get('ssm_d_inner_factor', 1),
+        ssm_dt_rank=mc.get('ssm_dt_rank', None),
+        attn_window=mc.get('attn_window', 0),
+        attn_rel_bias=mc.get('attn_rel_bias', False),
     )
     if device is not None:
         model = model.to(device)

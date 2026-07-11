@@ -1,9 +1,11 @@
 import torch
+import torch.nn.functional as F
 import json
 import argparse
 import os
 from pathlib import Path
 import sys
+from collections import defaultdict, Counter
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
@@ -46,6 +48,12 @@ def load_model(model_path, vocab_path, device='cpu'):
         max_seq_length=model_config.get('max_seq_length', 32),
         dropout=model_config.get('dropout', 0.0),
         tie_weights=model_config.get('tie_weights', True),
+        layer_plan=model_config.get('layer_plan', None),
+        ssm_d_state=model_config.get('ssm_d_state', 16),
+        ssm_d_inner_factor=model_config.get('ssm_d_inner_factor', 1),
+        ssm_dt_rank=model_config.get('ssm_dt_rank', None),
+        attn_window=model_config.get('attn_window', 0),
+        attn_rel_bias=model_config.get('attn_rel_bias', False),
     ).to(device)
     
     model.load_state_dict(checkpoint['model_state_dict'])
@@ -55,30 +63,102 @@ def load_model(model_path, vocab_path, device='cpu'):
 
 
 def generate_text(model, vocab, prompt, max_length=30, temperature=0.8, 
-                  top_k=50, device='cpu'):
-    """Generate text from prompt"""
-    
-    # Encode prompt
+                   top_k=50, device='cpu', ngram=None, ngram_weight=0.0):
+    """Generate text from prompt（可选融合 n-gram 统计先验做解码期双轨）"""
     tokens = vocab.encode(prompt)
-    
-    # Remove EOS token for generation (we only want BOS + prompt words)
     if tokens[-1] == vocab.eos_idx:
         tokens = tokens[:-1]
-    
-    # Generate - model will continue from the prompt
-    # Use repetition penalty to avoid repetitive output
-    generated = model.generate(tokens, max_length=max_length, 
-                              temperature=temperature, top_k=top_k, 
-                              device=device, repetition_penalty=1.4)
-    
-    # Decode the entire sequence
+    generated = model.generate(tokens, max_length=max_length,
+                              temperature=temperature, top_k=top_k,
+                              device=device, repetition_penalty=1.4,
+                              ngram_fn=(ngram.logprob_vector if ngram else None),
+                              ngram_weight=ngram_weight)
     text = vocab.decode(generated)
-    
     return text.strip()
 
 
-def interactive_mode(model, vocab, device='cpu'):
-    """Interactive text generation"""
+class NGramModel:
+    """统计语言模型（Unigram/Bigram/Trigram 插值）。解码期作为神经 LM 的先验，
+     不改变模型、不需重训，专门改善字符级 LM 的局部连贯性。
+     l1/l2/l3 为 uni/bi/tri 的插值权重（默认偏向高阶三元）。"""
+    def __init__(self, vocab, corpus_file, max_order=3, smoothing=1.0,
+                 l1=0.1, l2=0.3, l3=0.6):
+        self.vocab = vocab
+        self.max_order = max_order
+        self.smoothing = smoothing
+        self.l1, self.l2, self.l3 = l1, l2, l3
+        self.vocab_size = len(vocab)
+        self.uni = Counter()               # 一元
+        self.bi = defaultdict(Counter)     # (w_{i-1}) -> Counter(next)
+        self.tri = defaultdict(Counter)    # (w_{i-2}, w_{i-1}) -> Counter(next)
+        self._build(corpus_file)
+
+    def _build(self, corpus_file):
+        with open(corpus_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                ids = self.vocab.encode(line, add_special_tokens=False)
+                ids = [self.vocab.pad_idx] * 2 + ids
+                for i in range(2, len(ids)):
+                    self.uni[ids[i]] += 1
+                    self.bi[ids[i - 1]][ids[i]] += 1
+                    if self.max_order >= 3:
+                        self.tri[(ids[i - 2], ids[i - 1])][ids[i]] += 1
+        # 预计算（加速解码期每次调用的 logprob_vector）
+        V = self.vocab_size
+        self.uni_total = sum(self.uni.values()) + self.smoothing * V
+        self.bi_total = {w: sum(c.values()) + self.smoothing * V
+                         for w, c in self.bi.items()}
+        self.tri_total = {k: sum(c.values()) + self.smoothing * V
+                          for k, c in self.tri.items()}
+        u = torch.full((V,), self.smoothing)
+        for t, c in self.uni.items():
+            if 0 <= t < V:
+                u[t] += c
+        self.uni_prob = (u / u.sum()).clone()
+
+    def logprob_vector(self, generated, device):
+        """返回词表每个 token 的 log 概率向量（uni/bi/tri 插值，三元真正参与）。
+        只在与当前上下文相关的少量 token 上计算，避免遍历全词表。"""
+        V = self.vocab_size
+        w2 = generated[-2] if len(generated) >= 2 else None
+        w1 = generated[-1] if len(generated) >= 1 else None
+
+        vec = self.uni_prob.to(device).clone()      # (V,) 已归一化的 unigram 先验
+        uni_total = self.uni_total
+
+        # bigram 覆盖（仅遍历 w1 之后的少量 token）
+        if w1 is not None and w1 in self.bi:
+            bc = self.bi[w1]
+            bt = self.bi_total[w1]
+            idx = torch.tensor(list(bc.keys()), dtype=torch.long, device=device)
+            if idx.numel():
+                cu = torch.tensor([self.uni.get(t, 0) for t in bc.keys()], device=device)
+                cb = torch.tensor(list(bc.values()), device=device)
+                pu = (cu + self.smoothing) / uni_total
+                pb = (cb + self.smoothing) / bt
+                vec[idx] = self.l1 * pu + self.l2 * pb
+
+        # trigram 覆盖（优先，仅遍历 (w2,w1) 之后的少量 token）
+        if w2 is not None and (w2, w1) in self.tri:
+            tc = self.tri[(w2, w1)]
+            tt = self.tri_total[(w2, w1)]
+            idx = torch.tensor(list(tc.keys()), dtype=torch.long, device=device)
+            if idx.numel():
+                cu = torch.tensor([self.uni.get(t, 0) for t in tc.keys()], device=device)
+                cb = torch.tensor([self.bi[w1].get(t, 0) for t in tc.keys()], device=device)
+                ct = torch.tensor(list(tc.values()), device=device)
+                pu = (cu + self.smoothing) / uni_total
+                pb = (cb + self.smoothing) / self.bi_total.get(w1, self.smoothing * V)
+                pt = (ct + self.smoothing) / tt
+                vec[idx] = self.l1 * pu + self.l2 * pb + self.l3 * pt
+
+        vec = vec / vec.sum()
+        return torch.log(vec + 1e-10)
+
+
+def interactive_mode(model, vocab, device='cpu', ngram=None, ngram_weight=0.0,
+                     igmcg=False, intuition=None, candidates=5):
+    """Interactive text generation（可选 n-gram / IGMCG 联合解码）"""
     print("\n" + "="*50)
     print("Text Generation with AI Model")
     print("="*50)
@@ -101,25 +181,218 @@ def interactive_mode(model, vocab, device='cpu'):
         temp_values = [0.7, 0.9]
         
         for temp in temp_values:
-            generated = generate_text(model, vocab, prompt, max_length=20, 
-                                     temperature=temp, top_k=50, device=device)
-            print(f"[Temperature {temp}]: {generated}\n")
+            if igmcg:
+                generated, cands = generate_igmcg(
+                    model, vocab, prompt, max_length=20, temperature=temp,
+                    top_k=50, device=device, num_candidates=candidates,
+                    intuition=intuition, ngram_fn=(ngram.logprob_vector if ngram else None),
+                    ngram_weight=ngram_weight)
+                score = cands[0]['score'] if cands else 0.0
+                print(f"[IGMCG T={temp}]: {generated}  (score={score:.3f})\n")
+            else:
+                generated = generate_text(model, vocab, prompt, max_length=20, 
+                                         temperature=temp, top_k=50, device=device,
+                                         ngram=ngram, ngram_weight=ngram_weight)
+                print(f"[Temperature {temp}]: {generated}\n")
         
         print("-"*50)
 
 
 def batch_generate(model, vocab, prompts, max_length=30, temperature=0.8, 
-                   device='cpu'):
+                    device='cpu', ngram=None, ngram_weight=0.0):
     """Generate text for multiple prompts"""
     results = []
     for prompt in prompts:
         generated = generate_text(model, vocab, prompt, max_length=max_length, 
-                                 temperature=temperature, device=device)
+                                 temperature=temperature, device=device,
+                                 ngram=ngram, ngram_weight=ngram_weight)
         results.append({
             'prompt': prompt,
             'generated': generated
         })
     return results
+
+
+# ---------------------------------------------------------------------------
+# IGMCG：直觉引导多候选生成（推理期可控生成）
+# 7 维直觉向量（每项 0~1，0.5=中性）：
+#   0 语气 formal↔casual  1 氛围 relaxed↔tense  2 意图 explain↔persuade
+#   3 情感 positive↔negative  4 风格 concise↔detailed  5 受众 pro↔general
+#   6 创新 conservative↔aggressive
+# 流程：按直觉生成多个风格候选 -> 自评(流畅度/重复度/风格匹配) -> 加权选优
+# ---------------------------------------------------------------------------
+IGMCG_DIMS = ['语气', '氛围', '意图', '情感', '风格', '受众', '创新']
+_POS_WORDS = set('好 棒 喜欢 开心 高兴 优秀 美丽 顺利 成功 支持 赞美 爱 赞 不错 幸福'.split())
+_NEG_WORDS = set('坏 差 讨厌 生气 难过 糟糕 失败 反对 批评 恨 悲 痛苦 问题 困难 错'.split())
+
+
+def _repetition(text):
+    """重复度惩罚：归一化的重复 bigram 比例。"""
+    toks = text.replace(' ', '')
+    if len(toks) < 2:
+        return 0.0
+    bg = [toks[i:i+2] for i in range(len(toks) - 1)]
+    return 1.0 - len(set(bg)) / max(1, len(bg))
+
+
+def _style_features(text):
+    """把生成文本映射成 7 维风格特征信号（每项约 -1~1）。"""
+    excl = text.count('！') + text.count('!')
+    quest = text.count('？') + text.count('?')
+    has_conn = any(w in text for w in ('因为', '所以', '例如', '即', '也就是说'))
+    pos = sum(w in text for w in _POS_WORDS)
+    neg = sum(w in text for w in _NEG_WORDS)
+    toks = [t for t in text.replace(' ', '')]
+    uniq_ratio = (len(set(toks)) / max(1, len(toks)))
+    length = len(toks)
+    concise = 1.0 - min(length, 60) / 60.0
+    formal = 1.0 if excl == 0 else -1.0
+    relaxed = 1.0 if (quest == 0 and excl == 0) else -0.5
+    explain = 1.0 if has_conn else -0.3
+    sentiment = (pos - neg) / max(1, (pos + neg))
+    detailed = 1.0 if length >= 40 else -0.3
+    professional = 1.0 if uniq_ratio > 0.7 else -0.3
+    novelty = uniq_ratio * 2 - 1.0
+    return [formal, relaxed, explain, sentiment, concise, professional, novelty]
+
+
+def _generate_candidates_batch(model, ids, temps, max_length, top_k, rep_penalty,
+                               device, ngram_fn, ngram_weight, pad_id, sep_id, eos_id):
+    """并行生成 N 个候选：所有候选在一个 batch 内共享 KV-cache 前向，
+    避免逐候选各跑一遍自回归（约 N 倍加速）。
+    每行独立温度/重复惩罚/n-gram 先验；行内命中 EOS 后该行走 pad 保持静态。"""
+    N = len(temps)
+    generated = [list(ids) for _ in range(N)]
+    done = [False] * N
+    min_len = max(3, len(ids) + 2)
+
+    with torch.inference_mode():
+        inp = torch.tensor([ids] * N, dtype=torch.long, device=device)
+        logits, past = model.forward(inp, past_key_values=None, use_cache=True)
+        for step in range(max_length):
+            if len(generated[0]) >= model.max_seq_length:
+                break
+            nt = []
+            for n in range(N):
+                lt = logits[n, -1, :] / temps[n]
+                for prev in set(generated[n]):
+                    if 0 <= prev < lt.shape[0]:
+                        lt[prev] /= rep_penalty
+                if ngram_fn is not None and ngram_weight != 0.0:
+                    lt = lt + ngram_weight * ngram_fn(generated[n], device)
+                lt[pad_id] = float('-inf')
+                lt[sep_id] = float('-inf')
+                if not done[n] and len(generated[n]) < min_len:
+                    lt[eos_id] = float('-inf')
+                elif not done[n]:
+                    lt[eos_id] = lt[eos_id] - 5.0
+                if top_k > 0 and top_k < lt.shape[0]:
+                    thr = torch.topk(lt, min(top_k, lt.shape[0]))[0][-1]
+                    lt[lt < thr] = float('-inf')
+                if torch.isinf(lt).all():
+                    lt = logits[n, -1, :] / temps[n]
+                    lt[pad_id] = float('-inf')
+                nt.append(torch.multinomial(torch.softmax(lt, 0), 1).item())
+            feed = torch.tensor(nt, dtype=torch.long, device=device).unsqueeze(1)
+            for n in range(N):
+                if not done[n]:
+                    generated[n].append(nt[n])
+                    if nt[n] == eos_id and len(generated[n]) >= min_len:
+                        done[n] = True
+                else:
+                    feed[n, 0] = pad_id
+            logits, past = model.forward(feed, past_key_values=past, use_cache=True)
+    return generated
+
+
+def _fluency_batch(model, seqs, device, pad_id):
+    """批量计算每条候选序列的平均 token 对数概率（流畅度）。"""
+    N = len(seqs)
+    if N == 0:
+        return []
+    maxlen = max(len(s) for s in seqs)
+    batch = torch.full((N, maxlen), pad_id, dtype=torch.long, device=device)
+    for n, s in enumerate(seqs):
+        if s:
+            batch[n, :len(s)] = torch.tensor(s, dtype=torch.long, device=device)
+    out = []
+    with torch.inference_mode():
+        logits = model.forward(batch)
+        for n, s in enumerate(seqs):
+            if len(s) < 2:
+                out.append(0.0)
+                continue
+            lp = F.log_softmax(logits[n, :len(s) - 1].float(), dim=-1)
+            tgt = torch.tensor(s[1:], dtype=torch.long, device=device).unsqueeze(1)
+            out.append(lp.gather(1, tgt).mean().item())
+    return out
+
+
+def _ngram_coherence(ngram_fn, ids, device):
+    """平均 n-gram 模型对序列的预测 log-prob：越高=相邻 token 越相连(越连贯)，
+    越低=越碎片化。无 ngram_fn 时返回 0（不参与评分）。这是抑制"碎片化"的关键信号。"""
+    if ngram_fn is None or len(ids) < 2:
+        return 0.0
+    tot, n = 0.0, 0
+    for i in range(1, len(ids)):
+        lp = ngram_fn(ids[:i], device)
+        tot += lp[ids[i]].item()
+        n += 1
+    return tot / max(1, n)
+
+
+def generate_igmcg(model, vocab, prompt, intuition=None, num_candidates=4,
+                   max_length=60, device='cpu', base_temp=0.7, top_k=30,
+                   ngram_fn=None, ngram_weight=0.0, repetition_penalty=1.4):
+    """IGMCG 多候选生成：返回 (最优文本, 各候选评分详情)。
+
+     intuition: 长度 7 的 float 列表（默认全 0.5 中性）。
+     ngram_fn / ngram_weight: 可选叠加 n-gram 统计先验（双轨解码）。
+     所有候选并行生成（单次 batch 前向），显著降低多候选开销。
+
+     评分 = 1.5*连贯度(coh) + 0.15*流畅度 + 0.15*风格匹配 - 1.5*重复度
+       - coh 直接奖励相邻 token 的相连性，是抑制"碎片化"的核心信号；
+       - 流畅度(单 token 置信度)只作轻微 tiebreaker——孤立高频词也会拉高它，故不主导；
+       - 风格匹配为直觉引导的温和偏置（在连贯候选之间做微调，绝不压过连贯度）；
+       - 候选温度范围收窄(0.75~1.35x)、重复惩罚下调，避免候选本身过度发散成碎片。"""
+    if intuition is None:
+        intuition = [0.5] * 7
+    assert len(intuition) == 7, "直觉向量必须是 7 维"
+    # 把 0~1 映射为方向权重 (-1~1)
+    w = [(v - 0.5) * 2.0 for v in intuition]
+
+    ids = vocab.encode(prompt, add_special_tokens=False)
+    pad_id = vocab.pad_idx
+    sep_id = getattr(vocab, 'sep_idx', 1)
+    eos_id = getattr(vocab, 'eos_idx', 2)
+
+    temps = [base_temp * (0.75 + 0.6 * k / max(1, num_candidates - 1))
+             for k in range(num_candidates)]
+    seqs = _generate_candidates_batch(model, ids, temps, max_length, top_k,
+                                      repetition_penalty, device, ngram_fn,
+                                      ngram_weight, pad_id, sep_id, eos_id)
+    flus = _fluency_batch(model, seqs, device, pad_id)
+
+    COH_W, FLU_W, STYLE_W, REP_W = 1.5, 0.15, 0.15, 2.5
+    candidates = []
+    for k, gen in enumerate(seqs):
+        cand_ids = gen[len(ids):]
+        text = vocab.decode(cand_ids, skip_special=True).strip()
+        if not text:
+            continue
+        rep = _repetition(text)
+        feat = _style_features(text)
+        # 风格匹配 = Σ 方向权重 * 文本特征
+        style_match = sum(wi * fi for wi, fi in zip(w, feat))
+        # 连贯度：相邻 token 在 n-gram 模型下的平均预测概率（越高越相连）
+        coh = _ngram_coherence(ngram_fn, gen, device)
+        score = COH_W * coh + FLU_W * flus[k] + STYLE_W * style_match - REP_W * rep
+        candidates.append({'text': text, 'score': score, 'flu': flus[k], 'coh': coh,
+                           'rep': rep, 'style': style_match, 'temp': round(temps[k], 2)})
+    if not candidates:
+        return '', []
+    candidates.sort(key=lambda c: c['score'], reverse=True)
+    return candidates[0]['text'], candidates
 
 
 def main():
@@ -146,10 +419,28 @@ def main():
                         help='Top-k sampling')
     parser.add_argument('--device', type=str, default='auto',
                         help='Device to use: auto (detect) / cuda / cpu / dml')
+    parser.add_argument('--cpu-threads', type=int, default=4,
+                        help='CPU 生成时使用的线程数（降功耗；单流解码速度影响很小）')
     parser.add_argument('--interactive', action='store_true',
                         help='Run in interactive mode')
+    parser.add_argument('--ngram', action='store_true',
+                        help='解码期融合 Bigram/Trigram 统计先验（神经+统计双轨）')
+    parser.add_argument('--ngram-corpus', default='data/pretrain_corpus/merged.txt',
+                        help='构建 n-gram 统计所用的语料文件')
+    parser.add_argument('--ngram-weight', type=float, default=0.3,
+                        help='n-gram 先验叠加权重（0=关闭）')
+    parser.add_argument('--igmcg', action='store_true',
+                        help='启用 IGMCG 直觉引导解码；与 --ngram 同时开启即为 n-gram+IGMCG 联合解码')
+    parser.add_argument('--igmcg-candidates', type=int, default=5,
+                        help='IGMCG 候选数')
+    parser.add_argument('--intuition', type=str, default='0.5,0.5,0.5,0.5,0.5,0.5,0.5',
+                        help='IGMCG 7 维直觉向量(逗号分隔, 0~1)')
     
     args = parser.parse_args()
+
+    # CPU 生成时限制线程数以降功耗（单流自回归解码对线程数不敏感，省电明显）
+    if args.cpu_threads and args.cpu_threads > 0:
+        torch.set_num_threads(max(1, args.cpu_threads))
     
     # Check if model exists
     if not Path(args.model).exists():
@@ -164,27 +455,53 @@ def main():
     print(f"Model loaded successfully!")
     print(f"Vocabulary size: {len(vocab)}")
     
+    # 构建 n-gram 统计模型（解码期双轨）
+    ngram = None
+    if args.ngram:
+        print(f"Building n-gram model from {args.ngram_corpus} ...")
+        ngram = NGramModel(vocab, args.ngram_corpus, max_order=3, smoothing=1.0)
+        print(f"n-gram ready (weight={args.ngram_weight})")
+    
     # Generation mode
     prompt = args.prompt
     if args.prompt_file:
         with open(args.prompt_file, 'r', encoding='utf-8-sig') as pf:
             prompt = pf.read().strip()
+    
+    # 联合解码：IGMCG 候选生成（若同时 --ngram，则每个候选都叠加 n-gram 先验）
+    use_igmcg = args.igmcg
+    intuition = [float(x) for x in args.intuition.split(',')]
+    assert len(intuition) == 7, "直觉向量需 7 维"
 
     if args.interactive:
-        interactive_mode(model, vocab, device)
+        interactive_mode(model, vocab, device, ngram=ngram, ngram_weight=args.ngram_weight,
+                         igmcg=use_igmcg, intuition=intuition, candidates=args.igmcg_candidates)
     elif prompt:
-        generated = generate_text(model, vocab, prompt,
-                                 max_length=args.max_length,
-                                 temperature=args.temperature,
-                                 top_k=args.top_k,
-                                 device=device)
+        if use_igmcg:
+            generated, cands = generate_igmcg(
+                model, vocab, prompt, max_length=args.max_length,
+                temperature=args.temperature, top_k=args.top_k, device=device,
+                num_candidates=args.igmcg_candidates, intuition=intuition,
+                ngram_fn=(ngram.logprob_vector if ngram else None),
+                ngram_weight=args.ngram_weight)
+            best = cands[0] if cands else None
+            gen_info = (f"\n  [IGMCG候选={len(cands)}, 最优分={best['score']:.3f}, 重复度={best['rep']:.3f}]"
+                        if best else "")
+        else:
+            generated = generate_text(model, vocab, prompt,
+                                     max_length=args.max_length,
+                                     temperature=args.temperature,
+                                     top_k=args.top_k,
+                                     device=device,
+                                     ngram=ngram, ngram_weight=args.ngram_weight)
+            gen_info = ""
         # 同时写 UTF-8 结果文件，方便中文查看（控制台可能是 GBK）
         out_path = os.path.join('logs', 'generation_output.txt')
         os.makedirs('logs', exist_ok=True)
         with open(out_path, 'w', encoding='utf-8') as of:
             of.write(f"Prompt: {prompt}\nGenerated: {generated}\n")
         print(f"\nPrompt: {prompt}")
-        print(f"Generated: {generated}\n")
+        print(f"Generated: {generated}{gen_info}\n")
         print(f"(结果已同时写入 {out_path})")
     else:
         # Default example
@@ -200,7 +517,8 @@ def main():
                                      max_length=20,
                                      temperature=0.8,
                                      top_k=50,
-                                     device=device)
+                                     device=device,
+                                     ngram=ngram, ngram_weight=args.ngram_weight)
             print(f"Prompt: {prompt}")
             print(f"Generated: {generated}\n")
 

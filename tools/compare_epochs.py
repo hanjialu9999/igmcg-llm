@@ -21,7 +21,7 @@ from pathlib import Path
 device = get_device()
 
 # Load config
-with open('config/config.yaml', 'r') as f:
+with open('configs/pretrain.yaml', 'r', encoding='utf-8') as f:
     config = yaml.safe_load(f)
 
 # Load vocabulary

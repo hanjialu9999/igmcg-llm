@@ -29,7 +29,7 @@ try:
     
     # 3. 加载配置
     print("\n[3] 配置加载...")
-    with open('config/config.yaml', 'r', encoding='utf-8') as f:
+    with open('configs/pretrain.yaml', 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
     print(f"    ✓ 配置加载成功")
     print(f"      - 数据文件: {config['data']['train_file']}")

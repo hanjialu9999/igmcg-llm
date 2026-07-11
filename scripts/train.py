@@ -99,7 +99,8 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
     - lr_schedule: cosine | constant | wsd（见 compute_lr）。
     """
     model.train()
-    loss_meter = AverageMeter()
+    loss_sum = torch.zeros((), device='cpu')   # 以张量累加，避免每微批都 .item() 触发设备同步
+    loss_count = 0
 
     total_steps = len(dataloader)
     total_eff = (total_steps + grad_accum_steps - 1) // grad_accum_steps
@@ -108,6 +109,25 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
     optimizer.zero_grad()
     accumulated = 0
     eff_step = 0
+
+    def step_optimizer():
+        """执行一次优化器步进（含 warmup 学习率 + 梯度裁剪），循环内与 epoch 末共用，避免逻辑分叉。"""
+        nonlocal eff_step, accumulated
+        eff_step += 1
+        lr = compute_lr(eff_step, total_eff, warmup_target, base_lr,
+                        eta_min, lr_schedule, wsd_decay_frac)
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = lr
+        if scaler is not None:
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=gradient_clip)
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=gradient_clip)
+            optimizer.step()
+        optimizer.zero_grad()
+        accumulated = 0
 
     progress = tqdm(dataloader, desc=f"Epoch {epoch}", total=total_steps,
                     leave=True) if (HAS_TQDM and show_progress) else None
@@ -126,65 +146,39 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
             loss = criterion(logits, target_ids.view(-1))
 
         # Scale loss for gradient accumulation, then backward
-        loss = loss / grad_accum_steps
+        scaled = loss / grad_accum_steps
         if scaler is not None:
-            scaler.scale(loss).backward()
+            scaler.scale(scaled).backward()
         else:
-            loss.backward()
+            scaled.backward()
 
         accumulated += 1
 
         # Only optimize every grad_accum_steps
         if accumulated % grad_accum_steps == 0:
-            eff_step += 1
-            lr = compute_lr(eff_step, total_eff, warmup_target, base_lr,
-                            eta_min, lr_schedule, wsd_decay_frac)
-            for param_group in optimizer.param_groups:
-                param_group['lr'] = lr
+            step_optimizer()
 
-            # Gradient clipping + optimizer step
-            if scaler is not None:
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=gradient_clip)
-                scaler.step(optimizer)
-                scaler.update()
+        # 累加损失（保持为张量，仅日志打印/返回时再 .item()）
+        loss_sum = loss_sum + (loss.detach() * grad_accum_steps)
+        loss_count += 1
+
+        if (batch_idx + 1) % 10 == 0:
+            avg = loss_sum.item() / loss_count
+            if progress is not None:
+                progress.set_postfix(loss=f"{avg:.4f}",
+                                     lr=f"{optimizer.param_groups[0]['lr']:.6f}")
             else:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=gradient_clip)
-                optimizer.step()
-
-            optimizer.zero_grad()
-            accumulated = 0
-
-        loss_meter.update(loss.item() * grad_accum_steps)
-
-        if progress is not None:
-            progress.set_postfix(loss=f"{loss_meter.avg:.4f}",
-                                 lr=f"{optimizer.param_groups[0]['lr']:.6f}")
-        elif (batch_idx + 1) % 10 == 0:
-            print(f"Epoch {epoch} | Batch {batch_idx + 1}/{total_steps} | "
-                  f"Loss: {loss_meter.avg:.4f} | LR: {optimizer.param_groups[0]['lr']:.6f}")
+                print(f"Epoch {epoch} | Batch {batch_idx + 1}/{total_steps} | "
+                      f"Loss: {avg:.4f} | LR: {optimizer.param_groups[0]['lr']:.6f}")
 
     if progress is not None:
         progress.close()
 
     # Flush any leftover accumulated gradients
     if accumulated % grad_accum_steps != 0:
-        eff_step += 1
-        lr = compute_lr(eff_step, total_eff, warmup_target, base_lr,
-                        eta_min, lr_schedule, wsd_decay_frac)
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = lr
-        if scaler is not None:
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=gradient_clip)
-            scaler.step(optimizer)
-            scaler.update()
-        else:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=gradient_clip)
-            optimizer.step()
-        optimizer.zero_grad()
+        step_optimizer()
 
-    return loss_meter.avg
+    return (loss_sum.item() / loss_count) if loss_count else 0.0
 
 
 def validate(model, dataloader, criterion, device):
@@ -277,7 +271,7 @@ def backup_existing_checkpoints(checkpoint_dir, backup_root=None):
     return dest
 
 
-def main(config_path='config/config.yaml'):
+def main(config_path='configs/pretrain.yaml'):
     # Load configuration
     config = load_config(config_path)
     
@@ -501,7 +495,7 @@ if __name__ == '__main__':
     torch.multiprocessing.freeze_support()
     
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, default='config/pretrain.yaml',
+    parser.add_argument('--config', type=str, default='configs/pretrain.yaml',
                         help='Path to config file (default: 基座模型预训练配置)')
     args = parser.parse_args()
     

@@ -3,10 +3,10 @@
 ## 训练流程总览
 
 1. 准备语料 → `data/train_data_final.txt`
-2. 运行训练 → `python scripts/train.py --config config/config.yaml`
+2. 运行训练 → `python scripts/train.py --config configs/pretrain.yaml`
 3. 产物 → `checkpoints/final_model.pt` + `checkpoints/vocab.json`
 
-## 关键配置（config/config.yaml）
+## 关键配置（configs/pretrain.yaml）
 
 ```yaml
 model:

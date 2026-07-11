@@ -76,4 +76,4 @@ def _convert_dialogue_lines(lines):
 
 if __name__ == '__main__':
     convert_dialogue_lines_to_qa()
-    print("\n💡 提示: 现在可以运行 python scripts/train.py --config config/config.yaml 开始训练")
+    print("\n💡 提示: 现在可以运行 python scripts/train.py --config configs/pretrain.yaml 开始训练")

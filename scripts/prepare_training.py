@@ -102,7 +102,7 @@ def validate_data(filepath, sample_count=3):
 
 def update_config(data_file):
     """更新配置文件指向新数据"""
-    config_path = Path('config/config.yaml')
+    config_path = Path('configs/pretrain.yaml')
     
     with open(config_path, 'r', encoding='utf-8') as f:
         content = f.read()
@@ -143,10 +143,10 @@ def main():
     print("="*80)
     print(f"\n✅ 数据准备完成！现在可以开始训练")
     print(f"\n【方案1】直接启动训练 (使用默认GPU):")
-    print(f"  python scripts/train.py --config config/config.yaml")
+    print(f"  python scripts/train.py --config configs/pretrain.yaml")
     
     print(f"\n【方案2】在后台运行训练 (推荐，不会被关闭):")
-    print(f"  python -u scripts/train.py --config config/config.yaml > training.log 2>&1 &")
+    print(f"  python -u scripts/train.py --config configs/pretrain.yaml > training.log 2>&1 &")
     
     print(f"\n【方案3】使用Windows Task Scheduler或nohup:")
     print(f"  nohup python scripts/train.py > training.log 2>&1 &")

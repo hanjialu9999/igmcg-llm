@@ -9,7 +9,7 @@ import yaml
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Load config
-with open('config/config.yaml', 'r') as f:
+with open('configs/pretrain.yaml', 'r') as f:
     config = yaml.safe_load(f)
 
 # Load vocabulary

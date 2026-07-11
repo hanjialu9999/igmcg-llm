@@ -1,0 +1,41 @@
+# DML 稳定性测试配置（验证 Plan B：手动注意力绕开 DML fused SDPA 崩溃）
+# 小模型 + 采样数据，重点观察能否越过 ~1-2 分钟的原生崩溃点
+model:
+  vocab_size: 12000
+  embedding_dim: 512
+  num_heads: 8
+  num_layers: 6
+  hidden_dim: 1024
+  max_seq_length: 64
+  dropout: 0.1
+  gradient_checkpointing: false
+
+training:
+  batch_size: 32
+  epochs: 2
+  learning_rate: 3.0e-4
+  weight_decay: 0.01
+  gradient_clip: 1.0
+  warmup_steps: 5
+  early_stop_patience: 3
+  label_smoothing: 0.1
+  cpu_threads: 4
+  precision: "fp32"
+  grad_accum_steps: 1
+  compile: false
+
+data:
+  train_file: "data/pretrain_corpus/merged_sample.txt"
+  vocab_size: 12000
+  max_seq_length: 64
+  num_workers: 0
+  prefetch: 2
+  test_split: 0.1
+
+paths:
+  checkpoint_dir: "checkpoints_dml_test"
+  log_dir: "logs_dml_test"
+
+device: "auto"
+
+seed: 42

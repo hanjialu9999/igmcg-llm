@@ -1,0 +1,54 @@
+﻿# 正式预训练配置：在中文+英文混合语料 (merged.txt) 上训练基座模型
+# 训练前会自动把 checkpoints/ 备份到 archive_unused/checkpoints_backup/
+model:
+  vocab_size: 12000            # DML 在 20000 输出投影的 backward 会触发多GPU设备错误；12000 已验证可用且覆盖 ~98.9% token
+  embedding_dim: 512
+  num_heads: 8
+  num_layers: 6
+  hidden_dim: 1024
+  max_seq_length: 64
+  dropout: 0                   # 单轮预训练不过拟合，dropout 关掉让模型充分拟合语料
+  tie_weights: true           # 输出头复用 embedding 权重：减参并常改善 LM 质量
+  gradient_checkpointing: true  # 用计算换显存（CPU 上也可开，DML 显存紧张时更稳）
+  # 架构固定为 2026 主流小模型配方：Pre-LN + RMSNorm + RoPE + SwiGLU（见 models/transformer.py）
+
+# Training Configuration
+training:
+  batch_size: 128              # 相比 32 放大 4 倍；CPU/小显存也可稳定跑（模型仅 ~25M 参数）
+  epochs: 1                    # 基座模型：单次完整遍历语料（只训练一次）
+  learning_rate: 1.0e-3        # 单轮只过一遍数据，需比多轮(3e-4)更大的 lr 才能充分学习
+  weight_decay: 0.01
+  gradient_clip: 1.0
+  warmup_steps: 0.1            # 预热步数占整个 epoch 有效步数的比例（0.1=前 10% step 线性升温）
+  early_stop_patience: 5       # 单轮不会触发，保留以防以后改多轮
+  label_smoothing: 0.1
+  cpu_threads: 4
+  # ---- 训练加速 / 精度选项 ----
+  precision: "fp32"            # fp32 | fp16 | bf16。注意：本机 AMD DirectML 不支持 AMP 与 bf16，
+                               #   只有 NVIDIA CUDA 才能真正走 fp16/bf16 混合精度；其余情况自动回退 fp32
+  grad_accum_steps: 1          # 梯度累积步数；有效 batch = batch_size * grad_accum_steps
+                               #   （显存不够想更大 batch 时调大此项，如 4 => 有效 512）
+  eta_min: 0.0                 # 学习率下限（cosine/wsd 衰减到此值）
+  lr_schedule: "wsd"          # cosine | constant(=WSO 无衰减) | wsd(预热+稳定+末尾短衰减)
+                               #   wsd/constant 利于后续微调（ICLR2026：衰减少=>更平缓的极小值，适应性更好）
+  wsd_decay_frac: 0.1         # wsd 模式下，最后 10% 步做学习率衰减
+  compile: true                # torch.compile 加速（仅 CPU/CUDA；与梯度检查点冲突时自动关闭后者）
+
+# Data Configuration
+data:
+  train_file: "data/pretrain_corpus/merged.txt"
+  vocab_size: 12000
+  max_seq_length: 64
+  num_workers: 0
+  prefetch: 2
+  test_split: 0.1
+
+# Paths
+paths:
+  checkpoint_dir: "checkpoints"
+  log_dir: "logs"
+
+# Device
+device: "cpu"
+
+seed: 42

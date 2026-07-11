@@ -18,7 +18,7 @@ from models.device import get_device
 device = get_device()  # 自动适配 CUDA / DirectML(AMD) / CPU
 
 # Load config
-with open('config/config.yaml', 'r') as f:
+with open('configs/pretrain.yaml', 'r', encoding='utf-8') as f:
     config = yaml.safe_load(f)
 
 # Path for persisted dialogue parameters (single source of truth: chat_config.json)

@@ -186,8 +186,8 @@ def write_manual_guide():
   1. 用下面方法下载数据, 放入 data/pretrain_corpus/raw/
   2. python scripts/data/download_pretrain_data.py --prepare
   3. type data\\pretrain_corpus\\*.txt > data\\pretrain_corpus\\merged.txt
-  4. 修改 config/config.yaml 中的 train_file
-  5. python scripts/train.py --config config/config.yaml  (预训练)
+  4. 修改 configs/pretrain.yaml 中的 train_file
+  5. python scripts/train.py --config configs/pretrain.yaml  (预训练)
   6. python train_finetune.py                             (微调)
 ```
 

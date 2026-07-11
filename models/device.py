@@ -33,11 +33,6 @@ def get_device(preferred=None):
     return torch.device('cpu')
 
 
-def supports_amp(device):
-    """是否支持 CUDA 自动混合精度（DirectML / CPU 不支持 torch.cuda.amp）。"""
-    return isinstance(device, torch.device) and device.type == 'cuda'
-
-
 def apply_cpu_threads(threads=None):
     """限制 PyTorch 占用的 CPU 线程数，避免训练/推理吃满所有核心。
 

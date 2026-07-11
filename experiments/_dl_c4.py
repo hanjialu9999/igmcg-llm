@@ -1,3 +1,10 @@
+import os, sys
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+if os.path.join(_ROOT, 'scripts') not in sys.path:
+    sys.path.insert(0, os.path.join(_ROOT, 'scripts'))
+
 """Stream chinese-c4 shard (GBK encoded) from ModelScope, decompress with
 proper incremental GBK decoder, keep first N lines, abort early."""
 import os, sys, json, urllib.request, codecs

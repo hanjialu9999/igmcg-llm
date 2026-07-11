@@ -24,7 +24,7 @@ if exist ".amd_venv\Scripts\python.exe" (
 if "%1"=="" (
     %PY% scripts/chat.py
 ) else if /i "%1"=="train" (
-    %PY% scripts/train.py --config config/pretrain.yaml
+    %PY% scripts/train.py --config configs/pretrain.yaml
 ) else if /i "%1"=="finetune" (
     %PY% train_finetune.py
 ) else if /i "%1"=="chat" (

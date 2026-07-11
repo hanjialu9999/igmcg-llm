@@ -9,7 +9,7 @@
 #   pip install -r requirements-amd.txt
 #
 # 之后正常训练/生成即可，device 设为 "auto" 时会自动探测并启用 DirectML：
-#   python scripts/train.py --config config/config.yaml
+#   python scripts/train.py --config configs/pretrain.yaml
 
 torch-directml
 pyyaml==6.0

@@ -43,7 +43,7 @@ def main():
     
     # 更新配置文件
     print("\n更新配置文件...")
-    config_file = 'config/config.yaml'
+    config_file = 'configs/pretrain.yaml'
     
     with open(config_file, 'r', encoding='utf-8') as f:
         content = f.read()

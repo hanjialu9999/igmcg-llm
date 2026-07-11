@@ -19,7 +19,7 @@ top-k / 重复惩罚 / 特殊 token 屏蔽。
 ```python
 from models.config_loader import load_config, build_model, load_vocab
 
-config = load_config()                   # 读取 config/config.yaml
+config = load_config()                   # 读取 configs/pretrain.yaml
 model = build_model(config).to(device)  # 结构与 config 完全一致
 vocab = load_vocab('checkpoints/vocab.json')
 ckpt = torch.load('checkpoints/final_model.pt', map_location=device)
@@ -50,6 +50,6 @@ python tools/compare_epochs.py     # 对比不同 epoch 输出
 
 ## 注意
 
-- 修改模型结构（层数 / 维度 / 词表大小）**只改 `config/config.yaml`**，
+- 修改模型结构（层数 / 维度 / 词表大小）**只改 `configs/pretrain.yaml`**，
   所有训练 / 推理脚本会自动同步，无需改动代码。
 - 推理前必须存在与模型词表大小一致的 `checkpoints/vocab.json`。

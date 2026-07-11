@@ -1,0 +1,51 @@
+# 混合架构完整预训练配置（DML / AMD 核显，batch 32 稳定）
+# 在 configs/config_dml_full_b32.yaml 基础上加入 layer_plan 等混合选项，独立输出目录
+model:
+  vocab_size: 12000
+  embedding_dim: 512
+  num_heads: 8
+  num_layers: 6
+  hidden_dim: 1024
+  max_seq_length: 64
+  dropout: 0
+  tie_weights: true
+  gradient_checkpointing: true
+  # ---- 混合架构 ----
+  layer_plan: "attn,ssm,attn,ssm,attn,ssm"
+  ssm_d_state: 16
+  ssm_d_inner_factor: 1
+  attn_window: 0
+  attn_rel_bias: false
+
+training:
+  batch_size: 32
+  epochs: 1
+  learning_rate: 1.0e-3
+  weight_decay: 0.01
+  gradient_clip: 1.0
+  warmup_steps: 0.1
+  early_stop_patience: 5
+  label_smoothing: 0.1
+  cpu_threads: 4
+  precision: "fp32"
+  grad_accum_steps: 1
+  eta_min: 0.0
+  lr_schedule: "wsd"
+  wsd_decay_frac: 0.1
+  compile: false
+
+data:
+  train_file: "data/pretrain_corpus/merged.txt"
+  vocab_size: 12000
+  max_seq_length: 64
+  num_workers: 0
+  prefetch: 2
+  test_split: 0.1
+
+paths:
+  checkpoint_dir: "checkpoints_hybrid_dml"
+  log_dir: "logs_hybrid_dml"
+
+device: "auto"
+
+seed: 42
