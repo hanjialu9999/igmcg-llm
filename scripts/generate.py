@@ -25,7 +25,7 @@ def load_model(model_path, vocab_path, device='cpu'):
     vocab.idx2word = {int(k): v for k, v in vocab_data['idx2word'].items()}
     
     # Load model
-    checkpoint = torch.load(model_path, map_location=device)
+    checkpoint = torch.load(model_path, map_location=device, weights_only=False)
     
     model_config = checkpoint.get('config', {
         'vocab_size': checkpoint['vocab_size'],
@@ -44,7 +44,8 @@ def load_model(model_path, vocab_path, device='cpu'):
         num_layers=model_config.get('num_layers', 2),
         hidden_dim=model_config.get('hidden_dim', 256),
         max_seq_length=model_config.get('max_seq_length', 32),
-        dropout=model_config.get('dropout', 0.1)
+        dropout=model_config.get('dropout', 0.0),
+        tie_weights=model_config.get('tie_weights', True),
     ).to(device)
     
     model.load_state_dict(checkpoint['model_state_dict'])

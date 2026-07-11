@@ -8,6 +8,9 @@ model:
   hidden_dim: 1024
   max_seq_length: 64
   dropout: 0                   # 单轮预训练不过拟合，dropout 关掉让模型充分拟合语料
+  tie_weights: true           # 输出头复用 embedding 权重：减参并常改善 LM 质量
+  gradient_checkpointing: true  # 用计算换显存（CPU 上也可开，DML 显存紧张时更稳）
+  # 架构固定为 2026 主流小模型配方：Pre-LN + RMSNorm + RoPE + SwiGLU（见 models/transformer.py）
 
 # Training Configuration
 training:
@@ -25,7 +28,11 @@ training:
                                #   只有 NVIDIA CUDA 才能真正走 fp16/bf16 混合精度；其余情况自动回退 fp32
   grad_accum_steps: 1          # 梯度累积步数；有效 batch = batch_size * grad_accum_steps
                                #   （显存不够想更大 batch 时调大此项，如 4 => 有效 512）
-  eta_min: 0.0                 # 余弦退火下限学习率
+  eta_min: 0.0                 # 学习率下限（cosine/wsd 衰减到此值）
+  lr_schedule: "wsd"          # cosine | constant(=WSO 无衰减) | wsd(预热+稳定+末尾短衰减)
+                               #   wsd/constant 利于后续微调（ICLR2026：衰减少=>更平缓的极小值，适应性更好）
+  wsd_decay_frac: 0.1         # wsd 模式下，最后 10% 步做学习率衰减
+  compile: true                # torch.compile 加速（仅 CPU/CUDA；与梯度检查点冲突时自动关闭后者）
 
 # Data Configuration
 data:

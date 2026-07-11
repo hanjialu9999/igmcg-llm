@@ -29,7 +29,9 @@ def build_model(config, device=None):
         num_layers=mc['num_layers'],
         hidden_dim=mc['hidden_dim'],
         max_seq_length=mc['max_seq_length'],
-        dropout=mc['dropout'],
+        dropout=mc.get('dropout', 0.0),
+        tie_weights=mc.get('tie_weights', True),
+        gradient_checkpointing=mc.get('gradient_checkpointing', True),
     )
     if device is not None:
         model = model.to(device)

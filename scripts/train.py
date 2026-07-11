@@ -1,10 +1,10 @@
 import os
 import sys
 import shutil
+import math
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.amp import autocast as torch_autocast, GradScaler
 import yaml
 import argparse
@@ -54,14 +54,40 @@ def set_seed(seed):
         torch.cuda.manual_seed_all(seed)
 
 
-def train_epoch(model, dataloader, optimizer, criterion, device, epoch, scheduler=None,
+def compute_lr(eff_step, total_eff, warmup_target, base_lr, eta_min, lr_schedule, wsd_decay_frac):
+    """计算第 eff_step 个有效优化步的学习率（统一处理预热与各调度）。
+
+    - warmup: 前 warmup_target 步线性升温到 base_lr
+    - cosine: 之后按余弦衰减到 eta_min
+    - constant (WSO): 之后保持 base_lr 不变（ICLR2026：利于后续微调的平缓极小值）
+    - wsd: 之后保持 base_lr，最后 wsd_decay_frac 比例步内余弦衰减到 eta_min
+    """
+    if warmup_target > 0 and eff_step <= warmup_target:
+        return base_lr * (eff_step / max(1, warmup_target))
+
+    progress = (eff_step - warmup_target) / max(1, total_eff - warmup_target)
+    if lr_schedule == 'constant':
+        return base_lr
+    if lr_schedule == 'cosine':
+        return eta_min + 0.5 * (base_lr - eta_min) * (1 + math.cos(math.pi * progress))
+    if lr_schedule == 'wsd':
+        decay_start = 1.0 - wsd_decay_frac
+        if progress >= decay_start:
+            p = (progress - decay_start) / max(1e-6, wsd_decay_frac)
+            return eta_min + 0.5 * (base_lr - eta_min) * (1 + math.cos(math.pi * p))
+        return base_lr
+    return base_lr
+
+
+def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
                 warmup_steps=0, base_lr=0.0005, gradient_clip=1.0, scaler=None,
-                use_amp=True, autocast_dtype=torch.float32, grad_accum_steps=1):
+                use_amp=True, autocast_dtype=torch.float32, grad_accum_steps=1,
+                lr_schedule='cosine', eta_min=0.0, wsd_decay_frac=0.1):
     """Train one epoch with warmup, gradient accumulation and mixed precision.
 
     - warmup_steps: 预热步数。若 <1 则按"占整个 epoch 有效步数的比例"解释（如 0.1=前 10% 步预热）。
     - grad_accum_steps: 梯度累积步数；有效 batch = batch_size * grad_accum_steps。
-    - 余弦退火在每次"有效优化步"(累积满后)调用 scheduler.step()，单轮内平滑衰减。
+    - lr_schedule: cosine | constant | wsd（见 compute_lr）。
     """
     model.train()
     loss_meter = AverageMeter()
@@ -99,14 +125,10 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch, schedule
         # Only optimize every grad_accum_steps
         if accumulated % grad_accum_steps == 0:
             eff_step += 1
-
-            # Warmup: linear ramp of LR over the first warmup_target effective steps
-            if epoch == 1 and warmup_target > 0 and eff_step <= warmup_target:
-                lr = base_lr * (eff_step / max(1, warmup_target))
-                for param_group in optimizer.param_groups:
-                    param_group['lr'] = lr
-            elif scheduler is not None:
-                scheduler.step()
+            lr = compute_lr(eff_step, total_eff, warmup_target, base_lr,
+                            eta_min, lr_schedule, wsd_decay_frac)
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = lr
 
             # Gradient clipping + optimizer step
             if scaler is not None:
@@ -130,12 +152,10 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch, schedule
     # Flush any leftover accumulated gradients
     if accumulated % grad_accum_steps != 0:
         eff_step += 1
-        if epoch == 1 and warmup_target > 0 and eff_step <= warmup_target:
-            lr = base_lr * (eff_step / max(1, warmup_target))
-            for param_group in optimizer.param_groups:
-                param_group['lr'] = lr
-        elif scheduler is not None:
-            scheduler.step()
+        lr = compute_lr(eff_step, total_eff, warmup_target, base_lr,
+                        eta_min, lr_schedule, wsd_decay_frac)
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = lr
         if scaler is not None:
             scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=gradient_clip)
@@ -281,6 +301,26 @@ def main(config_path='config/config.yaml'):
     # Create model
     print("Creating model...")
     model = build_model(config).to(device)
+
+    # 可选：torch.compile 加速（仅 CPU/CUDA 支持；与梯度检查点易冲突，自动关闭后者）
+    if config['training'].get('compile', False) and hasattr(torch, 'compile') \
+            and device.type in ('cpu', 'cuda'):
+        compile_ok = True
+        if device.type == 'cpu':
+            # Inductor CPU 后端需要 C++ 编译器（g++/clang++/MSVC），缺失则直接跳过避免空耗
+            import shutil
+            if not any(shutil.which(c) for c in
+                       ('g++.exe', 'g++', 'clang++.exe', 'clang++', 'cl.exe', 'cl')):
+                compile_ok = False
+                print("[提示] 未检测到 C++ 编译器，torch.compile(CPU) 不可用，已跳过（安装 MSVC/g++ 后可加速）")
+        if compile_ok:
+            try:
+                torch._dynamo.config.suppress_errors = True  # 编译失败自动回退 eager
+                model.gradient_checkpointing = False
+                model = torch.compile(model)
+                print("torch.compile 已启用（梯度检查点已关闭；编译失败会自动回退 eager）")
+            except Exception as e:
+                print(f"[警告] torch.compile 初始化失败，回退普通模型: {e}")
     
     # Count parameters
     total_params = sum(p.numel() for p in model.parameters())
@@ -309,9 +349,10 @@ def main(config_path='config/config.yaml'):
     if grad_accum_steps < 1:
         grad_accum_steps = 1
 
-    # 有效优化步数（用于余弦退火 T_max）
+    # 有效优化步数（用于学习率调度）
     total_eff = (len(dataloader) + grad_accum_steps - 1) // grad_accum_steps
-    scheduler = CosineAnnealingLR(optimizer, T_max=total_eff, eta_min=eta_min)
+    lr_schedule = str(config['training'].get('lr_schedule', 'cosine')).lower()
+    wsd_decay_frac = float(config['training'].get('wsd_decay_frac', 0.1))
 
     # Mixed precision: 仅 NVIDIA CUDA 支持 torch.amp 自动混合精度(fp16/bf16)。
     # AMD DirectML / CPU 不支持 AMP，也没有 bf16 支持，自动回退 fp32。
@@ -335,7 +376,7 @@ def main(config_path='config/config.yaml'):
           f"effective={config['training']['batch_size'] * grad_accum_steps})")
     print(f"  Num workers: {num_workers}")
     print(f"  Epochs: {config['training']['epochs']}")
-    print(f"  Learning rate: {config['training']['learning_rate']}  (eta_min={eta_min})")
+    print(f"  Learning rate: {config['training']['learning_rate']}  (schedule={lr_schedule}, eta_min={eta_min})")
     print(f"  Early stop patience: {config['training'].get('early_stop_patience', 5)}")
     
     # Training loop
@@ -348,17 +389,18 @@ def main(config_path='config/config.yaml'):
     for epoch in range(1, config['training']['epochs'] + 1):
         train_loss = train_epoch(
             model, dataloader, optimizer, criterion, device, epoch,
-            scheduler=scheduler,
             warmup_steps=config['training'].get('warmup_steps', 0),
             base_lr=config['training']['learning_rate'],
             gradient_clip=config['training']['gradient_clip'],
             scaler=scaler,
             use_amp=use_amp,
             autocast_dtype=autocast_dtype,
-            grad_accum_steps=grad_accum_steps
+            grad_accum_steps=grad_accum_steps,
+            lr_schedule=lr_schedule,
+            eta_min=eta_min,
+            wsd_decay_frac=wsd_decay_frac
         )
-        scheduler.step()
-        
+
         history['train_loss'].append(train_loss)
         
         print(f"\nEpoch {epoch}/{config['training']['epochs']} | Train Loss: {train_loss:.4f}")
