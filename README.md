@@ -40,8 +40,8 @@
 │   ├── training_plan.py / training_report.py
 │   ├── dialogue.py
 │   └── check_*.py             # 检查点 / 文件 / 训练 / 词表 自检
-├── chat.py                    # 对话交互入口（使用微调模型）
-├── run.py                     # 统一启动菜单（训练 / 生成 / 配置）
+├── train_finetune.py          # 微调入口（在预训练底座上做 QA 微调）
+├── _dl_c4.py / _run_train.py  # 辅助脚本：下载中文语料 / 后台拉起训练
 ├── data/
 │   ├── train_data_final.txt   # 主训练语料（由 config 引用）
 │   ├── datasets/              # 原始 QA 数据（*.txt）
@@ -95,15 +95,15 @@ pip install -r requirements-amd.txt
 项目根目录提供了 **`run.bat`** 启动器，会自动选好对应的虚拟环境，直接双击或用命令行：
 
 ```bat
-run.bat            REM 交互菜单（训练 / 生成 / 看配置）
-run.bat train      REM 训练语言模型（产出 checkpoints/final_model.pt + vocab.json）
+run.bat            REM 交互式对话（chat）
+run.bat train      REM 训练基座模型（config/pretrain.yaml，产出 checkpoints/final_model.pt + vocab.json）
 run.bat finetune   REM 微调（产出 best_finetuned_model.pt）
 run.bat chat       REM 对话
 run.bat gen "你的问题"   REM 单条生成
 ```
 
 > 手动跑也行：先 `.amd_venv\Scripts\activate`（AMD 核显）或 `.my_venv\Scripts\activate`（CUDA/CPU），
-> 再 `python scripts/train.py --config config/config.yaml`。
+> 再 `python scripts/train.py --config config/pretrain.yaml`。
 
 ## 文档导航（只看本文件即可，其它是分主题细节）
 

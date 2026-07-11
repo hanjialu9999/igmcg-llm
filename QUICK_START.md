@@ -16,14 +16,14 @@ pip install -r requirements.txt
 如需从 `data/datasets/` 下的原始 QA 数据重新构建：
 
 ```bash
-python scripts/data/prepare_training.py     # 合并 datasets/ 下所有 txt
-python scripts/data/process_data.py         # 转换为 jsonl（可选）
+python scripts/prepare_training.py     # 合并 datasets/ 下所有 txt
+python scripts/process_data.py         # 转换为 jsonl（可选）
 ```
 
-## 3. 训练语言模型
+## 3. 训练语言模型（基座模型）
 
 ```bash
-python scripts/train.py --config config/config.yaml
+python scripts/train.py --config config/pretrain.yaml
 ```
 
 训练结束后会在 `checkpoints/` 下生成：
@@ -40,16 +40,16 @@ python scripts/train.py --config config/config.yaml
 python train_finetune.py
 ```
 
-产出 `best_finetuned_model.pt`，供 `chat.py` 使用。
+产出 `best_finetuned_model.pt`，供 `scripts/chat.py` / `dialogue_interactive.py` 使用。
 
 ## 5. 对话 / 生成
 
 ```bash
-# 交互式对话
-python chat.py
+# 交互式对话（续写式）
+python scripts/chat.py
 
-# 或通过统一菜单
-python run.py
+# 带历史管理的交互式对话
+python dialogue_interactive.py
 ```
 
 生成行为由 `chat_config.json` 控制：`temperature`、`top_k`、`repetition_penalty`、

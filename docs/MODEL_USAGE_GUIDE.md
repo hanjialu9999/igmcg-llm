@@ -35,7 +35,7 @@ python tools/view_model.py
 ## 对话
 
 ```bash
-python chat.py
+python scripts/chat.py
 ```
 
 `chat.py` 会从 `best_finetuned_model.pt` 加载微调模型与 `checkpoints/vocab.json`，

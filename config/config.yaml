@@ -1,29 +1,34 @@
 # Model Configuration
+# 注意：此文件已与 config/pretrain.yaml 对齐（同一套基座模型规格），
+# 避免训练脚本默认加载到错误的 vocab / 数据。正式预训练请统一用 config/pretrain.yaml。
 model:
-  vocab_size: 8731
+  vocab_size: 12000
   embedding_dim: 512
   num_heads: 8
   num_layers: 6
   hidden_dim: 1024
   max_seq_length: 64
-  dropout: 0.1
+  dropout: 0
 
 # Training Configuration
 training:
-  batch_size: 32            # 核显/小显存更稳妥（8GB 共享显存下不会吃满）；大显存机器可上调到 64/128
-  epochs: 10                # 原 200 轮过多，改为 10 轮
-  learning_rate: 3.0e-4     # 适中学习率，配合余弦退火
-  weight_decay: 0.01        # 增强 L2 正则（原 1e-4 偏弱）
+  batch_size: 128
+  epochs: 1
+  learning_rate: 1.0e-3
+  weight_decay: 0.01
   gradient_clip: 1.0
-  warmup_steps: 10          # 原 30 在 10 轮下占比过大，调小
-  early_stop_patience: 3    # 10 轮内可在损失不再下降时提前停止
+  warmup_steps: 0.1
+  early_stop_patience: 5
   label_smoothing: 0.1
-  cpu_threads: 4            # 限制 PyTorch 使用的 CPU 线程数，避免训练/推理吃满所有核心（占满 CPU 时可调小）
-  
+  cpu_threads: 4
+  precision: "fp32"
+  grad_accum_steps: 1
+  eta_min: 0.0
+   
 # Data Configuration
 data:
-  train_file: "data/train_data_final.txt"
-  vocab_size: 8731
+  train_file: "data/pretrain_corpus/merged.txt"
+  vocab_size: 12000
   max_seq_length: 64
   num_workers: 0  # Windows requires 0 (no multiprocessing data loading)
   prefetch: 2

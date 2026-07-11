@@ -22,13 +22,13 @@ if exist ".amd_venv\Scripts\python.exe" (
 )
 
 if "%1"=="" (
-    %PY% run.py
+    %PY% scripts/chat.py
 ) else if /i "%1"=="train" (
-    %PY% scripts/train.py --config config/config.yaml
+    %PY% scripts/train.py --config config/pretrain.yaml
 ) else if /i "%1"=="finetune" (
     %PY% train_finetune.py
 ) else if /i "%1"=="chat" (
-    %PY% chat.py
+    %PY% scripts/chat.py
 ) else if /i "%1"=="gen" (
     %PY% scripts/generate.py --prompt "%2" --device auto
 ) else (

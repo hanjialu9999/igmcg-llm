@@ -65,4 +65,4 @@ python train_finetune.py
 ```
 
 微调数据来自 `data/datasets/`（每两个非空行构成一对 Q/A）。
-产出 `best_finetuned_model.pt`，供 `chat.py` 使用。
+产出 `best_finetuned_model.pt`，供 `scripts/chat.py` / `dialogue_interactive.py` 使用。

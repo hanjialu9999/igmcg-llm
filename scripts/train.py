@@ -20,7 +20,7 @@ sys.path.insert(0, str(project_root))
 from models.transformer import TransformerModel
 from models.data_utils import load_data, create_dataloader
 from models.config_loader import build_model
-from models.device import get_device, supports_amp, apply_cpu_threads
+from models.device import get_device, apply_cpu_threads
 
 class AverageMeter:
     def __init__(self):
@@ -54,64 +54,98 @@ def set_seed(seed):
         torch.cuda.manual_seed_all(seed)
 
 
-def train_epoch(model, dataloader, optimizer, criterion, device, epoch, scheduler=None, warmup_steps=0, base_lr=0.0005, gradient_clip=1.0, scaler=None, use_amp=True):
-    """Train one epoch with warmup and automatic mixed precision support"""
+def train_epoch(model, dataloader, optimizer, criterion, device, epoch, scheduler=None,
+                warmup_steps=0, base_lr=0.0005, gradient_clip=1.0, scaler=None,
+                use_amp=True, autocast_dtype=torch.float32, grad_accum_steps=1):
+    """Train one epoch with warmup, gradient accumulation and mixed precision.
+
+    - warmup_steps: 预热步数。若 <1 则按"占整个 epoch 有效步数的比例"解释（如 0.1=前 10% 步预热）。
+    - grad_accum_steps: 梯度累积步数；有效 batch = batch_size * grad_accum_steps。
+    - 余弦退火在每次"有效优化步"(累积满后)调用 scheduler.step()，单轮内平滑衰减。
+    """
     model.train()
     loss_meter = AverageMeter()
-    
+
     total_steps = len(dataloader)
-    warmup_per_batch = warmup_steps / total_steps if warmup_steps > 0 else 0
-    
+    total_eff = (total_steps + grad_accum_steps - 1) // grad_accum_steps
+    warmup_target = int(warmup_steps * total_eff) if 0 < warmup_steps < 1 else int(warmup_steps)
+
+    optimizer.zero_grad()
+    accumulated = 0
+    eff_step = 0
+
     for batch_idx, batch in enumerate(dataloader):
-        # Warmup: gradually increase learning rate at the beginning
-        if epoch == 1 and warmup_per_batch > 0:
-            warmup_factor = min(1.0, (batch_idx + 1) * warmup_per_batch)
-            for param_group in optimizer.param_groups:
-                param_group['lr'] = base_lr * warmup_factor
-        
         input_ids = batch['input_ids'].to(device)
         target_ids = batch['target_ids'].to(device)
-        
-        # Forward pass with automatic mixed precision
-        if use_amp and scaler is not None:
-            with torch_autocast('cuda'):
-                logits = model(input_ids)  # (batch_size, seq_length, vocab_size)
-                
-                # Reshape for loss calculation
-                logits = logits.view(-1, logits.size(-1))  # (batch_size * seq_length, vocab_size)
-                target_ids_reshaped = target_ids.view(-1)  # (batch_size * seq_length)
-                
-                # Calculate loss
-                loss = criterion(logits, target_ids_reshaped)
+
+        # Forward pass (optionally under autocast for CUDA mixed precision)
+        if use_amp:
+            with torch_autocast('cuda', dtype=autocast_dtype):
+                logits = model(input_ids).view(-1, model.vocab_size)
+                loss = criterion(logits, target_ids.view(-1))
         else:
-            logits = model(input_ids)  # (batch_size, seq_length, vocab_size)
-            
-            # Reshape for loss calculation
-            logits = logits.view(-1, logits.size(-1))  # (batch_size * seq_length, vocab_size)
-            target_ids_reshaped = target_ids.view(-1)  # (batch_size * seq_length)
-            
-            # Calculate loss
-            loss = criterion(logits, target_ids_reshaped)
-        
-        # Backward pass
-        optimizer.zero_grad()
-        
-        if use_amp and scaler is not None:
+            logits = model(input_ids).view(-1, model.vocab_size)
+            loss = criterion(logits, target_ids.view(-1))
+
+        # Scale loss for gradient accumulation, then backward
+        loss = loss / grad_accum_steps
+        if scaler is not None:
             scaler.scale(loss).backward()
+        else:
+            loss.backward()
+
+        accumulated += 1
+
+        # Only optimize every grad_accum_steps
+        if accumulated % grad_accum_steps == 0:
+            eff_step += 1
+
+            # Warmup: linear ramp of LR over the first warmup_target effective steps
+            if epoch == 1 and warmup_target > 0 and eff_step <= warmup_target:
+                lr = base_lr * (eff_step / max(1, warmup_target))
+                for param_group in optimizer.param_groups:
+                    param_group['lr'] = lr
+            elif scheduler is not None:
+                scheduler.step()
+
+            # Gradient clipping + optimizer step
+            if scaler is not None:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=gradient_clip)
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=gradient_clip)
+                optimizer.step()
+
+            optimizer.zero_grad()
+            accumulated = 0
+
+        loss_meter.update(loss.item() * grad_accum_steps)
+
+        if (batch_idx + 1) % 10 == 0:
+            print(f"Epoch {epoch} | Batch {batch_idx + 1}/{total_steps} | "
+                  f"Loss: {loss_meter.avg:.4f} | LR: {optimizer.param_groups[0]['lr']:.6f}")
+
+    # Flush any leftover accumulated gradients
+    if accumulated % grad_accum_steps != 0:
+        eff_step += 1
+        if epoch == 1 and warmup_target > 0 and eff_step <= warmup_target:
+            lr = base_lr * (eff_step / max(1, warmup_target))
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = lr
+        elif scheduler is not None:
+            scheduler.step()
+        if scaler is not None:
             scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=gradient_clip)
             scaler.step(optimizer)
             scaler.update()
         else:
-            loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=gradient_clip)
             optimizer.step()
-        
-        loss_meter.update(loss.item())
-        
-        if (batch_idx + 1) % 10 == 0:
-            print(f"Epoch {epoch} | Batch {batch_idx + 1}/{len(dataloader)} | Loss: {loss_meter.avg:.4f}")
-    
+        optimizer.zero_grad()
+
     return loss_meter.avg
 
 
@@ -258,7 +292,7 @@ def main(config_path='config/config.yaml'):
     # Label smoothing helps prevent overconfidence and improves generalization
     criterion = nn.CrossEntropyLoss(
         ignore_index=vocab.pad_idx,
-        label_smoothing=0.1  # 10% label smoothing
+        label_smoothing=config['training'].get('label_smoothing', 0.1)
     )
     optimizer = optim.AdamW(
         model.parameters(),
@@ -267,19 +301,41 @@ def main(config_path='config/config.yaml'):
         betas=(0.9, 0.999),
         eps=1e-8
     )
-    scheduler = CosineAnnealingLR(optimizer, T_max=config['training']['epochs'])
-    
-    # Mixed precision training setup (仅 CUDA 支持 torch.cuda.amp；DirectML/CPU 用 fp32)
-    use_amp = supports_amp(device)
-    scaler = torch.amp.GradScaler('cuda') if use_amp else None
+
+    # ---- 精度 / 梯度累积 / 余弦退火 配置 ----
+    precision = str(config['training'].get('precision', 'fp32')).lower()
+    grad_accum_steps = int(config['training'].get('grad_accum_steps', 1))
+    eta_min = float(config['training'].get('eta_min', 0.0))
+    if grad_accum_steps < 1:
+        grad_accum_steps = 1
+
+    # 有效优化步数（用于余弦退火 T_max）
+    total_eff = (len(dataloader) + grad_accum_steps - 1) // grad_accum_steps
+    scheduler = CosineAnnealingLR(optimizer, T_max=total_eff, eta_min=eta_min)
+
+    # Mixed precision: 仅 NVIDIA CUDA 支持 torch.amp 自动混合精度(fp16/bf16)。
+    # AMD DirectML / CPU 不支持 AMP，也没有 bf16 支持，自动回退 fp32。
+    use_amp = False
+    autocast_dtype = torch.float32
+    scaler = None
+    if precision in ('fp16', 'bf16'):
+        if device.type == 'cuda':
+            use_amp = True
+            autocast_dtype = torch.float16 if precision == 'fp16' else torch.bfloat16
+            # bf16 动态范围大，不需要 loss scaling；fp16 才用 GradScaler
+            scaler = torch.amp.GradScaler('cuda') if precision == 'fp16' else None
+        else:
+            print(f"[警告] precision={precision} 仅在 NVIDIA CUDA 上支持混合精度；"
+                  f"当前设备 {device} 不支持 AMP/bf16，自动回退 fp32 训练。")
     
     print(f"\n[Training Config]")
     print(f"  Device: {device}")
-    print(f"  Batch size: {config['training']['batch_size']}")
-    print(f"  Mixed precision: {use_amp}")
+    print(f"  Precision: {precision} (AMP={use_amp}, scaler={'yes' if scaler else 'no'})")
+    print(f"  Batch size: {config['training']['batch_size']}  (grad_accum={grad_accum_steps}, "
+          f"effective={config['training']['batch_size'] * grad_accum_steps})")
     print(f"  Num workers: {num_workers}")
     print(f"  Epochs: {config['training']['epochs']}")
-    print(f"  Learning rate: {config['training']['learning_rate']}")
+    print(f"  Learning rate: {config['training']['learning_rate']}  (eta_min={eta_min})")
     print(f"  Early stop patience: {config['training'].get('early_stop_patience', 5)}")
     
     # Training loop
@@ -297,7 +353,9 @@ def main(config_path='config/config.yaml'):
             base_lr=config['training']['learning_rate'],
             gradient_clip=config['training']['gradient_clip'],
             scaler=scaler,
-            use_amp=use_amp
+            use_amp=use_amp,
+            autocast_dtype=autocast_dtype,
+            grad_accum_steps=grad_accum_steps
         )
         scheduler.step()
         
@@ -354,8 +412,8 @@ if __name__ == '__main__':
     torch.multiprocessing.freeze_support()
     
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, default='config/config.yaml',
-                        help='Path to config file')
+    parser.add_argument('--config', type=str, default='config/pretrain.yaml',
+                        help='Path to config file (default: 基座模型预训练配置)')
     args = parser.parse_args()
     
     main(args.config)
