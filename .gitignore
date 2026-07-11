@@ -24,6 +24,9 @@ data/pretrain_corpus/*.txt
 data/datasets/
 data/train_data_final.txt
 
+# 本地自测脚本（仅本地运行，不上传 git）
+test/
+
 # Model checkpoints & large artifacts (do NOT commit)
 *.pt
 *.pth

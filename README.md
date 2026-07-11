@@ -23,8 +23,10 @@ test/            pytest 风格测试
 data/            语料 (pretrain_corpus/) 与数据集 (datasets/)
 logs/            运行日志
 checkpoints/     训练产出 (checkpoints_dml_b32 等子目录维持原样，未迁移)
-archive_unused/  历史归档 (未动)
-```
+ archive_unused/  历史归档 (未动)
+ ```
+
+> 各子目录内另有 `README.md` 详述其文件用途（`models/` `scripts/` `configs/` `experiments/` `tools/` `docs/` `data/` 等）。
 
 ## 快速开始
 
