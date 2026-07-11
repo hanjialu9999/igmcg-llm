@@ -262,7 +262,7 @@ def create_dataloader(dataset, batch_size=16, shuffle=True, num_workers=0):
     )
 
 
-def split_dataset(dataset, train_ratio=0.9):
+def split_dataset(dataset, train_ratio=0.9, seed=42):
     """Split dataset into train and validation sets"""
     train_size = int(len(dataset) * train_ratio)
     val_size = len(dataset) - train_size
@@ -270,7 +270,7 @@ def split_dataset(dataset, train_ratio=0.9):
     train_dataset, val_dataset = torch.utils.data.random_split(
         dataset, 
         [train_size, val_size],
-        generator=torch.Generator().manual_seed(42)
+        generator=torch.Generator().manual_seed(seed)
     )
     
     return train_dataset, val_dataset

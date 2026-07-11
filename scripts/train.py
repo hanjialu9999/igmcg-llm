@@ -11,6 +11,7 @@ import argparse
 from pathlib import Path
 from datetime import datetime
 import json
+import random
 import numpy as np
 
 try:
@@ -24,7 +25,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from models.transformer import TransformerModel
-from models.data_utils import load_data, create_dataloader
+from models.data_utils import load_data, create_dataloader, split_dataset
 from models.config_loader import build_model
 from models.device import get_device, apply_cpu_threads
 
@@ -54,6 +55,7 @@ def load_config(config_path):
 
 def set_seed(seed):
     """Set random seed for reproducibility"""
+    random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     if torch.cuda.is_available():
@@ -305,14 +307,32 @@ def main(config_path='config/config.yaml'):
     print(f"Vocabulary size: {len(vocab)}")
     print(f"Dataset size: {len(dataset)}")
     
+    # Split into train/validation
+    test_split = config['data'].get('test_split', 0.0)
+    if test_split > 0:
+        train_dataset, val_dataset = split_dataset(dataset, train_ratio=1.0 - test_split,
+                                                    seed=config['seed'])
+        print(f"Split: train={len(train_dataset)}, val={len(val_dataset)} "
+              f"(ratio {1.0-test_split:.1f}/{test_split:.1f})")
+    else:
+        train_dataset, val_dataset = dataset, None
+    
     # Create dataloader with parallel data loading
     num_workers = config['data'].get('num_workers', 4)
     dataloader = create_dataloader(
-        dataset,
+        train_dataset,
         batch_size=config['training']['batch_size'],
         shuffle=True,
         num_workers=num_workers
     )
+    val_dataloader = None
+    if val_dataset is not None:
+        val_dataloader = create_dataloader(
+            val_dataset,
+            batch_size=config['training']['batch_size'],
+            shuffle=False,
+            num_workers=num_workers
+        )
     
     # Create model
     print("Creating model...")
@@ -365,8 +385,6 @@ def main(config_path='config/config.yaml'):
     if grad_accum_steps < 1:
         grad_accum_steps = 1
 
-    # 有效优化步数（用于学习率调度）
-    total_eff = (len(dataloader) + grad_accum_steps - 1) // grad_accum_steps
     lr_schedule = str(config['training'].get('lr_schedule', 'cosine')).lower()
     wsd_decay_frac = float(config['training'].get('wsd_decay_frac', 0.1))
 
@@ -385,13 +403,17 @@ def main(config_path='config/config.yaml'):
             print(f"[警告] precision={precision} 仅在 NVIDIA CUDA 上支持混合精度；"
                   f"当前设备 {device} 不支持 AMP/bf16，自动回退 fp32 训练。")
     
+    total_batches = len(dataloader)
+    total_eff = (total_batches + grad_accum_steps - 1) // grad_accum_steps
+    epochs = config['training']['epochs']
     print(f"\n[Training Config]")
     print(f"  Device: {device}")
     print(f"  Precision: {precision} (AMP={use_amp}, scaler={'yes' if scaler else 'no'})")
     print(f"  Batch size: {config['training']['batch_size']}  (grad_accum={grad_accum_steps}, "
           f"effective={config['training']['batch_size'] * grad_accum_steps})")
+    print(f"  Steps per epoch: {total_batches} batches, {total_eff} effective (x{epochs} epochs = {total_eff * epochs} total)")
     print(f"  Num workers: {num_workers}")
-    print(f"  Epochs: {config['training']['epochs']}")
+    print(f"  Epochs: {epochs}")
     print(f"  Learning rate: {config['training']['learning_rate']}  (schedule={lr_schedule}, eta_min={eta_min})")
     print(f"  Early stop patience: {config['training'].get('early_stop_patience', 5)}")
     
@@ -419,15 +441,24 @@ def main(config_path='config/config.yaml'):
 
         history['train_loss'].append(train_loss)
         
-        print(f"\nEpoch {epoch}/{config['training']['epochs']} | Train Loss: {train_loss:.4f}")
+        # Validation
+        val_loss = None
+        if val_dataloader is not None:
+            val_loss = validate(model, val_dataloader, criterion, device)
+            print(f"\nEpoch {epoch}/{config['training']['epochs']} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
+        else:
+            print(f"\nEpoch {epoch}/{config['training']['epochs']} | Train Loss: {train_loss:.4f}")
         print(f"Learning rate: {optimizer.param_groups[0]['lr']:.6f}")
         
-        # Save checkpoint and update best loss
-        if train_loss < best_loss:
-            best_loss = train_loss
+        # Use val loss for best/early stopping if available, otherwise train loss
+        epoch_loss = val_loss if val_loss is not None else train_loss
+        if epoch_loss < best_loss:
+            best_loss = epoch_loss
             history['best_epoch'] = epoch
             no_improve_epochs = 0
-            save_checkpoint(model, optimizer, epoch, best_loss, checkpoint_dir, len(vocab))
+            # Save per-epoch checkpoint (skipped when single epoch to avoid redundant file)
+            if config['training']['epochs'] > 1:
+                save_checkpoint(model, optimizer, epoch, best_loss, checkpoint_dir, len(vocab))
         else:
             no_improve_epochs += 1
             print(f"No improvement for {no_improve_epochs} epoch(s).")

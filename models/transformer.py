@@ -39,7 +39,7 @@ class RotaryEmbedding(nn.Module):
         d = x.size(-1) // 2
         x1, x2 = x[..., :d], x[..., d:]
         rot = torch.cat((-x2, x1), dim=-1)
-        return x * cos + rot * sin
+        return x * cos.to(x.dtype) + rot * sin.to(x.dtype)
 
 
 class CausalSelfAttention(nn.Module):
