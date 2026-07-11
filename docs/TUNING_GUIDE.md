@@ -6,7 +6,7 @@
 |------|------|----------|------------|
 | `temperature` | 采样温度，越高越随机 | 0.3 – 1.2 | 0.65 |
 | `top_k` | 仅从概率最高的 k 个 token 采样 | 25 – 60 | 40 |
-| `repetition_penalty` | 重复惩罚，>1 抑制复读 | 1.5 – 2.5 | 2.0 |
+| `repetition_penalty` | 重复惩罚，>1 抑制复读 | 1.2 – 2.5 | 1.4 |
 
 辅助参数：`min_new_tokens`（最小生成长度）、`max_new_tokens`（最大生成长度）、
 `context_rounds`（多轮对话上下文轮数）。

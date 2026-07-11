@@ -12,8 +12,8 @@ pip install -r requirements.txt
 
 ## 2. 准备数据
 
-主训练语料默认是 `data/train_data_final.txt`（已包含在仓库中）。
-如需从 `data/datasets/` 下的原始 QA 数据重新构建：
+主训练语料默认是 `data/pretrain_corpus/merged.txt`（本地语料，**不纳入仓库**；小样本调试可用 `merged_sample.txt`）。
+原始 QA 数据在 `data/datasets/`（同样仅本地保留，未上传 git）。如需从 `data/datasets/` 重新构建语料：
 
 ```bash
 python scripts/prepare_training.py     # 合并 datasets/ 下所有 txt
@@ -67,5 +67,5 @@ python scripts/tuning/showcase_optimal_params.py  # 展示最优参数并回写 
 
 - **`FileNotFoundError: vocab.json`**：先执行第 3 步训练（或单独构建词表）。
 - **想换模型结构**：只改 `configs/pretrain.yaml` 的 `model` 段，所有脚本会自动同步。
-- **显存不足**：在 `config.yaml` 调小 `training.batch_size`，或在 `train_finetune.py`
+- **显存不足**：在 `configs/pretrain.yaml` 调小 `training.batch_size`，或在 `train_finetune.py`
   中减小 `DataLoader` 的 `batch_size`。
