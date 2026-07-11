@@ -24,8 +24,8 @@ def main():
         pass
 
     parser = argparse.ArgumentParser(description='与训练好的模型对话（续写式）')
-    parser.add_argument('--model', default='checkpoints_test/final_model.pt')
-    parser.add_argument('--vocab', default='checkpoints_test/vocab.json')
+    parser.add_argument('--model', default='checkpoints/final_model.pt')
+    parser.add_argument('--vocab', default='checkpoints/vocab.json')
     parser.add_argument('--device', default='auto')
     parser.add_argument('--max-length', type=int, default=60)
     parser.add_argument('--temperature', type=float, default=0.7)
