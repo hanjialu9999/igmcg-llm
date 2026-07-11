@@ -20,6 +20,10 @@ data/pretrain_corpus/raw/
 data/pretrain_corpus/*.txt
 !data/pretrain_corpus/MANUAL.md
 
+# Collected training datasets (个人收集，仅本地保留，不上传 git)
+data/datasets/
+data/train_data_final.txt
+
 # Model checkpoints & large artifacts (do NOT commit)
 *.pt
 *.pth
