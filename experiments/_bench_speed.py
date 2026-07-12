@@ -1,7 +1,6 @@
 """临时基准测试：对比本次优化的效果（RoPE 缓存命中、int8 动态量化速度与质量）。
 
-不改动项目默认代码，仅 import 现有 API。运行：
-  F:\Projects\.amd_venv\Scripts\python.exe experiments/_bench_speed.py
+不改动项目默认代码，仅 import 现有 API。  运行（在项目根目录，使用含 torch 的虚拟环境）：python experiments/_bench_speed.py
 """
 import sys
 import time
