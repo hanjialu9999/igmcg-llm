@@ -84,7 +84,7 @@ path = hf_hub_download("shareAI/ShareGPT-Chinese-English-90k",
 |------|-----------|---------|---------|
 | 预训练 (base) | 3万-10万条文本 | 10-30 epoch | 理解语言基本结构 |
 | 微调 (SFT) | 现有 ~7300 条问答对 | 10-20 epoch | 学会回答问题 |
-| 总参数量 | ~20M | - | 可运行在 CPU/AMD GPU |
+| 总参数量 | ~25M（6 层 / emb512） | - | 可运行在 CPU/AMD GPU |
 
 > **先用现有数据 (data/pretrain_corpus/merged_sample.txt) 跑通全流程，再逐步增加数据量。**
-> 太多数据反而可能让 20M 模型欠拟合，建议从 3万条开始试。
+> 太多数据反而可能让 25M 模型欠拟合，建议从 3万条开始试。

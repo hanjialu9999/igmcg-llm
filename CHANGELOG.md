@@ -2,7 +2,7 @@
 
 记录主要修复与功能变更，便于对照提交历史。
 
-## 未提交（待 push，基于 `bd219f7`）
+## `43c7d27`（已提交，待 push，基于 `7590280`）
 
 ### 修复：DML 设备推理崩溃
 - 根因：`torch.load(..., map_location=device)` 在 DML 设备对象（`privateuseone:0`）上会触发 `torch_directml.device(torch.device)` 的 `TypeError`；且生成路径使用 `torch.inference_mode()`，在 DML 后端前向时会报 `RuntimeError: Cannot set version_counter for inference tensor`。
