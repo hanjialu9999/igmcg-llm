@@ -18,10 +18,10 @@ vocab = load_vocab('checkpoints/vocab.json')
 
 device = get_device()
 
-model = build_model(load_config()).to(device)
+model = build_model(load_config(), device=device)
 cp = torch.load('checkpoints/final_model.pt', map_location=device)
 model.load_state_dict(cp['model_state_dict'])
-model.to(device).eval()
+model.eval()
 
 test_questions = [
     'What is machine learning',

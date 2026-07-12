@@ -40,7 +40,7 @@ data:
 
 ## 训练特性
 
-- **混合精度 (AMP)**：在 CUDA 下自动开启，省显存。
+- **混合精度 (AMP)**：`precision: bf16` 在 CUDA 与 CPU 下自动开启（约 2~2.5× 提速，loss 基本无损，无需 loss scaling）；`fp16` 仅 CUDA（用 GradScaler）。AMD DirectML 暂不支持 AMP，自动回退 fp32。
 - **Warmup**：训练首 epoch 内线性升温学习率。
 - **Label Smoothing**：`CrossEntropyLoss(label_smoothing=0.1)` 提升泛化。
 - **早停**：连续 `early_stop_patience` 个 epoch 无提升则停止。

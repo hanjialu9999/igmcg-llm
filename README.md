@@ -43,6 +43,8 @@ python scripts/chat.py --ngram --igmcg --intuition 0.3,0.8,0.5,0.2,0.6,0.4,0.5
 
 GPU/加速：设备上 `get_device('auto')` 自动选择 cuda / dml(AMD) / cpu；推理默认在支持的 CPU/CUDA 上用 **bf16 精度（约 1.5~1.8× 提速，质量基本无损）**，可用 `--dtype fp32|bf16|auto` 控制。CPU 生成可用 `--cpu-threads N` 限制线程数降功耗；纯 CPU 还可加 `--quantize` 启用 int8 动态量化，进一步降低内存带宽与功耗（约 4× 更小模型，质量无损）。`--compile` 需本机有 C++ 编译器才会生效，否则自动回退 eager。
 
+训练侧可用 `precision: bf16` 在 **CPU / CUDA** 开启混合精度训练（约 2~2.5× 提速、loss 基本无损）；`fp16` 仅 CUDA（启用 GradScaler）；AMD DirectML 暂不支持 AMP，自动回退 fp32。SSM/hybrid 架构的选择性扫描已向量化，可在 DML 上正常训练（旧版逐时间步 for 循环会因 kernel 风暴触发 iGPU 设备重置）。
+
 ## IGMCG 反碎片化设计
 
 IGMCG 生成多个温度候选，按综合分选优：

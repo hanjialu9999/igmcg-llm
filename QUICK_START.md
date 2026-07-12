@@ -30,7 +30,7 @@ python scripts/train.py --config configs/pretrain.yaml
 - `final_model.pt`：最终模型权重
 - `vocab.json`：词表（推理 / 诊断脚本依赖它）
 
-训练过程支持 warmup、混合精度（CUDA）、早停与自动清理旧检查点。
+训练过程支持 warmup、混合精度（CUDA / CPU bf16，DML 自动回退 fp32）、早停与自动清理旧检查点。
 
 ## 4. 微调（可选）
 

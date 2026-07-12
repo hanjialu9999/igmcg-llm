@@ -489,9 +489,10 @@ def main():
             except Exception:
                 dtype = 'fp32'
     if dtype == 'bf16' and device.type in ('cpu', 'cuda'):
-        if device.type == 'cpu':
-            torch.set_autocast_enabled('cpu', True)
-            torch.set_autocast_dtype('cpu', torch.bfloat16)
+        # 在对应后端启用 bf16 自动混合精度（注意必须按实际 device.type 开启，
+        # 原实现只开了 'cpu' autocast，导致 CUDA 下 bf16 实际未生效）
+        torch.set_autocast_enabled(device.type, True)
+        torch.set_autocast_dtype(device.type, torch.bfloat16)
         print("推理精度: bf16（%s autocast，约 1.5~1.8x 提速）" % ("CPU" if device.type == 'cpu' else "CUDA"))
     else:
         print("推理精度: fp32")

@@ -91,7 +91,7 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
                 warmup_steps=0, base_lr=0.0005, gradient_clip=1.0, scaler=None,
                 use_amp=True, autocast_dtype=torch.float32, grad_accum_steps=1,
                 lr_schedule='cosine', eta_min=0.0, wsd_decay_frac=0.1,
-                show_progress=True):
+                show_progress=True, amp_device=None):
     """Train one epoch with warmup, gradient accumulation and mixed precision.
 
     - warmup_steps: 预热步数。若 <1 则按"占整个 epoch 有效步数的比例"解释（如 0.1=前 10% 步预热）。
@@ -136,9 +136,9 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
         input_ids = batch['input_ids'].to(device)
         target_ids = batch['target_ids'].to(device)
 
-        # Forward pass (optionally under autocast for CUDA mixed precision)
-        if use_amp:
-            with torch_autocast('cuda', dtype=autocast_dtype):
+        # Forward pass (optionally under autocast for mixed precision)
+        if use_amp and amp_device is not None:
+            with torch_autocast(amp_device, dtype=autocast_dtype):
                 logits = model(input_ids).view(-1, model.vocab_size)
                 loss = criterion(logits, target_ids.view(-1))
         else:
@@ -385,19 +385,29 @@ def main(config_path='configs/pretrain.yaml'):
     lr_schedule = str(config['training'].get('lr_schedule', 'cosine')).lower()
     wsd_decay_frac = float(config['training'].get('wsd_decay_frac', 0.1))
 
-    # Mixed precision: 仅 NVIDIA CUDA 支持 torch.amp 自动混合精度(fp16/bf16)。
-    # AMD DirectML / CPU 不支持 AMP，也没有 bf16 支持，自动回退 fp32。
+    # ---- 混合精度（可选）----
+    # bf16：CUDA 与 CPU 均支持（CPU 走 oneDNN bf16 matmul，可提速且动态范围大无需 loss scaling）
+    # fp16：仅 NVIDIA CUDA 支持，需要 GradScaler 做 loss scaling
+    # AMD DirectML（privateuseone）不支持 AMP/bf16，自动回退 fp32
     use_amp = False
     autocast_dtype = torch.float32
     scaler = None
+    amp_device = None
     if precision in ('fp16', 'bf16'):
         if device.type == 'cuda':
             use_amp = True
+            amp_device = 'cuda'
             autocast_dtype = torch.float16 if precision == 'fp16' else torch.bfloat16
             # bf16 动态范围大，不需要 loss scaling；fp16 才用 GradScaler
             scaler = torch.amp.GradScaler('cuda') if precision == 'fp16' else None
+        elif device.type == 'cpu' and precision == 'bf16':
+            # CPU bf16 混合精度（oneDNN 支持），可加速训练且无需 loss scaling
+            use_amp = True
+            amp_device = 'cpu'
+            autocast_dtype = torch.bfloat16
+            scaler = None
         else:
-            print(f"[警告] precision={precision} 仅在 NVIDIA CUDA 上支持混合精度；"
+            print(f"[警告] precision={precision} 混合精度仅支持 CUDA(fp16/bf16) 与 CPU(bf16)；"
                   f"当前设备 {device} 不支持 AMP/bf16，自动回退 fp32 训练。")
     
     total_batches = len(dataloader)
@@ -430,6 +440,7 @@ def main(config_path='configs/pretrain.yaml'):
             scaler=scaler,
             use_amp=use_amp,
             autocast_dtype=autocast_dtype,
+            amp_device=amp_device,
             grad_accum_steps=grad_accum_steps,
             lr_schedule=lr_schedule,
             eta_min=eta_min,

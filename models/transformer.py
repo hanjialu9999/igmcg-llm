@@ -170,8 +170,9 @@ class SlidingWindowCausalSelfAttention(nn.Module):
 
 class MambaSSM(nn.Module):
     """Mamba-like 选择性状态空间模型（线性复杂度长序列建模）。
-     门控 + 输入依赖的 Δ/B/C，零阶保持离散化后沿时间递推。
-     实现为时间维 for 循环（seq<=64 可接受；CUDA 并行扫描可后续加速）。
+      门控 + 输入依赖的 Δ/B/C，零阶保持离散化后沿时间递推。
+      选择性扫描已向量化（cumprod + cumsum 解析展开），消除逐时间步 Python for 循环：
+      既显著加快 CPU 训练，也避免低功耗 iGPU 上 DML 因单次步内 kernel 过多触发 TDR 设备重置。
     """
     def __init__(self, dim, d_state=16, d_inner_factor=1, dt_rank=None, conv_kernel=3):
         super().__init__()
@@ -227,16 +228,39 @@ class MambaSSM(nn.Module):
         dB = dt.unsqueeze(-1) * Bp.unsqueeze(2)       # (B, L, d_inner, d_state)
         xb = dB * x_conv.unsqueeze(-1)               # (B, L, d_inner, d_state)
         C = Cp                                        # (B, L, d_state)
-        h = torch.zeros(B, self.d_inner, self.d_state, device=x.device, dtype=x.dtype)
-        ys = []
-        for t in range(L):
-            h = dA[:, t] * h + xb[:, t]
-            y_t = (h * C[:, t].unsqueeze(1)).sum(-1)  # (B, d_inner)
-            ys.append(y_t)
-        y = torch.stack(ys, dim=1)                   # (B, L, d_inner)
+        # 向量化选择性扫描（并行前缀扫描，log2(L) 步，数值稳定且无逐时间步 for 循环）：
+        # 递推 h_t = dA_t*h_{t-1} + xb_t（h_0=0）用半群 (A,B)⊙(A',B') = (A·A', A'·B + B')
+        # 做前缀扫描。相比逐时间步 for 循环，kernel 启动数从 L 降到 log2(L)，消除 DML 上
+        # 单步 kernel 过多导致的 TDR 设备重置；相比闭式 cumprod/cumsum，全程不除 cumprod
+        # （其长序列会下溢为 0，导致 0·inf=NaN），数值稳定。
+        h = self._selective_scan(dA, xb)             # (B, L, d_inner, d_state)
+        y = (h * C.unsqueeze(2)).sum(-1)             # (B, L, d_inner)
         y = y + self.D * x_conv                      # 跳跃连接
         y = y * self.act(z)                          # 门控
         return self.out_proj(y)
+
+    @staticmethod
+    def _selective_scan(a, b):
+        """并行前缀扫描计算 h_t = a_t * h_{t-1} + b_t（h_0=0）。
+
+        a, b: (B, L, d_inner, d_state)。返回 h: (B, L, d_inner, d_state)。
+        半群 (A, B)⊙(A', B') = (A·A', A'·B + B') 满足结合律；
+        Hillis-Steele 含扫描：每轮把左邻 2^k 步的变换合并进来，offset 从 1 翻倍到 <L。
+        单位元为 (A=1, B=0)，越界位置用单位元填充。
+        """
+        L = a.shape[1]
+        A = a
+        B = b
+        offset = 1
+        while offset < L:
+            # 左移 offset：位置 i 取 i-offset（越界填单位元 A=1, B=0）
+            A_prev = torch.cat([torch.ones_like(A[:, :offset]), A[:, :-offset]], dim=1)
+            B_prev = torch.cat([torch.zeros_like(B[:, :offset]), B[:, :-offset]], dim=1)
+            A_new = A_prev * A
+            B_new = A * B_prev + B
+            A, B = A_new, B_new
+            offset <<= 1
+        return B
 
 
 class SwiGLU(nn.Module):

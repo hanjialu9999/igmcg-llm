@@ -104,7 +104,8 @@ def train():
     # 模型结构统一从 config.yaml 读取，避免与训练脚本不一致
     print("初始化 Transformer 结构...")
     config = load_config()
-    model = build_model(config)
+    device = get_device()  # 自动适配 CUDA / DirectML(AMD) / CPU
+    model = build_model(config, device=device)
 
     # 加载权重：优先用微调后的模型；不存在则回退到预训练底座 final_model.pt
     # （支持「先预训练 base 再微调」的两阶段流程）；都缺失则从随机初始化开始
@@ -126,9 +127,7 @@ def train():
             model.load_state_dict(checkpoint)
             print("✅ 直接加载权重成功")
 
-    device = get_device()  # 自动适配 CUDA / DirectML(AMD) / CPU
     apply_cpu_threads(config['training'].get('cpu_threads'))
-    model = model.to(device)
     model.train()
     print(f"使用设备: {device}")
 
