@@ -4,6 +4,7 @@
 
 import torch
 import json
+import argparse
 from pathlib import Path
 import sys
 
@@ -14,11 +15,18 @@ from models.data_utils import Vocabulary
 from models.device import get_device
 
 # Load model and vocab
-device = get_device()
+parser = argparse.ArgumentParser(description='诊断模型输出')
+parser.add_argument('--model', default='checkpoints/final_model.pt', help='模型权重路径')
+parser.add_argument('--vocab', default='checkpoints/vocab.json', help='词表路径')
+parser.add_argument('--device', default=None, help='推理设备（默认自动选择，如 cpu / cuda / dml）')
+parser.add_argument('--prompt', default='Hello world', help='测试输入文本')
+args = parser.parse_args()
+
+device = get_device(args.device)
 print(f"Device: {device}")
 
-model_path = 'checkpoints/final_model.pt'
-vocab_path = 'checkpoints/vocab.json'
+model_path = args.model
+vocab_path = args.vocab
 
 # Load vocab
 with open(vocab_path, 'r', encoding='utf-8') as f:
@@ -29,7 +37,7 @@ vocab.word2idx = vocab_data['word2idx']
 vocab.idx2word = {int(k): v for k, v in vocab_data['idx2word'].items()}
 
 # Load model
-checkpoint = torch.load(model_path, map_location=device)
+checkpoint = torch.load(model_path, map_location='cpu')
 model_config = checkpoint.get('config', {
     'vocab_size': checkpoint['vocab_size'],
     'embedding_dim': 128,
@@ -59,7 +67,7 @@ print(f"Vocab size: {len(vocab)}")
 print()
 
 # Test
-prompt = "Hello world"
+prompt = args.prompt
 tokens = vocab.encode(prompt)
 print(f"Prompt: {prompt}")
 print(f"Token IDs: {tokens}")

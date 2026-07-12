@@ -43,11 +43,11 @@ model = TransformerModel(
 
 # Load checkpoint
 try:
-    checkpoint = torch.load('checkpoints/final_model.pt', map_location=device)
+    checkpoint = torch.load('checkpoints/final_model.pt', map_location='cpu')
     model.load_state_dict(checkpoint['model_state_dict'])
 except:
     print("Warning: Failed to load final_model.pt, trying model_epoch_20.pt")
-    checkpoint = torch.load('checkpoints/model_epoch_20.pt', map_location=device)
+    checkpoint = torch.load('checkpoints/model_epoch_20.pt', map_location='cpu')
     model.load_state_dict(checkpoint['model_state_dict'])
 
 model = model.to(device)

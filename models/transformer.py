@@ -441,7 +441,7 @@ class TransformerModel(nn.Module):
                 return None
             return torch.multinomial(probs, num_samples=1).item()
 
-        with torch.inference_mode():
+        with torch.no_grad():
             past = None
             cur_pos = 0
             if use_cache:

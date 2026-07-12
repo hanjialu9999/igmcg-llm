@@ -11,17 +11,24 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 import torch
 import json
+import argparse
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from models.config_loader import load_config, build_model, load_vocab
 from models.device import get_device
 
-vocab = load_vocab('checkpoints/vocab.json')
+parser = argparse.ArgumentParser(description='展示最优参数组合')
+parser.add_argument('--model', default='checkpoints/final_model.pt')
+parser.add_argument('--vocab', default='checkpoints/vocab.json')
+parser.add_argument('--device', default=None)
+args = parser.parse_args()
 
-device = get_device()
+vocab = load_vocab(args.vocab)
+
+device = get_device(args.device)
 
 model = build_model(load_config(), device=device)
-cp = torch.load('checkpoints/final_model.pt', map_location=device)
+cp = torch.load(args.model, map_location='cpu')
 model.load_state_dict(cp['model_state_dict'])
 model.eval()
 

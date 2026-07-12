@@ -21,7 +21,7 @@ ngram_fn = (lambda g, d: ng.logprob_vector(g, d))
 def model_fluency(ids):
     if len(ids) < 2:
         return 0.0
-    with torch.inference_mode():
+    with torch.no_grad():
         logits = model.forward(torch.tensor([ids], dtype=torch.long, device=dev))
         lp = torch.log_softmax(logits[0, :-1].float(), dim=-1)
         tgt = torch.tensor(ids[1:], dtype=torch.long, device=dev).unsqueeze(1)

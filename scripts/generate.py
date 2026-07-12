@@ -33,8 +33,11 @@ def load_model(model_path, vocab_path, device='cpu', quantize=False, compile_mod
     vocab.word2idx = vocab_data['word2idx']
     vocab.idx2word = {int(k): v for k, v in vocab_data['idx2word'].items()}
 
-    # Load model
-    checkpoint = torch.load(model_path, map_location=device, weights_only=False)
+    # Load model（map_location 用 'cpu'，加载后再由下方 .to(device) 搬运到目标设备）。
+    # 注意：DML 设备下若直接用 torch.device('privateuseone:0') 作 map_location，
+    # torch.load 内部会调用 torch_directml.device(torch.device) 触发 TypeError，
+    # 导致 DML 推理无法加载权重；统一先加载到 CPU 可绕开该问题。
+    checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
 
     model_config = checkpoint.get('config', {
         'vocab_size': checkpoint['vocab_size'],
@@ -282,7 +285,7 @@ def _generate_candidates_batch(model, ids, temps, max_length, top_k, rep_penalty
     done = [False] * N
     min_len = max(3, len(ids) + 2)
 
-    with torch.inference_mode():
+    with torch.no_grad():
         inp = torch.tensor([ids] * N, dtype=torch.long, device=device)
         logits, past = model.forward(inp, past_key_values=None, use_cache=True)
         for step in range(max_length):
@@ -332,7 +335,7 @@ def _fluency_batch(model, seqs, device, pad_id):
         if s:
             batch[n, :len(s)] = torch.tensor(s, dtype=torch.long, device=device)
     out = []
-    with torch.inference_mode():
+    with torch.no_grad():
         logits = model.forward(batch)
         for n, s in enumerate(seqs):
             if len(s) < 2:
@@ -522,7 +525,7 @@ def main():
         if use_igmcg:
             generated, cands = generate_igmcg(
                 model, vocab, prompt, max_length=args.max_length,
-                temperature=args.temperature, top_k=args.top_k, device=device,
+                base_temp=args.temperature, top_k=args.top_k, device=device,
                 num_candidates=args.igmcg_candidates, intuition=intuition,
                 ngram_fn=(ngram.logprob_vector if ngram else None),
                 ngram_weight=args.ngram_weight)

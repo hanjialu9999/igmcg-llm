@@ -79,13 +79,13 @@ model = TransformerModel(
 
 # Load checkpoint
 try:
-    checkpoint = torch.load('checkpoints/final_model.pt', map_location=device)
+    checkpoint = torch.load('checkpoints/final_model.pt', map_location='cpu')
     model.load_state_dict(checkpoint['model_state_dict'])
     print("✅ Loaded: final_model.pt (Best model)")
 except Exception as e:
     print(f"⚠️  Warning: {e}")
     try:
-        checkpoint = torch.load('checkpoints/model_epoch_50.pt', map_location=device)
+        checkpoint = torch.load('checkpoints/model_epoch_50.pt', map_location='cpu')
         model.load_state_dict(checkpoint['model_state_dict'])
         print("✅ Loaded: model_epoch_50.pt")
     except:

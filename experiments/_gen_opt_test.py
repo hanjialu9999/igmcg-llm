@@ -19,7 +19,7 @@ print('loaded', flush=True)
 # ---------- 1) KV-cache 正确性：增量解码应与全量 forward 逐 token 一致 ----------
 model.eval()
 seq = torch.tensor([[10, 20, 30, 40, 50]], device=dev)
-with torch.inference_mode():
+with torch.no_grad():
     full = model.forward(seq)                              # (1,5,V)
     past = None
     for i in range(5):
@@ -30,7 +30,7 @@ print(f'KV-cache 一致性最大误差: {diff:.2e}', flush=True)
 
 # ---------- 2) 速度与一致性对比（贪心，避免随机） ----------
 def gen_full(m, ids, n):
-    with torch.inference_mode():
+    with torch.no_grad():
         for _ in range(n):
             if len(ids) >= m.max_seq_length:
                 break
@@ -41,7 +41,7 @@ def gen_full(m, ids, n):
     return ids
 
 def gen_cache(m, ids, n):
-    with torch.inference_mode():
+    with torch.no_grad():
         past = None; cur = 0
         inp = torch.tensor([ids], dtype=torch.long, device=dev)
         lg, past = m.forward(inp, past_key_values=None, use_cache=True)

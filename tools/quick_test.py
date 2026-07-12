@@ -21,7 +21,7 @@ epoch_files = sorted(checkpoint_dir.glob('model_epoch_*.pt'))
 
 if epoch_files:
     latest = epoch_files[-1]
-    checkpoint = torch.load(latest, map_location=device)
+    checkpoint = torch.load(latest, map_location='cpu')
     model.load_state_dict(checkpoint['model_state_dict'])
     model = model.to(device)
     model.eval()
