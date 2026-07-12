@@ -22,20 +22,27 @@ class RMSNorm(nn.Module):
 _ROPE_CACHE = {}
 
 
-def _rope_cos_sin(inv_freq, start_pos, seq_len, device, dtype):
-    """按 (device, start_pos, seq_len, head_dim) 缓存 cos/sin，跨层共享，
-    避免每个注意力层、每步前向都重复计算 RoPE 三角函数。"""
-    key = (str(device), start_pos, seq_len, inv_freq.shape[0])
+def _rope_cos_sin(inv_freq, start_pos, seq_len, device, dtype, max_len=2048):
+    """按 (device, head_dim) 缓存整张位置表后按需切片，跨层与跨生成步共享。
+
+    原实现按 (start_pos, seq_len) 缓存单段：KV 缓存逐 token 生成时 start_pos 每步
+    都变化，导致缓存每步必未命中、反复重算 RoPE。改为缓存整表并切片后，训练时多层
+    与生成时每步单 token 都能命中同一张表。
+    """
+    key = (str(device), inv_freq.shape[0])
+    need = start_pos + seq_len
     cached = _ROPE_CACHE.get(key)
-    if cached is not None:
-        return cached
-    t = torch.arange(start_pos, start_pos + seq_len, device=device).type_as(inv_freq)
+    if cached is not None and cached[0].size(2) >= need:
+        cos_full, sin_full = cached
+        return cos_full[:, :, start_pos:need, :].to(dtype), sin_full[:, :, start_pos:need, :].to(dtype)
+    L = max(need, min(max_len, 4096))
+    t = torch.arange(0, L, device=device).type_as(inv_freq)
     freqs = torch.outer(t, inv_freq)
     emb = torch.cat((freqs, freqs), dim=-1)
-    cos = emb.cos()[None, None, :, :].to(dtype)
-    sin = emb.sin()[None, None, :, :].to(dtype)
-    _ROPE_CACHE[key] = (cos, sin)
-    return cos, sin
+    cos_full = emb.cos()[None, None, :, :].to(dtype)
+    sin_full = emb.sin()[None, None, :, :].to(dtype)
+    _ROPE_CACHE[key] = (cos_full, sin_full)
+    return cos_full[:, :, start_pos:need, :].to(dtype), sin_full[:, :, start_pos:need, :].to(dtype)
 
 
 class RotaryEmbedding(nn.Module):
@@ -45,8 +52,8 @@ class RotaryEmbedding(nn.Module):
         inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
         self.register_buffer('inv_freq', inv_freq, persistent=False)
 
-    def forward(self, q, k, start_pos=0):
-        cos, sin = _rope_cos_sin(self.inv_freq, start_pos, q.size(2), q.device, q.dtype)
+    def forward(self, q, k, start_pos=0, max_len=2048):
+        cos, sin = _rope_cos_sin(self.inv_freq, start_pos, q.size(2), q.device, q.dtype, max_len=max_len)
         return self._rope_apply(q, cos, sin), self._rope_apply(k, cos, sin)
 
     @staticmethod
@@ -101,7 +108,7 @@ class SlidingWindowCausalSelfAttention(nn.Module):
         qkv = self.qkv(x).reshape(B, T, 3, self.num_heads, self.head_dim)
         qkv = qkv.permute(2, 0, 3, 1, 4)          # (3, B, H, T, D)
         q, k, v = qkv[0], qkv[1], qkv[2]
-        q, k = self.rope(q, k, start_pos=start_pos)
+        q, k = self.rope(q, k, start_pos=start_pos, max_len=self.max_seq_length)
 
         if use_cache:
             # 增量解码：拼接待拼接的 K/V 缓存，仅对当前 token 做注意力
@@ -120,7 +127,9 @@ class SlidingWindowCausalSelfAttention(nn.Module):
             if self.rel_bias:
                 idx = (qpos - kpos + Tkv - 1).clamp(0, 2 * self.max_seq_length - 1)
                 attn_mask = attn_mask + self.rel_bias_table[:, idx].unsqueeze(0)
-            if x.device.type in ('cuda', 'cpu'):
+            # 增量解码单 token 查询时，SDPA 在 CPU 上的 per-call 开销远大于一次显式 matmul，
+            # 故 CPU 也走手动注意力；CUDA 仍用 fused SDPA（显存带宽充足、kernel 更优）。
+            if x.device.type == 'cuda':
                 out = scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
             else:
                 out = self._manual_attention(q, k, v, attn_mask)

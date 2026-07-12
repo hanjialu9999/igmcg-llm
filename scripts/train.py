@@ -159,7 +159,9 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
             step_optimizer()
 
         # 累加损失（保持为张量，仅日志打印/返回时再 .item()）
-        loss_sum = loss_sum + (loss.detach() * grad_accum_steps)
+        # 注意：这里累加的是未缩放的原始 loss（backward 内部已用 /grad_accum_steps 缩放梯度），
+        # 不要乘以 grad_accum_steps，否则在累积步数>1 时报告值被错误地放大约 grad_accum_steps 倍。
+        loss_sum = loss_sum + loss.detach()
         loss_count += 1
 
         if (batch_idx + 1) % 10 == 0:
@@ -205,15 +207,16 @@ def validate(model, dataloader, criterion, device):
     return loss_meter.avg
 
 
-def save_checkpoint(model, optimizer, epoch, best_loss, checkpoint_dir, vocab_size):
-    """Save model checkpoint"""
+def save_checkpoint(model, optimizer, epoch, best_loss, checkpoint_dir, vocab_size, model_config=None):
+    """Save model checkpoint（含 model_config，使中间 checkpoint 也能被 generate.py 直接加载）"""
     checkpoint_path = os.path.join(checkpoint_dir, f'model_epoch_{epoch}.pt')
     torch.save({
         'epoch': epoch,
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
         'best_loss': best_loss,
-        'vocab_size': vocab_size
+        'vocab_size': vocab_size,
+        'config': model_config,
     }, checkpoint_path)
     print(f"Checkpoint saved at {checkpoint_path}")
     return checkpoint_path
@@ -330,7 +333,7 @@ def main(config_path='configs/pretrain.yaml'):
     
     # Create model
     print("Creating model...")
-    model = build_model(config).to(device)
+    model = build_model(config, device=device)
 
     # 可选：torch.compile 加速（仅 CPU/CUDA 支持；与梯度检查点易冲突，自动关闭后者）
     if config['training'].get('compile', False) and hasattr(torch, 'compile') \
@@ -452,7 +455,7 @@ def main(config_path='configs/pretrain.yaml'):
             no_improve_epochs = 0
             # Save per-epoch checkpoint (skipped when single epoch to avoid redundant file)
             if config['training']['epochs'] > 1:
-                save_checkpoint(model, optimizer, epoch, best_loss, checkpoint_dir, len(vocab))
+                save_checkpoint(model, optimizer, epoch, best_loss, checkpoint_dir, len(vocab), config['model'])
         else:
             no_improve_epochs += 1
             print(f"No improvement for {no_improve_epochs} epoch(s).")

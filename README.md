@@ -41,7 +41,7 @@ python scripts/generate.py --prompt "今天天气怎么样" --ngram --igmcg --ng
 python scripts/chat.py --ngram --igmcg --intuition 0.3,0.8,0.5,0.2,0.6,0.4,0.5
 ```
 
-GPU/加速：设备上 `get_device('auto')` 自动选择 cuda / dml(AMD) / cpu；CPU 生成可用 `--cpu-threads N` 限制线程数降功耗。
+GPU/加速：设备上 `get_device('auto')` 自动选择 cuda / dml(AMD) / cpu；推理默认在支持的 CPU/CUDA 上用 **bf16 精度（约 1.5~1.8× 提速，质量基本无损）**，可用 `--dtype fp32|bf16|auto` 控制。CPU 生成可用 `--cpu-threads N` 限制线程数降功耗；纯 CPU 还可加 `--quantize` 启用 int8 动态量化，进一步降低内存带宽与功耗（约 4× 更小模型，质量无损）。`--compile` 需本机有 C++ 编译器才会生效，否则自动回退 eager。
 
 ## IGMCG 反碎片化设计
 

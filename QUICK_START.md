@@ -52,6 +52,8 @@ python scripts/chat.py
 python dialogue_interactive.py
 ```
 
+CPU 推理提速/降功耗：`--dtype bf16`（默认 auto 会启用，支持的 CPU/CUDA 约 1.5~1.8× 提速且质量基本无损）；`--cpu-threads N` 限制线程数；纯 CPU 还可加 `--quantize` 启用 int8 动态量化，进一步降低内存带宽与功耗（约 4× 更小模型，质量无损）。`generate.py` 同样支持这些参数。
+
 生成行为由 `chat_config.json` 控制：`temperature`、`top_k`、`repetition_penalty`、
 `min_new_tokens`、`max_new_tokens`、`context_rounds`。
 

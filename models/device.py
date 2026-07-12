@@ -13,7 +13,19 @@ def get_device(preferred=None):
         preferred: 来自配置的设备字段。'auto' / None 表示自动探测；
                    其它值（如 'cuda' / 'cpu' / 'dml'）则直接使用。
     """
-    if preferred is not None and str(preferred).lower() not in ('auto', 'none', ''):
+    pref = str(preferred).lower() if preferred is not None else 'auto'
+
+    # 显式指定 DirectML（AMD/Intel 核显/独显），需已安装 torch-directml
+    if pref == 'dml':
+        try:
+            import torch_directml
+            if torch_directml.is_available():
+                return torch_directml.device()
+        except Exception:
+            pass
+        return torch.device('cpu')
+
+    if pref not in ('auto', 'none', ''):
         return torch.device(preferred)
 
     # 1) NVIDIA (CUDA)

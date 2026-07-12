@@ -44,6 +44,10 @@ def build_model(config, device=None):
     )
     if device is not None:
         model = model.to(device)
+        # .to() 会打断权重共享（embedding 与 output_head 同对象被复制成两份），
+        # 移动后重新绑定，保证在 DML/CPU/其它设备上权重共享仍然生效。
+        if mc.get('tie_weights', True) and hasattr(model, 'output_head') and hasattr(model, 'embedding'):
+            model.output_head.weight = model.embedding.weight
     return model
 
 
