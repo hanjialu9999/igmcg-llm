@@ -42,6 +42,3 @@ logs/
 .DS_Store
 Thumbs.db
 *.swp
-
-# Agent memory (local working notes for the coding agent — never commit)
-AGENT_MEMORY.md
