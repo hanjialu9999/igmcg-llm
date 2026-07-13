@@ -4,7 +4,49 @@ import os
 import glob
 import yaml
 from typing import Any, Dict, Optional
+import logging
+import sys
+import functools
 import torch
+
+
+def get_logger(name: str = "igmcg") -> logging.Logger:
+    """返回统一配置的 logger（首次调用配置 root handler，避免重复输出）。"""
+    logger = logging.getLogger(name)
+    if not logging.getLogger().handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            datefmt="%H:%M:%S",
+        )
+    return logger
+
+
+class IGMCGError(Exception):
+    """用户级错误：配合 cli_guard 捕获后打印清晰信息并以非 0 退出。"""
+    pass
+
+
+def cli_guard(func):
+    """装饰器：统一捕获 main() 异常，打印清晰信息并以非 0 退出。
+
+    替代零散的 try/except：用户级 IGMCGError 与常见 IO/配置/运行时错误给 [ERROR]，
+    其余异常给 [FATAL]；SystemExit / KeyboardInterrupt 透传（不影响 argparse 与 Ctrl-C）。
+    """
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except IGMCGError as e:
+            print(f"[ERROR] {e}", file=sys.stderr)
+            sys.exit(1)
+        except (FileNotFoundError, KeyError, ValueError, yaml.YAMLError, RuntimeError) as e:
+            print(f"[ERROR] {type(e).__name__}: {e}", file=sys.stderr)
+            sys.exit(1)
+        except Exception as e:
+            print(f"[FATAL] {type(e).__name__}: {e}", file=sys.stderr)
+            sys.exit(1)
+    return wrapper
 
 
 def save_checkpoint(model: torch.nn.Module,

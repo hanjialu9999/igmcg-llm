@@ -94,7 +94,7 @@ except Exception as e:
         checkpoint = torch.load('checkpoints/model_epoch_50.pt', map_location='cpu', weights_only=True)
         model.load_state_dict(checkpoint['model_state_dict'])
         print("✅ Loaded: model_epoch_50.pt")
-    except:
+    except Exception:
         print("❌ Error: No model checkpoint found!")
         sys.exit(1)
 

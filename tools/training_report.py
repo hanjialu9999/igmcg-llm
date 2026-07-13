@@ -38,7 +38,7 @@ if files:
             epoch = int(f.split('_')[2].split('.')[0])
             mtime = os.path.getmtime(os.path.join(checkpoint_dir, f))
             epochs.append((epoch, f, mtime))
-        except:
+        except Exception:
             pass
     
     epochs.sort(reverse=True)

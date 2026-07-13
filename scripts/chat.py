@@ -10,6 +10,7 @@ sys.path.insert(0, str(project_root))
 # 复用 generate.py 的模型加载与生成逻辑
 from generate import load_model, generate_text, NGramModel
 from models.data_utils import Vocabulary
+from models.utils import cli_guard
 
 CJK = r'[\u3400-\u9fff\uf900-\ufaff]'
 
@@ -17,6 +18,7 @@ def clean_text(s):
     """去掉两个 CJK 字符之间的空格，让中文更自然；英文词之间保留空格。"""
     return re.sub(r'(?<=' + CJK + r')\s+(?=' + CJK + r')', '', s)
 
+@cli_guard
 def main():
     try:
         sys.stdout.reconfigure(encoding='utf-8', errors='replace')

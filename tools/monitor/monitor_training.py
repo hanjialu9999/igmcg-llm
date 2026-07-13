@@ -20,7 +20,7 @@ def get_latest_checkpoint():
         try:
             epoch = int(f.split('_')[2].split('.')[0])
             epochs.append((epoch, f))
-        except:
+        except Exception:
             pass
     
     if not epochs:

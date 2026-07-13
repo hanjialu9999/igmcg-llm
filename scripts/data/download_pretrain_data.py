@@ -19,6 +19,11 @@ download_pretrain_data.py
 
 import os, sys, json, glob, logging, argparse
 
+try:
+    import pandas as pd
+except ImportError:
+    pd = None
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -70,7 +75,6 @@ def prepare_raw_data():
             # ---- Parquet ----
             elif ext == ".parquet":
                 try:
-                    import pandas as pd
                     df = pd.read_parquet(fpath)
                     for col in df.columns:
                         if df[col].dtype == "object":
@@ -98,7 +102,6 @@ def prepare_raw_data():
             # ---- CSV ----
             elif ext == ".csv":
                 try:
-                    import pandas as pd
                     df = pd.read_csv(fpath)
                     for col in df.columns:
                         if df[col].dtype == "object":

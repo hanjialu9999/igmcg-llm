@@ -30,7 +30,7 @@ def count_lines(file_path):
         with open(file_path, 'r', encoding='utf-8') as f:
             lines = [l for l in f.readlines() if l.strip()]
         return len(lines)
-    except:
+    except Exception:
         return 0
 
 
@@ -43,7 +43,7 @@ def get_vocab_size(file_path):
                 # 简单的单词分割
                 words_in_line = line.lower().split()
                 words.update(words_in_line)
-    except:
+    except Exception:
         pass
     return len(words)
 
@@ -57,7 +57,7 @@ def get_avg_length(file_path):
             return 0
         total_words = sum(len(line.split()) for line in lines)
         return total_words / len(lines)
-    except:
+    except Exception:
         return 0
 
 
@@ -88,7 +88,7 @@ def show_stats():
             with open(txt_file, 'r', encoding='utf-8') as f:
                 for line in f:
                     total_vocab.update(line.lower().split())
-        except:
+        except Exception:
             pass
         
         total_lines += count
@@ -129,7 +129,7 @@ def show_sample(theme=None):
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             lines = [l.strip() for l in f if l.strip()]
-    except:
+    except Exception:
         print("读取文件失败")
         return
     
@@ -213,7 +213,7 @@ def calc_vocab():
         try:
             idx = int(input("选择 (输入数字): ")) - 1
             file_path = list(datasets_dir.glob('*.txt'))[idx]
-        except:
+        except Exception:
             print("选择无效")
             return
     else:
@@ -230,7 +230,7 @@ def calc_vocab():
         with open(file_path, 'r', encoding='utf-8') as f:
             for line in f:
                 words.update(line.lower().split())
-    except:
+    except Exception:
         print("读取文件失败")
         return
     

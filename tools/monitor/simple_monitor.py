@@ -15,7 +15,7 @@ def tail_log(log_file, n=20):
         p = subprocess.run(['Get-Content', log_file, '-Tail', str(n)], 
                           capture_output=True, text=True, shell=True)
         return p.stdout.strip().split('\n')
-    except:
+    except Exception:
         return []
 
 def parse_epoch_loss(lines):

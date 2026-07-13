@@ -1,79 +1,53 @@
-# 正式预训练配置：在中文+英文混合语料 (merged.txt) 上训练基座模型
+# 正式预训练配置：中+英混合语料 (merged.txt) 训练基础模型
 # 训练前会自动把 checkpoints/ 备份到 archive_unused/checkpoints_backup/
 model:
-  vocab_size: 12000            # DML 在 20000 输出投影的 backward 会触发多GPU设备错误；12000 已验证可用且覆盖 ~98.9% token
+  vocab_size: 12000            # DML 下 20000 易触发 backward 设备移除，12000 更稳定且词覆盖 ~98.9% token
   embedding_dim: 512
   num_heads: 8
   num_layers: 6
   hidden_dim: 1024
   max_seq_length: 64
-  dropout: 0                   # 单轮预训练不过拟合，dropout 关掉让模型充分拟合语料
-  tie_weights: true           # 输出头复用 embedding 权重：减参并常改善 LM 质量
-  gradient_checkpointing: true  # 用计算换显存（CPU 上也可开，DML 显存紧张时更稳）
-  # 架构固定为 2026 主流小模型配方：Pre-LN + RMSNorm + RoPE + SwiGLU（见 models/transformer.py）
-  # RoPE 配置
-  rope_base: 10000.0          # RoPE 基频
+  dropout: 0                   # 预训练数据充足，dropout 过高反而损害模型容量
+  tie_weights: true            # 共享输入/输出 embedding 权重，缩减参数量并提升 LM 一致性
+  gradient_checkpointing: true  # 用计算换显存（CPU 也可用；DML 显存紧张时更明显）
+  # 架构固定为 2026 小模型配方：Pre-LN + RMSNorm + RoPE + SwiGLU（见 models/transformer.py）
+  # RoPE
+  rope_base: 10000.0          # RoPE 频率基
   rope_max_len: 4096          # RoPE 最大缓存长度
-  # 注意力掩码填充值
-  mask_fill_value: -1e9
+  mask_fill_value: -1e9       # 注意力掩码填充值
   # SSM (Mamba) 配置
-  layer_plan: null            # null 表示全注意力；如 "attn,ssm,attn,ssm" 启用混合架构
+  layer_plan: null            # null=全注意力；"attn,ssm,attn,ssm" 启用混合架构
   ssm_d_state: 16             # SSM 状态维度
-  ssm_d_inner_factor: 1       # SSM 内部维度倍数
-  ssm_dt_rank: null           # SSM dt_rank (默认 dim/16)
-  ssm_conv_kernel: 3          # SSM 卷积核大小
-  ssm_dt_proj_bias_init: 0.1  # dt_proj 偏置初始化
+  ssm_d_inner_factor: 1       # SSM 内部维度 = dim * factor
+  ssm_dt_rank: null           # SSM dt_rank（默认 dim/16）
+  ssm_conv_kernel: 3          # SSM 因果卷积核大小
+  ssm_dt_proj_bias_init: 0.1  # dt_proj 偏置初始值
   ssm_a_log_init_range: [-1, 1]  # A_log 初始化范围
+  ssm_D_init: 1.0             # D 残差初始化
   # 注意力增强
-  attn_window: 0              # >0 启用滑动窗口；0=全因果
+  attn_window: 0              # >0 启用滑动窗口（0=全注意力）
   attn_rel_bias: false        # true 启用可学习相对位置偏置
-  # 注意力掩码填充值
-  mask_fill_value: -1e9
-  rope_base: 10000.0          # RoPE 基础频率
-  rope_max_len: 4096          # RoPE 最大缓存长度
-  attn_mask_fill_value: -1e9  # 注意力掩码填充值
-  # MambaSSM 配置
-  ssm_d_state: 16             # SSM 状态维度
-  ssm_d_inner_factor: 1       # SSM 内部维度倍数
-  ssm_conv_kernel: 3          # SSM 卷积核大小
-  ssm_dt_proj_bias_init: 0.1  # dt_proj 偏置初始化
-  ssm_a_log_init_range: [-1, 1] # A_log 初始化范围
-  ssm_D_init: 1.0             # D 参数初始化
-  # 生成参数默认值
-  gen_temperature: 1.0
-  gen_top_k: 50
-  gen_repetition_penalty: 1.2
-  gen_eos_penalty: -5.0
-  gen_min_length: 3
-  gen_eos_id: 3
-  gen_pad_id: 0
-  gen_sep_id: 4
 
-# Training Configuration
+# 训练配置
 training:
-  batch_size: 128              # 相比 32 放大 4 倍；CPU/小显存也可稳定跑（模型仅 ~25M 参数）
-  epochs: 1                    # 基座模型：单次完整遍历语料（只训练一次）
-  learning_rate: 1.0e-3        # 单轮只过一遍数据，需比多轮(3e-4)更大的 lr 才能充分学习
+  batch_size: 128             # 比 32 大 4 倍，CPU/小显存也更稳定；模型约 25M 参数
+  epochs: 1                   # 基础模型只训一遍
+  learning_rate: 1.0e-3       # 只训一个 epoch，较稳的 3e-4 偏保守，大 lr 收敛更快
   weight_decay: 0.01
   gradient_clip: 1.0
-  warmup_steps: 0.1            # 预热步数占整个 epoch 有效步数的比例（0.1=前 10% step 线性升温）
-  early_stop_patience: 5       # 单轮不会触发，保留以防以后改多轮
+  warmup_steps: 0.1           # 预热占比（按总 step 的 10%）
+  early_stop_patience: 5      # 防过拟合早停（基础模型一般触发不到）
   label_smoothing: 0.1
   cpu_threads: 4
-  # ---- 训练加速 / 精度选项 ----
-  precision: "fp32"            # fp32 | fp16 | bf16。
-                                #   bf16：CUDA 与 CPU 均支持（约 2~2.5× 提速、loss 基本无损、无需 loss scaling）
-                                #   fp16：仅 NVIDIA CUDA（启用 GradScaler）
-                                #   AMD DirectML 暂不支持 AMP，自动回退 fp32
-  grad_accum_steps: 1          # 梯度累积步数；有效 batch = batch_size * grad_accum_steps
-                               #   （显存不够想更大 batch 时调大此项，如 4 => 有效 512）
-  eta_min: 0.0                 # 学习率下限（cosine/wsd 衰减到此值）
-  lr_schedule: "wsd"          # cosine | constant(=WSO 无衰减) | wsd(预热+稳定+末尾短衰减)
-                               #   wsd/constant 利于后续微调（ICLR2026：衰减少=>更平缓的极小值，适应性更好）
-  wsd_decay_frac: 0.1         # wsd 模式下，最后 10% 步做学习率衰减
-  compile: true                # torch.compile 加速（仅 CPU/CUDA；与梯度检查点冲突时自动关闭后者）
+  # ---- 训练精度 / 调度选项 ----
+  precision: "fp32"           # fp32 | fp16 | bf16；AMD DirectML 不支持 AMP，自动退回 fp32
+  grad_accum_steps: 1         # 梯度累积；显存不足时调大（有效 batch = batch_size * grad_accum_steps）
+  eta_min: 0.0                # 学习率下限（cosine/wsd 衰减终点）
+  lr_schedule: "wsd"          # cosine | constant | wsd(预热+稳定+末尾衰减)；wsd/constant 对小模型更稳
+  wsd_decay_frac: 0.1         # wsd 模式下最后 10% step 衰减
+  compile: true               # torch.compile 加速；CPU/CUDA 无编译器时自动关闭
 
-# Data Configuration
+# 数据配置
 data:
   train_file: "data/pretrain_corpus/merged.txt"
   vocab_size: 12000
@@ -82,18 +56,18 @@ data:
   prefetch: 2
   test_split: 0.1
 
-# Paths
+# 路径
 paths:
   checkpoint_dir: "checkpoints"
   log_dir: "logs"
 
-# Device
-device: "auto"
+# 设备
+device: "auto"               # auto: CUDA > DirectML(AMD/Intel) > CPU
 
-# Seed
+# 随机种子
 seed: 42
 
-# Generation Configuration
+# 生成配置（权威定义；dialogue_interactive.py 的默认值与之保持一致）
 generation:
   temperature: 0.8
   top_k: 50

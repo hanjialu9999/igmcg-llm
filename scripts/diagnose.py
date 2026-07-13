@@ -38,7 +38,6 @@ vocab.idx2word = {int(k): v for k, v in vocab_data['idx2word'].items()}
 
 # Load model
 import yaml
-from pathlib import Path
 
 checkpoint = torch.load(model_path, map_location='cpu', weights_only=True)
 # Load config from separate YAML file (for weights_only=True compatibility)

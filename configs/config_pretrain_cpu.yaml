@@ -1,4 +1,4 @@
-﻿# 正式预训练配置：在中文+英文混合语料 (merged.txt) 上训练基座模型
+# 正式预训练配置：在中文+英文混合语料 (merged.txt) 上训练基座模型
 # 训练前会自动把 checkpoints/ 备份到 archive_unused/checkpoints_backup/
 model:
   vocab_size: 12000            # DML 在 20000 输出投影的 backward 会触发多GPU设备错误；12000 已验证可用且覆盖 ~98.9% token

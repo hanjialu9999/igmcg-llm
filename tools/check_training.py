@@ -16,7 +16,7 @@ if files:
         try:
             epoch = int(f.split('_')[2].split('.')[0])
             epochs.append((epoch, f))
-        except:
+        except Exception:
             pass
     
     epochs.sort(reverse=True)
