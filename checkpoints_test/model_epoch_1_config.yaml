@@ -1,0 +1,7 @@
+dropout: 0.1
+embedding_dim: 512
+hidden_dim: 1024
+max_seq_length: 64
+num_heads: 8
+num_layers: 6
+vocab_size: 12000

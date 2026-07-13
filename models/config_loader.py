@@ -42,8 +42,15 @@ def build_model(config: Dict[str, Any], device: Optional[torch.device] = None) -
         ssm_d_state=mc.get('ssm_d_state', 16),
         ssm_d_inner_factor=mc.get('ssm_d_inner_factor', 1),
         ssm_dt_rank=mc.get('ssm_dt_rank', None),
+        ssm_conv_kernel=mc.get('ssm_conv_kernel', 3),
+        ssm_dt_proj_bias_init=mc.get('ssm_dt_proj_bias_init', 0.1),
+        ssm_a_log_init_range=mc.get('ssm_a_log_init_range', [-1, 1]),
+        ssm_D_init=mc.get('ssm_D_init', 1.0),
         attn_window=mc.get('attn_window', 0),
         attn_rel_bias=mc.get('attn_rel_bias', False),
+        rope_base=mc.get('rope_base', 10000.0),
+        rope_max_len=mc.get('rope_max_len', 4096),
+        mask_fill_value=mc.get('mask_fill_value', -1e9),
     )
     if device is not None:
         model = model.to(device)

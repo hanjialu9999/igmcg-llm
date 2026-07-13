@@ -13,6 +13,7 @@ try:
     from models.config_loader import load_config, build_model
     from models.device import get_device, apply_cpu_threads
     from models.data_utils import Vocabulary
+    from models.utils import save_checkpoint
 except ImportError:
     print("❌ 错误：在当前目录下找不到 models/transformer.py，请确保在项目根目录下运行脚本")
     exit()
@@ -117,17 +118,17 @@ def train():
             print(f"未找到 {model_path}，改用预训练底座 {fallback}")
             model_path = fallback
         else:
-            print(f"⚠️ 权重文件不存在（{model_path} / {fallback}），将从随机初始化开始训练")
+            print(f"WARNING 权重文件不存在（{model_path} / {fallback}），将从随机初始化开始训练")
 
     if os.path.exists(model_path):
         print("加载权重参数...")
         checkpoint = torch.load(model_path, map_location='cpu', weights_only=True)
         if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
             model.load_state_dict(checkpoint['model_state_dict'])
-            print("✅ 从 checkpoint 成功加载权重")
+            print("OK 从 checkpoint 成功加载权重")
         else:
             model.load_state_dict(checkpoint)
-            print("✅ 直接加载权重成功")
+            print("OK 直接加载权重成功")
 
     apply_cpu_threads(config['training'].get('cpu_threads'))
     model.train()
@@ -176,7 +177,7 @@ def train():
         # 保存最佳权重
         if avg_loss < best_loss:
             best_loss = avg_loss
-            torch.save(model.state_dict(), "checkpoints/best_finetuned_model.pt")
+            save_checkpoint(model, optimizer, epoch+1, best_loss, "checkpoints", len(vocab), config['model'])
             print(f"✨ 已更新最佳权重文件: checkpoints/best_finetuned_model.pt")
 
     print("\n🎉 微调任务圆满成功！")

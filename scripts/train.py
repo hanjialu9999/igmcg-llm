@@ -28,6 +28,8 @@ from models.transformer import TransformerModel
 from models.data_utils import load_data, create_dataloader, split_dataset
 from models.config_loader import build_model
 from models.device import get_device, apply_cpu_threads
+from models.utils import save_checkpoint, cleanup_old_checkpoints, backup_existing_checkpoints, save_final_model
+from models.utils import save_checkpoint, backup_existing_checkpoints, save_final_model
 
 class AverageMeter:
     def __init__(self):
@@ -207,80 +209,7 @@ def validate(model, dataloader, criterion, device):
     return loss_meter.avg
 
 
-def save_checkpoint(model, optimizer, epoch, best_loss, checkpoint_dir, vocab_size, model_config=None):
-    """Save model checkpoint (model_config saved separately as YAML for weights_only=True compatibility)"""
-    checkpoint_path = os.path.join(checkpoint_dir, f'model_epoch_{epoch}.pt')
-    torch.save({
-        'epoch': epoch,
-        'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
-        'best_loss': best_loss,
-        'vocab_size': vocab_size,
-    }, checkpoint_path)
-    # Save config separately for weights_only=True compatibility
-    if model_config is not None:
-        import yaml
-        config_path = os.path.join(checkpoint_dir, f'model_epoch_{epoch}_config.yaml')
-        with open(config_path, 'w', encoding='utf-8') as f:
-            yaml.dump(model_config, f, allow_unicode=True)
-    print(f"Checkpoint saved at {checkpoint_path}")
-    return checkpoint_path
 
-
-def cleanup_old_checkpoints(checkpoint_dir, keep_last_n=5):
-    """Clean up old checkpoints, keep only the best model and last N epochs"""
-    import glob
-    
-    # Find all epoch checkpoint files
-    epoch_files = sorted(glob.glob(os.path.join(checkpoint_dir, 'model_epoch_*.pt')))
-    
-    if len(epoch_files) <= keep_last_n:
-        print(f"Found {len(epoch_files)} checkpoint(s). No cleanup needed (keep_last_n={keep_last_n})")
-        return
-    
-    # Keep only the last N checkpoints
-    files_to_delete = epoch_files[:-keep_last_n]
-    
-    deleted_count = 0
-    for file_path in files_to_delete:
-        try:
-            os.remove(file_path)
-            # Also remove corresponding config YAML
-            config_path = file_path.replace('.pt', '_config.yaml')
-            if os.path.exists(config_path):
-                os.remove(config_path)
-            deleted_count += 1
-            print(f"Removed: {os.path.basename(file_path)}")
-        except Exception as e:
-            print(f"Failed to remove {file_path}: {e}")
-    
-    print(f"\nCleanup complete: Deleted {deleted_count} old checkpoint(s)")
-    print(f"   Kept last {keep_last_n} checkpoint(s) and final_model.pt")
-
-
-def backup_existing_checkpoints(checkpoint_dir, backup_root=None):
-    """训练开始前自动备份已有 checkpoints，避免覆盖旧模型。
-    备份到 <项目根>/archive_unused/checkpoints_backup 下，名字冲突时自动追加数字。
-    返回备份目标路径；无内容可备份时返回 None。
-    """
-    if backup_root is None:
-        backup_root = os.path.join(project_root, 'archive_unused', 'checkpoints_backup')
-
-    if not os.path.isdir(checkpoint_dir) or not os.listdir(checkpoint_dir):
-        print("No existing checkpoints to back up; skipping backup.")
-        return None
-
-    os.makedirs(backup_root, exist_ok=True)
-    base = os.path.basename(os.path.normpath(checkpoint_dir))
-    dest = os.path.join(backup_root, base)
-    n = 0
-    while os.path.exists(dest):
-        n += 1
-        dest = os.path.join(backup_root, f"{base}_{n}")
-
-    shutil.copytree(checkpoint_dir, dest)
-    print(f"Backed up existing checkpoints -> {dest}")
-    return dest
 
 
 def main(config_path='configs/pretrain.yaml'):
