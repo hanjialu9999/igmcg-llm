@@ -8,10 +8,16 @@
 import torch
 import json
 import os
+import sys
+from pathlib import Path
+
+# 注入项目根目录，确保可 import models（脚本位于 tools/，上一级即根）
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
 from models.transformer import TransformerModel
 from models.data_utils import Vocabulary
 import yaml
-import sys
 
 from models.device import get_device
 
@@ -22,7 +28,7 @@ with open('configs/pretrain.yaml', 'r', encoding='utf-8') as f:
     config = yaml.safe_load(f)
 
 # Path for persisted dialogue parameters (single source of truth: chat_config.json)
-params_path = 'chat_config.json'
+params_path = 'configs/chat_config.json'
 
 # default generation configuration (may be overwritten by saved settings)
 gen_config = {

@@ -21,15 +21,18 @@ models/          模型与基础设施
                   config_loader.py (load_config / build_model)
                   device.py       (get_device / apply_cpu_threads)
 scripts/         入口与数据处理
-                  train.py        训练主程序 (--config)
-                  generate.py     生成 API: generate_text / generate_igmcg / NGramModel
-                  chat.py         对话式 CLI (--ngram / --igmcg / --intuition)
-                  prepare_data.py, merge_datasets.py, convert_*_to_qa.py, data_manager.py ...
-                  data/download_pretrain_data.py, tuning/  (参数扫描)
+                   train.py        训练主程序 (--config)
+                   train_finetune.py  微调训练（QA 两阶段：预训练底座 → 微调）
+                   generate.py     生成 API: generate_text / generate_igmcg / NGramModel
+                   chat.py         对话式 CLI (--ngram / --igmcg / --intuition)
+                   chat_zh.bat     中文 Windows 一键对话启动器
+                   prepare_data.py, merge_datasets.py, convert_*_to_qa.py, data_manager.py ...
+                   data/download_pretrain_data.py, tuning/  (参数扫描)
 configs/         所有 YAML 配置 (pretrain.yaml 为规范默认；dml_* / hybrid_* / test_* 为变体)
 experiments/     实验 / 诊断 / 一次性脚本 (原根目录 _*.py，可独立运行，自带路径修正)
-tools/           检查与监控工具 (view_model / compare_epochs / dialogue / monitor/ ...)
-test/            pytest 风格测试
+tools/           检查与监控工具 (view_model / compare_epochs / dialogue / dialogue_interactive / monitor/ ...)
+tests/           正式 pytest 单元测试（已纳入 git 跟踪）：test_config_loader.py / test_transformer.py
+test/            本地自测沙箱（gitignore，仅本机运行，不入库）
 data/            语料 (pretrain_corpus/) 与数据集 (datasets/)
 logs/            运行日志
 checkpoints/     训练产出 (checkpoints_dml_b32 等子目录维持原样，未迁移)

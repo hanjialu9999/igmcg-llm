@@ -6,17 +6,18 @@ from torch.optim import AdamW
 from tqdm import tqdm
 import os
 import glob
+import sys
+from pathlib import Path
 
-# 尝试导入模型类
-try:
-    from models.transformer import TransformerModel
-    from models.config_loader import load_config, build_model
-    from models.device import get_device, apply_cpu_threads
-    from models.data_utils import Vocabulary
-    from models.utils import save_checkpoint
-except ImportError:
-    print("❌ 错误：在当前目录下找不到 models/transformer.py，请确保在项目根目录下运行脚本")
-    exit()
+# 注入项目根目录，确保可 import models（脚本位于 scripts/，上一级即根）
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+from models.transformer import TransformerModel
+from models.config_loader import load_config, build_model
+from models.device import get_device, apply_cpu_threads
+from models.data_utils import Vocabulary
+from models.utils import save_checkpoint
 
 
 def load_vocab_from_json(vocab_path):
