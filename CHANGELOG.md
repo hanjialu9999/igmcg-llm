@@ -9,7 +9,7 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
-## `523aff7`（本地，基于 `7df19b6`）
+## `2741989`（已推送，基于 `7df19b6`）
 
 - exp: 增强 vs 基线 受控对比扩展至 20000 行（`data/pretrain_corpus/merged_sample_20k_top.txt` = merged.txt 前 20000 行，确定性）。SEL 改用**新版 8 段掩码**（`enhancement_schedule`：attn_temp 恒开；qk_norm/residual_gate 段间切换、永不同时关、偏向全开 4/8），取代旧 4 段。`configs/config_cmp_enh_20k.yaml` / `config_cmp_sel_20k.yaml`，同参数（1 epoch / batch32 / seq64 / lr3e-3 / seed42 / test_split0.1）DML fp32。
 - 结果：ENH(常开) **Val 6.2188 / ~3278 tok/s**，SEL(8 段选择性交替) **Val 6.2808 / ~3471 tok/s**——质量差距从 8000 行的 ~0.12 缩到 **0.062（几乎持平）**，SEL 训练快约 7%，但**推理无提速**（两权重解码均全开：top-k ~38、IGMCG ~10.8 tok/s）。鲁棒性 self-loss：8 档中 ENH 6 档略优、SEL 2 档略优，差距 ~0.1–0.3，基本打平。结论：数据量越大 SEL 越接近常开 ENH，仅省训练时间、不省推理；两套 20k 权重均保留作对照。原始数据见 `experiments/cmp_20k.txt`（`experiments/_cmp_20k.py` 复现）。
@@ -17,15 +17,15 @@
 
 ## `99055cb`（已推送，基于 `aa9d757`）
 
-- test: 鲁棒性探针 `experiments/_robust_enh_sel.py`——对 ENH/SEL 在 `temperature∈{0.5,0.8,1.1,1.4}` 与 `top_k∈{10,30,100}`（固定 `repetition_penalty=1.4`）下生成，计算 **self-loss**（模型对自身生成续写的 cross-entropy）作稳健性代理，并逐提示词记录原文。结果：**ENH 在全部设置下 self-loss 均略低于 SEL（更自洽/稳健）**，差距很小（约 0.1–0.3 nat）；该 8000 行/1 epoch 规模下两者都偏弱。配合肉眼观察：ENH≈SEL > (已删)ALT，与 Val 排序（ENH 7.10 < SEL 7.22 < ALT 7.35）一致。结论：常开 ENH 鲁棒性略优，SEL 接近且训练更快。原始数据见 `experiments/robust_enh_sel.txt`。
-- chore: 清理无用的 BASE/ALT 产物——删除 BASE/ALT 模型（`checkpoints_cmp_base/`、`checkpoints_cmp_alt/`）、`configs/config_cmp_base.yaml`、`experiments/_cmp_enh_base.py`+`experiments/cmp_enh_base.txt`（BASE 专属，已被 `cmp_4way.txt` 覆盖）、`experiments/_cmp_4way.py`（引用已删模型、失效）；删除 `logs_cmp_*` 训练日志。现仅保留 **ENH 与 SEL** 模型及其配置（`config_cmp_enh.yaml`/`config_cmp_sel.yaml`）。`experiments/cmp_4way.txt` 作为历史四方对比快照保留。
+- test: 鲁棒性探针 `experiments/_robust_enh_sel.py`——对 ENH/SEL 在 `temperature∈{0.5,0.8,1.1,1.4}` 与 `top_k∈{10,30,100}`（固定 `repetition_penalty=1.4`）下生成，计算 **self-loss**（模型对自身生成续写的 cross-entropy）作稳健性代理，并逐提示词记录原文。结果：**ENH 在全部设置下 self-loss 均略低于 SEL（更自洽/稳健）**，差距很小（约 0.1–0.3 nat）；该 8000 行/1 epoch 规模下两者都偏弱。配合肉眼观察：ENH≈SEL > (已删)ALT，与 Val 排序（ENH 7.10 < SEL 7.22 < ALT 7.35）一致。结论：常开 ENH 鲁棒性略优，SEL 接近且训练更快。原始数据见 `experiments/robust_enh_sel.txt`（该 8k 探针脚本与结果已于 `2741989` 随 20k 对比清理；20k 对照见 `experiments/cmp_20k.txt`）。
+- chore: 清理无用的 BASE/ALT 产物——删除 BASE/ALT 模型（`checkpoints_cmp_base/`、`checkpoints_cmp_alt/`）、`configs/config_cmp_base.yaml`、`experiments/_cmp_enh_base.py`+`experiments/cmp_enh_base.txt`（BASE 专属，已被 `cmp_4way.txt` 覆盖）、`experiments/_cmp_4way.py`（引用已删模型、失效）；删除 `logs_cmp_*` 训练日志。现仅保留 ENH 与 SEL 模型及其配置（`config_cmp_enh.yaml`/`config_cmp_sel.yaml`）。`experiments/cmp_4way.txt` 作为历史四方对比快照保留。**（注：上述 8k 的 ENH/SEL 配置、`cmp_4way.txt` 与 `_robust_enh_sel.py` 已随 20k 对比在 `2741989` 清理，现仓库仅保留 20k 版本 `config_cmp_{enh,sel}_20k.yaml` 与 `cmp_20k.txt`。）**
 
 ## `290b790`（已推送，基于 `3f8c2c8`）
 
 - feat: `set_enhancements_active` 由仅全开/全关（`bool`）升级为**按开关粒度 dict**（如 `{"qk_norm": False, "residual_gate": True}`）；`TransformerModel`/`TransformerBlock`/`SlidingWindowCausalSelfAttention` 各自只更新自身键。`scripts/train.py` 新增 `training.enhancement_schedule`（分段掩码列表，按 `batch_idx % len` 循环切换；缺省键补 `True`），与旧式整体随机 `enhancement_off_prob` 互斥（schedule 优先）。多段循环仅切几个布尔开关，**无额外开销**。
 - 设计：**attn_temp 开销可忽略且恒有益 → 始终开**；qk_norm/residual_gate/hybrid_gate 有非忽略开销 → 在 4 段掩码间循环切换，模型**永不完全“全关”**（始终至少保留 attn_temp，且在分段间只切换部分增强）。`validate` 仍强制全开。
 - 三方→四方对比（复用 BASE/ENH/ALT 权重，仅新训 SEL；8000 行×1 epoch，DML fp32，含②）：SEL **Val 7.2254 / ~3413 tok/s** vs ALT **Val 7.3543 / ~3596**；SEL 明显优于 ALT 且接近 ENH(7.10)。**结论：弃用 ALT、采用 SEL**（分段选择性比整体 50% 全关更能保住增强收益）。
-- 入库：`configs/config_cmp_sel.yaml`、`experiments/_cmp_4way.py`、`experiments/cmp_4way.txt`（4 组含原文）；删除 `config_cmp_alt.yaml` / `experiments/_cmp_3way.py` / `experiments/cmp_3way.txt`（被 4 方对比取代）；`checkpoints_cmp_alt/` / `checkpoints_cmp_sel/` 加入 `.gitignore`。`pytest` 27 passed。
+- 入库：`configs/config_cmp_sel.yaml`、`experiments/_cmp_4way.py`、`experiments/cmp_4way.txt`（4 组含原文）；删除 `config_cmp_alt.yaml` / `experiments/_cmp_3way.py` / `experiments/cmp_3way.txt`（被 4 方对比取代）；`checkpoints_cmp_alt/` / `checkpoints_cmp_sel/` 加入 `.gitignore`。`pytest` 27 passed。（上述 8k 的 `config_cmp_sel.yaml`/`cmp_4way.txt` 已于 `2741989` 清理，现仅保留 20k 版本。）
 
 ## `3f8c2c8`（已推送，基于 `b5da36a`/`23a09ff`）
 
