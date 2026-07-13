@@ -1,7 +1,11 @@
+from __future__ import annotations
+
+from typing import Optional, Union
+
 import torch
 
 
-def get_device(preferred=None):
+def get_device(preferred: Optional[Union[str, torch.device]] = None) -> torch.device:
     """自动选择计算设备，优先级：显式指定 > CUDA(NVIDIA) > DirectML(AMD/Intel) > CPU。
 
     这样同一套代码可以在不同配置的电脑上自动适配：
@@ -45,7 +49,7 @@ def get_device(preferred=None):
     return torch.device('cpu')
 
 
-def apply_cpu_threads(threads=None):
+def apply_cpu_threads(threads: Optional[Union[int, str]] = None) -> None:
     """限制 PyTorch 占用的 CPU 线程数，避免训练/推理吃满所有核心。
 
     传入 None / 0 / 负数则不改变默认设置。

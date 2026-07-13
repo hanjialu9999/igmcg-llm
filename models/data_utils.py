@@ -1,13 +1,18 @@
-import torch
-from torch.utils.data import Dataset, DataLoader
-from collections import Counter
+from __future__ import annotations
+
 import re
+from collections import Counter
+from typing import Any, Dict, List, Optional, Tuple, Union
+
 import numpy as np
+import torch
+from torch.utils.data import DataLoader, Dataset
+
 
 class Vocabulary:
     """Vocabulary class with improved tokenization and filtering"""
     
-    def __init__(self, vocab_size=5000, min_freq=1, special_tokens=None):
+    def __init__(self, vocab_size: int = 5000, min_freq: int = 1, special_tokens: Optional[List[str]] = None):
         """
         Args:
             vocab_size: Maximum vocabulary size
@@ -16,13 +21,13 @@ class Vocabulary:
         """
         self.vocab_size = vocab_size
         self.min_freq = min_freq
-        self.word2idx = {}
-        self.idx2word = {}
+        self.word2idx: Dict[str, int] = {}
+        self.idx2word: Dict[int, str] = {}
         self.word_freq = Counter()
         
         # Define special tokens (including [SEP] for question-answer separation)
         if special_tokens is None:
-            special_tokens = ['<pad>', '<unk>', '<bos>', '<eos>', '[SEP]']
+            special_tokens = ['<pad>', '<???>', '<bos>', '<eos>', '[SEP]']
         
         self.special_tokens = special_tokens
         self.pad_idx = 0
@@ -31,7 +36,7 @@ class Vocabulary:
         self.eos_idx = 3
         self.sep_idx = 4
         
-    def build_vocab(self, texts):
+    def build_vocab(self, texts: List[str]) -> None:
         """Build vocabulary from texts with better filtering"""
         # Count word frequencies with improved tokenization
         for text in texts:
@@ -66,7 +71,7 @@ class Vocabulary:
         print(f"  Unique words in corpus: {len(self.word_freq)}")
         print(f"  Coverage: {coverage:.2f}%")
     
-    def tokenize(self, text):
+    def tokenize(self, text: str) -> List[str]:
         """支持中英文混合的分词：
         - 中日韩(CJK)字符逐字切分（中文无词边界，按字建模）
         - 其它文本按空格/标点切分
@@ -87,10 +92,10 @@ class Vocabulary:
         words = [w for w in words if w]
         return words
     
-    def encode(self, text, add_special_tokens=True):
+    def encode(self, text: str, add_special_tokens: bool = True) -> List[int]:
         """Convert text to token indices"""
         words = self.tokenize(text)
-        tokens = []
+        tokens: List[int] = []
         
         if add_special_tokens:
             tokens.append(self.bos_idx)
@@ -104,9 +109,9 @@ class Vocabulary:
         
         return tokens
     
-    def decode(self, token_ids, skip_special=True):
+    def decode(self, token_ids: List[int], skip_special: bool = True) -> str:
         """Convert token indices to text"""
-        words = []
+        words: List[str] = []
         for token_id in token_ids:
             if skip_special:
                 # Skip special tokens: pad(0), bos(2), eos(3), and sep(4)
@@ -114,7 +119,7 @@ class Vocabulary:
                     continue
             
             # idx2word 以 int 为键；直接按 int 查找（兼容 vocab.json 中字符串键的情况）
-            word = self.idx2word.get(token_id, self.idx2word.get(str(token_id), '<unk>'))
+            word = self.idx2word.get(token_id, self.idx2word.get(str(token_id), '<?>'))
             words.append(word)
         
         text = ' '.join(words)
@@ -127,7 +132,7 @@ class Vocabulary:
         
         return text
     
-    def get_vocab_stats(self):
+    def get_vocab_stats(self) -> Dict[str, Union[int, float]]:
         """Get vocabulary statistics"""
         return {
             'vocab_size': len(self.word2idx),
@@ -137,14 +142,14 @@ class Vocabulary:
             'coverage': len(self.word2idx) / len(self.word_freq) * 100
         }
     
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.word2idx)
 
 
 class TextDataset(Dataset):
     """Improved dataset with lazy loading and better preprocessing"""
     
-    def __init__(self, texts, vocab, max_seq_length=32, preprocess=True):
+    def __init__(self, texts: List[str], vocab: Vocabulary, max_seq_length: int = 32, preprocess: bool = True):
         """
         Args:
             texts: List of text strings
@@ -160,11 +165,11 @@ class TextDataset(Dataset):
             texts = self._preprocess_texts(texts)
         
         self.texts = texts
-        self.encoded_cache = {}  # Cache for encoded sequences
+        self.encoded_cache: Dict[int, Dict[str, torch.Tensor]] = {}  # Cache for encoded sequences
         
-    def _preprocess_texts(self, texts):
+    def _preprocess_texts(self, texts: List[str]) -> List[str]:
         """Clean and validate texts"""
-        cleaned = []
+        cleaned: List[str] = []
         for text in texts:
             # Remove extra whitespace
             text = ' '.join(text.split())
@@ -179,10 +184,10 @@ class TextDataset(Dataset):
         
         return cleaned
     
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.texts)
     
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         """返回预填充并转为 long tensor 的样本；结果按 idx 缓存，
         避免每个 epoch 重复做 tokenize / 截padding / 张量分配（训练热路径上的主要主机开销）。"""
         if idx in self.encoded_cache:
@@ -204,7 +209,7 @@ class TextDataset(Dataset):
         return item
 
 
-def load_data(data_file, vocab_size=5000, max_seq_length=32, min_freq=1):
+def load_data(data_file: str, vocab_size: int = 5000, max_seq_length: int = 32, min_freq: int = 1) -> Tuple[TextDataset, Vocabulary]:
     """Load data from file with validation"""
     print(f"Loading data from {data_file}...")
     
@@ -236,7 +241,7 @@ def load_data(data_file, vocab_size=5000, max_seq_length=32, min_freq=1):
     return dataset, vocab
 
 
-def create_dataloader(dataset, batch_size=16, shuffle=True, num_workers=0):
+def create_dataloader(dataset: TextDataset, batch_size: int = 16, shuffle: bool = True, num_workers: int = 0) -> DataLoader:
     """Create dataloader with better defaults and parallel data loading"""
     import os
     
@@ -256,7 +261,7 @@ def create_dataloader(dataset, batch_size=16, shuffle=True, num_workers=0):
     )
 
 
-def split_dataset(dataset, train_ratio=0.9, seed=42):
+def split_dataset(dataset: TextDataset, train_ratio: float = 0.9, seed: int = 42) -> Tuple[Dataset, Dataset]:
     """Split dataset into train and validation sets"""
     train_size = int(len(dataset) * train_ratio)
     val_size = len(dataset) - train_size

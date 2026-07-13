@@ -12,39 +12,41 @@ try:
     from models.transformer import TransformerModel
     from models.config_loader import load_config, build_model
     from models.device import get_device, apply_cpu_threads
+    from models.data_utils import Vocabulary
 except ImportError:
     print("❌ 错误：在当前目录下找不到 models/transformer.py，请确保在项目根目录下运行脚本")
     exit()
 
-# ===== 1. 加载Tokenizer =====
-class SimpleTokenizer:
-    def __init__(self, vocab_path):
-        with open(vocab_path, 'r', encoding='utf-8') as f:
-            vocab_data = json.load(f)
-        
-        self.word2idx = vocab_data['word2idx']
-        self.idx2word = {v: k for k, v in self.word2idx.items()}
-        # 兼容处理，优先从词表读，没有就按通用顺序定
-        self.pad_token_id = self.word2idx.get('<pad>', 0)
-        self.unk_token_id = self.word2idx.get('<unk>', 1)
-        self.bos_token_id = self.word2idx.get('<bos>', 2)
-        self.eos_token_id = self.word2idx.get('<eos>', 3)
+
+def load_vocab_from_json(vocab_path):
+    """从 vocab.json 加载词表并构建 Vocabulary 对象。
     
-    def encode(self, text, add_special_tokens=True):
-        words = text.lower().split()
-        ids = [self.word2idx.get(w, self.unk_token_id) for w in words]
-        if add_special_tokens:
-            ids = [self.bos_token_id] + ids + [self.eos_token_id]
-        return ids
+    使用项目自带的 Vocabulary 类（支持 CJK 逐字切分），替代原 SimpleTokenizer 的按空格分词。
+    """
+    with open(vocab_path, 'r', encoding='utf-8') as f:
+        vocab_data = json.load(f)
     
-    def decode(self, ids):
-        return ' '.join([self.idx2word.get(i, '<unk>') for i in ids 
-                        if i not in [self.pad_token_id, self.bos_token_id, self.eos_token_id]])
+    word2idx = vocab_data['word2idx']
+    idx2word = {v: k for k, v in word2idx.items()}
+    
+    # 实例化 Vocabulary，再手动注入已有映射（避免重新 build_vocab）
+    vocab = Vocabulary(vocab_size=len(word2idx))
+    vocab.word2idx = word2idx
+    vocab.idx2word = idx2word
+    
+    # 特殊 token 索引对齐（Vocabulary 默认顺序：pad=0, unk=1, bos=2, eos=3, sep=4）
+    vocab.pad_idx = word2idx.get('<pad>', 0)
+    vocab.unk_idx = word2idx.get('那些', 1)
+    vocab.bos_idx = word2idx.get('<bos>', 2)
+    vocab.eos_idx = word2idx.get('<eos>', 3)
+    vocab.sep_idx = word2idx.get('[SEP]', 4)
+    
+    return vocab
 
 # ===== 2. 处理问答数据 (强制对齐长度) =====
 class QADataset(Dataset):
-    def __init__(self, data_folder, tokenizer, max_length=64):
-        self.tokenizer = tokenizer
+    def __init__(self, data_folder, vocab, max_length=64):
+        self.vocab = vocab
         self.max_length = max_length
         self.qa_pairs = []
         
@@ -70,19 +72,19 @@ class QADataset(Dataset):
     
     def __getitem__(self, idx):
         question, answer = self.qa_pairs[idx]
-        input_ids = self.tokenizer.encode(question)
-        target_ids = self.tokenizer.encode(answer)
+        input_ids = self.vocab.encode(question)
+        target_ids = self.vocab.encode(answer)
         
         # --- 核心修复：强制对齐输入和目标的长度 ---
         # 1. 对输入进行填充/截断
         if len(input_ids) < self.max_length:
-            input_ids += [self.tokenizer.pad_token_id] * (self.max_length - len(input_ids))
+            input_ids += [self.vocab.pad_idx] * (self.max_length - len(input_ids))
         else:
             input_ids = input_ids[:self.max_length]
             
         # 2. 对目标进行填充/截断 (必须和输入一样长，否则 Loss 计算会报错)
         if len(target_ids) < self.max_length:
-            target_ids += [self.tokenizer.pad_token_id] * (self.max_length - len(target_ids))
+            target_ids += [self.vocab.pad_idx] * (self.max_length - len(target_ids))
         else:
             target_ids = target_ids[:self.max_length]
         
@@ -99,7 +101,7 @@ def train():
     data_folder = "data/datasets"
 
     print("加载tokenizer...")
-    tokenizer = SimpleTokenizer(vocab_path)
+    vocab = load_vocab_from_json(vocab_path)
 
     # 模型结构统一从 config.yaml 读取，避免与训练脚本不一致
     print("初始化 Transformer 结构...")
@@ -132,13 +134,13 @@ def train():
     print(f"使用设备: {device}")
 
     # 准备数据 (max_length 设为 64，与 config 一致)
-    dataset = QADataset(data_folder, tokenizer, max_length=64)
+    dataset = QADataset(data_folder, vocab, max_length=64)
     # batch_size 设为 16，显存如果炸了就改小
     dataloader = DataLoader(dataset, batch_size=16, shuffle=True)
 
     optimizer = AdamW(model.parameters(), lr=2e-5)
     # 忽略 padding 部分的 loss
-    criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id)
+    criterion = nn.CrossEntropyLoss(ignore_index=vocab.pad_idx)
 
     num_epochs = 10  # 原 200 轮过多，改为 10 轮
     print(f"\n开始微调，共 {num_epochs} 个epoch...\n")

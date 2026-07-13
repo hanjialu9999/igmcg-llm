@@ -160,12 +160,12 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
 
         # 累加损失（用 Python float，避免张量创建开销与潜在计算图残留）
         # 注意：这里累加的是未缩放的原始 loss（backward 内部已用 /grad_accum_steps 缩放梯度），
-        # 不要乘以 grad_accum_steps，否则在累积步数>1 时报告值被错误地放大约 grad_accum_steps 倍。
+        # 不要乘以 grad_accum_steps，否则在累积步数>1 时上报值被错误地放大约 grad_accum_steps 倍。
         loss_sum += loss.detach().item()
         loss_count += 1
 
         if (batch_idx + 1) % 10 == 0:
-            avg = loss_sum.item() / loss_count
+            avg = loss_sum / loss_count
             if progress is not None:
                 progress.set_postfix(loss=f"{avg:.4f}",
                                      lr=f"{optimizer.param_groups[0]['lr']:.6f}")
@@ -180,7 +180,7 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
     if accumulated % grad_accum_steps != 0:
         step_optimizer()
 
-    return (loss_sum.item() / loss_count) if loss_count else 0.0
+    return (loss_sum / loss_count) if loss_count else 0.0
 
 
 def validate(model, dataloader, criterion, device):
@@ -254,7 +254,7 @@ def cleanup_old_checkpoints(checkpoint_dir, keep_last_n=5):
         except Exception as e:
             print(f"Failed to remove {file_path}: {e}")
     
-    print(f"\n✅ Cleanup complete: Deleted {deleted_count} old checkpoint(s)")
+    print(f"\nCleanup complete: Deleted {deleted_count} old checkpoint(s)")
     print(f"   Kept last {keep_last_n} checkpoint(s) and final_model.pt")
 
 
@@ -372,9 +372,21 @@ def main(config_path='configs/pretrain.yaml'):
     
     # Loss function with label smoothing and optimizer
     # Label smoothing helps prevent overconfidence and improves generalization
+    # 注意：PyTorch 的 nn.CrossEntropyLoss 不支持同时使用 label_smoothing > 0 和 ignore_index
+    # 因为我们使用 ignore_index=vocab.pad_idx 忽略 padding token，所以必须移除 label_smoothing
+    # 若配置中设置了 label_smoothing，将在此处忽略并打印警告
+    label_smoothing = config['training'].get('label_smoothing', 0.0)
+    if label_smoothing > 0:
+        import warnings
+        warnings.warn(
+            f'label_smoothing={label_smoothing} 已被忽略：'
+            f'PyTorch 的 CrossEntropyLoss 不支持同时使用 label_smoothing 和 ignore_index（用于 padding）'
+        )
+        label_smoothing = 0.0
+    
     criterion = nn.CrossEntropyLoss(
         ignore_index=vocab.pad_idx,
-        label_smoothing=config['training'].get('label_smoothing', 0.1)
+        # label_smoothing=config['training'].get('label_smoothing', 0.1)  # 已移除：与 ignore_index 不兼容
     )
     optimizer = optim.AdamW(
         model.parameters(),

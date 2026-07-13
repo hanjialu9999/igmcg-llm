@@ -91,8 +91,9 @@ def load_model(model_path, vocab_path, device='cpu', quantize=False, compile_mod
     return model, vocab
 
 
-def generate_text(model, vocab, prompt, max_length=30, temperature=0.8, 
-                   top_k=50, device='cpu', ngram=None, ngram_weight=0.0):
+def generate_text(model, vocab, prompt, max_length=30, temperature=0.8,
+                   top_k=50, device='cpu', ngram=None, ngram_weight=0.0,
+                   min_length=3, eos_penalty=-5.0):
     """Generate text from prompt（可选融合 n-gram 统计先验做解码期双轨）"""
     tokens = vocab.encode(prompt)
     if tokens[-1] == vocab.eos_idx:
@@ -101,7 +102,9 @@ def generate_text(model, vocab, prompt, max_length=30, temperature=0.8,
                               temperature=temperature, top_k=top_k,
                               device=device, repetition_penalty=1.4,
                               ngram_fn=(ngram.logprob_vector if ngram else None),
-                              ngram_weight=ngram_weight)
+                              ngram_weight=ngram_weight,
+                              min_length=min_length,
+                              eos_penalty=eos_penalty)
     text = vocab.decode(generated)
     return text.strip()
 
@@ -186,7 +189,7 @@ class NGramModel:
 
 
 def interactive_mode(model, vocab, device='cpu', ngram=None, ngram_weight=0.0,
-                     igmcg=False, intuition=None, candidates=5):
+                      igmcg=False, intuition=None, candidates=5):
     """Interactive text generation（可选 n-gram / IGMCG 联合解码）"""
     print("\n" + "="*50)
     print("Text Generation with AI Model")
@@ -212,16 +215,20 @@ def interactive_mode(model, vocab, device='cpu', ngram=None, ngram_weight=0.0,
         for temp in temp_values:
             if igmcg:
                 generated, cands = generate_igmcg(
-                    model, vocab, prompt, max_length=20, temperature=temp,
+                    model, vocab, prompt, max_length=20, base_temp=temp,
                     top_k=50, device=device, num_candidates=candidates,
                     intuition=intuition, ngram_fn=(ngram.logprob_vector if ngram else None),
-                    ngram_weight=ngram_weight)
+                    ngram_weight=ngram_weight,
+                    min_length=3,
+                    eos_penalty=-5.0)
                 score = cands[0]['score'] if cands else 0.0
                 print(f"[IGMCG T={temp}]: {generated}  (score={score:.3f})\n")
             else:
                 generated = generate_text(model, vocab, prompt, max_length=20, 
-                                         temperature=temp, top_k=50, device=device,
-                                         ngram=ngram, ngram_weight=ngram_weight)
+                                          temperature=temp, top_k=50, device=device,
+                                          ngram=ngram, ngram_weight=ngram_weight,
+                                          min_length=3,
+                                          eos_penalty=-5.0)
                 print(f"[Temperature {temp}]: {generated}\n")
         
         print("-"*50)
@@ -286,13 +293,14 @@ def _style_features(text):
 
 
 def _generate_candidates_batch(model, ids, temps, max_length, top_k, rep_penalty,
-                                device, ngram_fn, ngram_weight, pad_id, sep_id, eos_id):
+                                device, ngram_fn, ngram_weight, pad_id, sep_id, eos_id,
+                                min_length=3, eos_penalty=-5.0):
     """并行生成 N 个候选：每个候选维护独立的 KV-cache，避免候选间污染。
     逐步并行前向（batch=N），但每行独立维护 past 状态。"""
     N = len(temps)
     generated = [list(ids) for _ in range(N)]
     done = [False] * N
-    min_len = max(3, len(ids) + 2)
+    min_len = min_length
     past = [None] * N  # 每个候选独立的 past
 
     with torch.no_grad():
@@ -338,10 +346,10 @@ def _generate_candidates_batch(model, ids, temps, max_length, top_k, rep_penalty
                     lt = lt + ngram_weight * ngram_fn(generated[n], device)
                 lt[pad_id] = float('-inf')
                 lt[sep_id] = float('-inf')
-                if len(generated[n]) < min_len:
+                if len(generated[n]) - len(ids) < min_len:
                     lt[eos_id] = float('-inf')
                 else:
-                    lt[eos_id] = lt[eos_id] - 5.0
+                    lt[eos_id] = lt[eos_id] + eos_penalty
                 if top_k > 0 and top_k < lt.shape[0]:
                     thr = torch.topk(lt, min(top_k, lt.shape[0]))[0][-1]
                     lt[lt < thr] = float('-inf')
@@ -351,7 +359,7 @@ def _generate_candidates_batch(model, ids, temps, max_length, top_k, rep_penalty
                 next_token = torch.multinomial(torch.softmax(lt, 0), 1).item()
                 nt.append(next_token)
                 generated[n].append(next_token)
-                if next_token == eos_id and len(generated[n]) >= min_len:
+                if next_token == eos_id and len(generated[n]) - len(ids) >= min_len:
                     done[n] = True
             
             # 并行前向：构造 batch 输入，每个候选用自己的 past
@@ -414,8 +422,9 @@ def _ngram_coherence(ngram_fn, ids, device):
 
 
 def generate_igmcg(model, vocab, prompt, intuition=None, num_candidates=4,
-                   max_length=60, device='cpu', base_temp=0.7, top_k=30,
-                   ngram_fn=None, ngram_weight=0.0, repetition_penalty=1.4):
+                    max_length=60, device='cpu', base_temp=0.7, top_k=30,
+                    ngram_fn=None, ngram_weight=0.0, repetition_penalty=1.4,
+                    min_length=3, eos_penalty=-5.0):
     """IGMCG 多候选生成：返回 (最优文本, 各候选评分详情)。
 
      intuition: 长度 7 的 float 列表（默认全 0.5 中性）。
@@ -441,8 +450,9 @@ def generate_igmcg(model, vocab, prompt, intuition=None, num_candidates=4,
     temps = [base_temp * (0.75 + 0.6 * k / max(1, num_candidates - 1))
              for k in range(num_candidates)]
     seqs = _generate_candidates_batch(model, ids, temps, max_length, top_k,
-                                      repetition_penalty, device, ngram_fn,
-                                      ngram_weight, pad_id, sep_id, eos_id)
+                                       repetition_penalty, device, ngram_fn,
+                                       ngram_weight, pad_id, sep_id, eos_id,
+                                       min_length=min_length, eos_penalty=eos_penalty)
     flus = _fluency_batch(model, seqs, device, pad_id)
 
     COH_W, FLU_W, STYLE_W, REP_W = 1.5, 0.15, 0.15, 2.5
@@ -566,7 +576,7 @@ def main():
         with open(args.prompt_file, 'r', encoding='utf-8-sig') as pf:
             prompt = pf.read().strip()
     
-    # 联合解码：IGMCG 候选生成（若同时 --ngram，则每个候选都叠加 n-gram 先验）
+# 联合解码：IGMCG 候选生成（若同时 --ngram，则每个候选都叠加 n-gram 先验）
     use_igmcg = args.igmcg
     intuition = [float(x) for x in args.intuition.split(',')]
     assert len(intuition) == 7, "直觉向量需 7 维"
@@ -581,17 +591,21 @@ def main():
                 base_temp=args.temperature, top_k=args.top_k, device=device,
                 num_candidates=args.igmcg_candidates, intuition=intuition,
                 ngram_fn=(ngram.logprob_vector if ngram else None),
-                ngram_weight=args.ngram_weight)
+                ngram_weight=args.ngram_weight,
+                min_length=3,
+                eos_penalty=-5.0)
             best = cands[0] if cands else None
             gen_info = (f"\n  [IGMCG候选={len(cands)}, 最优分={best['score']:.3f}, 重复度={best['rep']:.3f}]"
                         if best else "")
         else:
             generated = generate_text(model, vocab, prompt,
-                                     max_length=args.max_length,
-                                     temperature=args.temperature,
-                                     top_k=args.top_k,
-                                     device=device,
-                                     ngram=ngram, ngram_weight=args.ngram_weight)
+                                       max_length=args.max_length,
+                                       temperature=args.temperature,
+                                       top_k=args.top_k,
+                                       device=device,
+                                       ngram=ngram, ngram_weight=args.ngram_weight,
+                                       min_length=3,
+                                       eos_penalty=-5.0)
             gen_info = ""
         # 同时写 UTF-8 结果文件，方便中文查看（控制台可能是 GBK）
         out_path = os.path.join('logs', 'generation_output.txt')
@@ -612,11 +626,13 @@ def main():
         print("\nGenerating text for example prompts:\n")
         for prompt in examples:
             generated = generate_text(model, vocab, prompt, 
-                                     max_length=20,
-                                     temperature=0.8,
-                                     top_k=50,
-                                     device=device,
-                                     ngram=ngram, ngram_weight=args.ngram_weight)
+                                      max_length=20,
+                                      temperature=0.8,
+                                      top_k=50,
+                                      device=device,
+                                      ngram=ngram, ngram_weight=args.ngram_weight,
+                                      min_length=3,
+                                      eos_penalty=-5.0)
             print(f"Prompt: {prompt}")
             print(f"Generated: {generated}\n")
 

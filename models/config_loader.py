@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import json
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 import torch
 import yaml
@@ -10,7 +13,7 @@ from models.transformer import TransformerModel
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
-def load_config(config_path='configs/pretrain.yaml'):
+def load_config(config_path: str = 'configs/pretrain.yaml') -> Dict[str, Any]:
     """Load configuration from a YAML file (resolved relative to project root)."""
     path = Path(config_path)
     if not path.is_absolute():
@@ -19,7 +22,7 @@ def load_config(config_path='configs/pretrain.yaml'):
         return yaml.safe_load(f)
 
 
-def build_model(config, device=None):
+def build_model(config: Dict[str, Any], device: Optional[torch.device] = None) -> TransformerModel:
     """Build a TransformerModel from a loaded config dict (config['model']).
 
      兼容混合架构：读取 layer_plan / ssm_* / attn_window / attn_rel_bias 等可选字段。
@@ -49,7 +52,7 @@ def build_model(config, device=None):
     return model
 
 
-def load_vocab(vocab_path='checkpoints/vocab.json'):
+def load_vocab(vocab_path: str = 'checkpoints/vocab.json') -> Vocabulary:
     """Load a Vocabulary object from a previously saved vocab.json."""
     path = Path(vocab_path)
     if not path.is_absolute():
@@ -63,7 +66,7 @@ def load_vocab(vocab_path='checkpoints/vocab.json'):
     return vocab
 
 
-def load_generation_config(path='chat_config.json'):
+def load_generation_config(path: str = 'chat_config.json') -> Dict[str, Any]:
     """Load generation (dialogue) parameters from chat_config.json."""
     cfg_path = Path(path)
     if not cfg_path.is_absolute():
