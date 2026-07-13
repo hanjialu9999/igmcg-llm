@@ -167,7 +167,7 @@ def train():
             total_loss += loss.item()
             progress_bar.set_postfix({'loss': f'{loss.item():.4f}'})
 
-        avg_loss = total_loss / len(dataloader)
+        avg_loss = total_loss / len(dataloader) if len(dataloader) > 0 else 0.0
         print(f"Epoch {epoch+1} 完成，平均Loss: {avg_loss:.4f}")
 
         # 保存最佳权重

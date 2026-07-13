@@ -93,7 +93,12 @@ def main():
     print(f"模型加载完成。词表大小 {len(vocab)}。输入 'quit' 或 '退出' 结束。")
 
     os.makedirs(os.path.dirname(args.history), exist_ok=True)
-    hist_f = open(args.history, 'w', encoding='utf-8')
+    # open 放在独立 try 中：历史记录文件不可写时降级（不写历史），而不是让整个对话崩溃。
+    try:
+        hist_f = open(args.history, 'w', encoding='utf-8')
+    except Exception as e:
+        print(f"[WARN] 无法写入历史文件 {args.history}：{e}，本次对话不记录历史。")
+        hist_f = None
 
     def reply(prompt):
         ids = vocab.encode(prompt, add_special_tokens=False)
@@ -130,9 +135,11 @@ def main():
             resp = reply(prompt)
             print(f"你: {prompt}")
             print(f"模型: {resp}")
-            hist_f.write(f"你: {prompt}\n模型: {resp}\n\n")
-            hist_f.flush()
-        hist_f.close()
+            if hist_f is not None:
+                hist_f.write(f"你: {prompt}\n模型: {resp}\n\n")
+                hist_f.flush()
+        if hist_f is not None:
+            hist_f.close()
         print(f"\n对话已写入 {args.history}")
         return
 
@@ -149,10 +156,12 @@ def main():
                 break
             resp = reply(prompt)
             print("模型:", resp)
-            hist_f.write(f"你: {prompt}\n模型: {resp}\n\n")
-            hist_f.flush()
+            if hist_f is not None:
+                hist_f.write(f"你: {prompt}\n模型: {resp}\n\n")
+                hist_f.flush()
     finally:
-        hist_f.close()
+        if hist_f is not None:
+            hist_f.close()
 
 if __name__ == '__main__':
     main()
