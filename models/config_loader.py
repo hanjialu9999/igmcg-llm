@@ -74,9 +74,19 @@ def load_vocab(vocab_path: str = 'checkpoints/vocab.json') -> Vocabulary:
 
 
 def load_generation_config(path: str = 'chat_config.json') -> Dict[str, Any]:
-    """Load generation (dialogue) parameters from chat_config.json."""
+    """加载对话（生成）参数；配置文件缺失时回退到默认配置，避免运行时尚未生成配置就崩溃。"""
     cfg_path = Path(path)
     if not cfg_path.is_absolute():
         cfg_path = PROJECT_ROOT / cfg_path
+    if not cfg_path.exists():
+        # 默认生成参数（与 tools/dialogue_interactive.py 初始配置一致）
+        return {
+            'temperature': 0.65,
+            'top_k': 40,
+            'repetition_penalty': 2.0,
+            'min_new_tokens': 10,
+            'max_new_tokens': 100,
+            'context_rounds': 3,
+        }
     with open(cfg_path, 'r', encoding='utf-8') as f:
         return json.load(f)

@@ -238,8 +238,10 @@ class MambaSSM(nn.Module):
         self.D_init = D_init
         self.norm = RMSNorm(dim)
         self.in_proj = nn.Linear(dim, 2 * d_inner, bias=False)
+        # 因果卷积：左填充 conv_kernel-1 个零，输出取前 L 个位置（增量时取最后 1 个），
+        # 保证位置 t 仅依赖 x[<=t]，避免居中窗口泄露未来 token
         self.conv = nn.Conv1d(d_inner, d_inner, kernel_size=conv_kernel,
-                              padding=conv_kernel // 2, groups=d_inner, bias=False)
+                              padding=conv_kernel - 1, groups=d_inner, bias=False)
         self.act = nn.SiLU()
         # 从 conv 输出投影出 Δ 输入、B、C（选择性）
         self.x_proj = nn.Linear(d_inner, dt_rank + 2 * d_state, bias=False)
@@ -284,21 +286,19 @@ class MambaSSM(nn.Module):
         xz = self.in_proj(x)                          # (B, L, 2*d_inner)
         x_in, z = xz.chunk(2, dim=-1)
         
-        # Handle incremental conv state
+        # 因果卷积：conv 用左填充（padding=conv_kernel-1），输出取前 L 个位置（增量时取最后 1 个），
+        # 确保仅依赖当前及历史 token，不泄露未来
         if past_conv_state is not None and past_conv_state.shape[0] == B and L == 1:
-            # Incremental decoding: prepend past conv state, keep last conv_kernel-1
-            # past_conv_state: (B, d_inner, conv_kernel-1)
-            # x_in: (B, 1, d_inner) -> transpose to (B, d_inner, 1)
+            # 增量解码：拼接历史 conv 窗口与当前 token，卷积后取最后一个位置即当前 token 特征
             conv_input = torch.cat([past_conv_state, x_in.transpose(1, 2)], dim=-1)  # (B, d_inner, conv_kernel)
-            x_conv = self.conv(conv_input)  # (B, d_inner, 1)
-            x_conv = x_conv.transpose(1, 2)  # (B, 1, d_inner)
-            # New conv state: last conv_kernel-1 tokens
-            present_conv_state = conv_input[:, :, -(self.conv_kernel - 1):]
+            # 因果卷积后取索引 conv_kernel-1 的位置，即窗口 [past0, past1, current]（当前 token 特征）
+            x_conv = self.conv(conv_input)[:, :, self.conv_kernel - 1].unsqueeze(1)  # (B, 1, d_inner)
+            present_conv_state = conv_input[:, :, -(self.conv_kernel - 1):]  # (B, d_inner, conv_kernel-1)
         else:
-            # Full sequence or prefill
-            x_conv = self.conv(x_in.transpose(1, 2)).transpose(1, 2)  # (B, L, d_inner)
+            # 全量序列或 prefill：因果卷积后截断到前 L 个位置
+            x_conv = self.conv(x_in.transpose(1, 2)).transpose(1, 2)[:, :L, :]  # (B, L, d_inner)
             if use_cache and L > 0:
-                # Save last conv_kernel-1 tokens for next step
+                # 保存最后 conv_kernel-1 个 token 供下一步增量使用
                 present_conv_state = x_in.transpose(1, 2)[:, :, -(self.conv_kernel - 1):]
             else:
                 present_conv_state = None
@@ -313,12 +313,11 @@ class MambaSSM(nn.Module):
         xb = dB * x_conv.unsqueeze(-1)               # (B, L, d_inner, d_state)
         C = Cp                                        # (B, L, d_state)
         
-        if past_state is not None:
-            # Incremental decoding: process one token at a time
-            if L == 1:
-                return self._forward_step(x, z, x_conv, dA, xb, C, past_state, use_cache)
+        if past_state is not None and L == 1:
+            # 增量解码：逐 token 递推，并返回当前步 conv 状态供下一步拼接
+            return self._forward_step(x, z, x_conv, dA, xb, C, past_state, use_cache, present_conv_state)
         
-        # Full sequence processing (training or prefill)
+        # 全量序列处理（训练或 prefill）
         h = self._selective_scan(dA, xb, past_state)  # (B, L, d_inner, d_state)
         y = (h * C.unsqueeze(2)).sum(-1)             # (B, L, d_inner)
         y = y + self.D * x_conv                      # 跳跃连接
@@ -326,23 +325,24 @@ class MambaSSM(nn.Module):
         y = self.out_proj(y)
         
         if use_cache:
-            # Return last hidden state as present_state
+            # 返回最后隐藏状态作为 present_state
             present_state = h[:, -1, :, :]  # (B, d_inner, d_state)
             return y, present_state, present_conv_state
         return y, None, present_conv_state
 
-    def _forward_step(self, x: torch.Tensor, z: torch.Tensor, x_conv: torch.Tensor, dA: torch.Tensor, xb: torch.Tensor, C: torch.Tensor, past_state: torch.Tensor, use_cache: bool) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
+    def _forward_step(self, x: torch.Tensor, z: torch.Tensor, x_conv: torch.Tensor, dA: torch.Tensor, xb: torch.Tensor, C: torch.Tensor, past_state: torch.Tensor, use_cache: bool, present_conv_state: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
         """Process a single token incrementally."""
         B = x.shape[0]
         # past_state: (B, d_inner, d_state)
         h_t = dA[:, 0] * past_state + xb[:, 0]  # (B, d_inner, d_state)
         y_t = (h_t * C[:, 0].unsqueeze(1)).sum(-1)  # (B, d_inner)
-        y_t = y_t + self.D * x_conv[:, 0]  # skip connection
+        y_t = y_t + self.D * x_conv[:, 0]  # skip connection（x_conv 为 (B,1,d_inner)，取位置 0 即当前 token）
         y_t = y_t * self.act(z[:, 0])  # gate
         y_t = self.out_proj(y_t).unsqueeze(1)  # (B, 1, dim)
         
         if use_cache:
-            return y_t, h_t, None  # conv state handled by caller
+            # 返回当前步的 conv 状态，供下一步增量解码拼接（不再丢弃）
+            return y_t, h_t, present_conv_state
         return y_t, None, None
 
     def _selective_scan(self, a: torch.Tensor, b: torch.Tensor, past_state: Optional[torch.Tensor] = None) -> torch.Tensor:
@@ -637,7 +637,13 @@ class TransformerModel(nn.Module):
             next_token_logits = logits_t / temperature
             for prev_token in set(generated):
                 if 0 <= prev_token < next_token_logits.shape[0]:
-                    next_token_logits[prev_token] = next_token_logits[prev_token] / repetition_penalty
+                    # 符号感知的重复惩罚：正值除、负值乘（与 HF 一致），
+                    # 避免负 logit 被“除”后反而更可能被采样
+                    lt = next_token_logits[prev_token]
+                    if lt > 0:
+                        next_token_logits[prev_token] = lt / repetition_penalty
+                    else:
+                        next_token_logits[prev_token] = lt * repetition_penalty
             if ngram_fn is not None and ngram_weight != 0.0:
                 next_token_logits = next_token_logits + ngram_weight * ngram_fn(generated, device)
             next_token_logits[pad_token_id] = float('-inf')
