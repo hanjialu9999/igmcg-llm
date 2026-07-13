@@ -9,6 +9,14 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
+## `b5da36a`（已推送，基于 `f9452ed`）
+
+### 架构增强默认开启 + 性能定位/微优
+- feat: `config_loader.build_model` 的四开关（`qk_norm`/`attn_temp`/`residual_gate`/`hybrid_gate`）默认值改为 `True`，新训练默认即开增强，无需手动开启。
+- 向后兼容：`scripts/generate.py` 的 `load_model` 仍从各 checkpoint 的 `*_config.yaml` 读取开关、缺省关，旧权重（开启增强前训练）仍可加载（修复 `test_quantization_load` 回归）。
+- 微优：`attn_temp` 融合为单次标量乘法 `q *= exp(-0.5*log_temp)`，免去额外 `sqrt`。
+- 性能定位：新增 `experiments/_bench_enh.py`（DML 微基准）定位增强训练变慢根因——`gradient_checkpointing=True` 反向重算使廉价增强算子执行两次，单步约 +28%；关掉检查点后基线本身快约 22%。增强对比结果 `experiments/cmp_enh_base.txt` 入库（权重较大不入库，可由 config+data 复现）。
+
 ## `f9452ed`（已推送，基于 `462a849`）
 
 ### 修复：load_model 透传架构增强标志 + 增强/基线 A/B 对比
