@@ -36,7 +36,7 @@ def load_vocab_from_json(vocab_path):
     
     # 特殊 token 索引对齐（Vocabulary 默认顺序：pad=0, unk=1, bos=2, eos=3, sep=4）
     vocab.pad_idx = word2idx.get('<pad>', 0)
-    vocab.unk_idx = word2idx.get('那些', 1)
+    vocab.unk_idx = word2idx.get('<unk>', 1)
     vocab.bos_idx = word2idx.get('<bos>', 2)
     vocab.eos_idx = word2idx.get('<eos>', 3)
     vocab.sep_idx = word2idx.get('[SEP]', 4)

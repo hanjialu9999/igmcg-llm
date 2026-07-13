@@ -18,7 +18,7 @@ for p in paths:
     print('=' * 70)
     print(p)
     try:
-        ck = torch.load(p, map_location='cpu', weights_only=False)
+        ck = torch.load(p, map_location='cpu', weights_only=True)
     except Exception as e:
         print('  LOAD ERR', e); continue
     print('  top keys:', list(ck.keys())[:10])

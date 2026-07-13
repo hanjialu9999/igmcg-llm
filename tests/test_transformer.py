@@ -130,11 +130,11 @@ def test_mamba_ssm_incremental():
     # Prefill
     x = torch.randn(1, 4, 64)
     with torch.no_grad():
-        y1, state = ssm(x, use_cache=True)
+        y1, state, _ = ssm(x, use_cache=True)
     # Incremental step
     x_step = torch.randn(1, 1, 64)
     with torch.no_grad():
-        y2, new_state = ssm(x_step, past_state=state, use_cache=True)
+        y2, new_state, _ = ssm(x_step, past_state=state, use_cache=True)
     assert y1.shape == (1, 4, 64)
     assert y2.shape == (1, 1, 64)
     assert state.shape == new_state.shape == (1, 64, 16)

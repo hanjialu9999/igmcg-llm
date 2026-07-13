@@ -218,9 +218,10 @@ class SlidingWindowCausalSelfAttention(nn.Module):
 class MambaSSM(nn.Module):
     """Mamba-like 选择性状态空间模型（线性复杂度长序列建模）。
       门控 + 输入依赖的 Δ/B/C，零阶保持离散化后沿时间递推。
-      选择性扫描已向量化（cumprod + cumsum 解析展开），消除逐时间步 Python for 循环：
+      选择性扫描已向量化（并行前缀扫描，log2(L) 步），消除逐时间步 Python for 循环：
       既显著加快 CPU 训练，也避免低功耗 iGPU 上 DML 因单次步内 kernel 过多触发 TDR 设备重置。
       支持增量推理：可传入 past_state (h_{t-1}) 并返回 present_state (h_t)。
+      支持增量卷积状态：维护最后 conv_kernel-1 个输入用于因果卷积。
     """
     def __init__(self, dim: int, d_state: int = 16, d_inner_factor: int = 1, dt_rank: Optional[int] = None, conv_kernel: int = 3):
         super().__init__()
@@ -262,29 +263,42 @@ class MambaSSM(nn.Module):
         nn.init.uniform_(self.A_log, -1, 1)
         nn.init.ones_(self.D)
 
-    def forward(self, x: torch.Tensor, past_state: Optional[torch.Tensor] = None, use_cache: bool = False) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    def forward(self, x: torch.Tensor, past_state: Optional[torch.Tensor] = None, past_conv_state: Optional[torch.Tensor] = None, use_cache: bool = False) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
         Args:
             x: (B, L, D) input tensor
             past_state: (B, d_inner, d_state) previous hidden state h_{t-1}
-            use_cache: whether to return present_state for incremental decoding
+            past_conv_state: (B, d_inner, conv_kernel-1) previous conv inputs
+            use_cache: whether to return present_state and present_conv_state for incremental decoding
         Returns:
             y: (B, L, D) output tensor
             present_state: (B, d_inner, d_state) if use_cache=True
+            present_conv_state: (B, d_inner, conv_kernel-1) if use_cache=True
         """
         B, L, _ = x.shape
         x = self.norm(x)
         xz = self.in_proj(x)                          # (B, L, 2*d_inner)
         x_in, z = xz.chunk(2, dim=-1)
         
-        # For incremental decoding, we need to handle conv state
-        if past_state is not None and past_state.shape[0] == B:
-            # We have a previous state, use incremental conv
-            # The conv layer needs the last conv_kernel-1 tokens from previous step
-            # For simplicity, we'll handle conv in the forward pass
-            pass
+        # Handle incremental conv state
+        if past_conv_state is not None and past_conv_state.shape[0] == B and L == 1:
+            # Incremental decoding: prepend past conv state, keep last conv_kernel-1
+            # past_conv_state: (B, d_inner, conv_kernel-1)
+            # x_in: (B, 1, d_inner) -> transpose to (B, d_inner, 1)
+            conv_input = torch.cat([past_conv_state, x_in.transpose(1, 2)], dim=-1)  # (B, d_inner, conv_kernel)
+            x_conv = self.conv(conv_input)  # (B, d_inner, 1)
+            x_conv = x_conv.transpose(1, 2)  # (B, 1, d_inner)
+            # New conv state: last conv_kernel-1 tokens
+            present_conv_state = conv_input[:, :, -(self.conv_kernel - 1):]
+        else:
+            # Full sequence or prefill
+            x_conv = self.conv(x_in.transpose(1, 2)).transpose(1, 2)  # (B, L, d_inner)
+            if use_cache and L > 0:
+                # Save last conv_kernel-1 tokens for next step
+                present_conv_state = x_in.transpose(1, 2)[:, :, -(self.conv_kernel - 1):]
+            else:
+                present_conv_state = None
         
-        x_conv = self.conv(x_in.transpose(1, 2)).transpose(1, 2)
         x_conv = self.act(x_conv)                    # (B, L, d_inner)
         ssm = self.x_proj(x_conv)                    # (B, L, dt_rank + 2*d_state)
         dt_in, Bp, Cp = ssm.split([self.dt_rank, self.d_state, self.d_state], dim=-1)
@@ -310,10 +324,10 @@ class MambaSSM(nn.Module):
         if use_cache:
             # Return last hidden state as present_state
             present_state = h[:, -1, :, :]  # (B, d_inner, d_state)
-            return y, present_state
-        return y, None
+            return y, present_state, present_conv_state
+        return y, None, present_conv_state
 
-    def _forward_step(self, x: torch.Tensor, z: torch.Tensor, x_conv: torch.Tensor, dA: torch.Tensor, xb: torch.Tensor, C: torch.Tensor, past_state: torch.Tensor, use_cache: bool) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    def _forward_step(self, x: torch.Tensor, z: torch.Tensor, x_conv: torch.Tensor, dA: torch.Tensor, xb: torch.Tensor, C: torch.Tensor, past_state: torch.Tensor, use_cache: bool) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
         """Process a single token incrementally."""
         B = x.shape[0]
         # past_state: (B, d_inner, d_state)
@@ -324,8 +338,8 @@ class MambaSSM(nn.Module):
         y_t = self.out_proj(y_t).unsqueeze(1)  # (B, 1, dim)
         
         if use_cache:
-            return y_t, h_t
-        return y_t, None
+            return y_t, h_t, None  # conv state handled by caller
+        return y_t, None, None
 
     def _selective_scan(self, a: torch.Tensor, b: torch.Tensor, past_state: Optional[torch.Tensor] = None) -> torch.Tensor:
         """并行前缀扫描计算 h_t = a_t * h_{t-1} + b_t（h_0=0 或 past_state）。
@@ -338,10 +352,12 @@ class MambaSSM(nn.Module):
         如果提供 past_state (B, d_inner, d_state)，将其作为 h_{-1} 用于计算 h_0 = a_0 * past_state + b_0。
         """
         L = a.shape[1]
-        A = a
-        B = b
+        # Use original a for prefix product calculation
+        orig_A = a.clone()
+        A = a.clone()
+        B = b.clone()
         
-        # Standard parallel prefix scan (assuming h_0 = 0)
+        # Standard parallel prefix scan (Hillis-Steele) assuming h_0 = 0
         offset = 1
         while offset < L:
             # 左移 offset：位置 i 取 i-offset（越界填单位元 A=1, B=0）
@@ -354,18 +370,22 @@ class MambaSSM(nn.Module):
         
         # If we have past_state, we need to incorporate it
         # The scan result B assumes h_0 = b_0 (since h_{-1}=0)
-        # With past_state: h_0 = A_0 * past_state + b_0
-        # h_t = A_t * ... * A_0 * past_state + (scan result)
+        # With past_state: h_0 = a_0 * past_state + b_0
+        # h_t = a_t * ... * a_0 * past_state + (scan result)
         if past_state is not None:
-            # Compute cumulative product of A: cumprod_A[t] = A_t * ... * A_0
-            cumprod_A = A  # After scan, A contains the cumulative products
-            # cumprod_A[:, t] = A_t * A_{t-1} * ... * A_0
-            # We need to add cumprod_A[:, t] * past_state to each h_t
-            # past_state: (B, d_inner, d_state)
-            # cumprod_A: (B, L, d_inner, d_state)
-            # Expand past_state to (B, L, d_inner, d_state)
+            # Compute prefix products of original a: prefix_A[t] = a_t * a_{t-1} * ... * a_0
+            # Need to use original a, not the modified A from scan
+            orig_A = a.clone()
+            prefix_A = orig_A.clone()
+            offset = 1
+            while offset < L:
+                # 左移 offset：位置 i 取 i-offset（越界填单位元 A=1）
+                prev = torch.cat([torch.ones_like(prefix_A[:, :offset]), prefix_A[:, :-offset]], dim=1)
+                prefix_A = prefix_A * prev
+                offset <<= 1
+            # prefix_A[:, t] = a_t * a_{t-1} * ... * a_0
             past_expanded = past_state.unsqueeze(1).expand(-1, L, -1, -1)
-            B = B + cumprod_A * past_expanded
+            B = B + prefix_A * past_expanded
         
         return B
 
@@ -402,10 +422,11 @@ class TransformerBlock(nn.Module):
         self.ln2 = RMSNorm(dim)
         self.ffn = SwiGLU(dim, hidden_dim)
 
-    def forward(self, x: torch.Tensor, past_kv: Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor]]] = None, use_cache: bool = False, start_pos: int = 0, ssm_past_state: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor]]]]:
-        present: Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor]]] = None
+    def forward(self, x: torch.Tensor, past_kv: Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]] = None, use_cache: bool = False, start_pos: int = 0, ssm_past_state: Optional[torch.Tensor] = None, ssm_past_conv_state: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]]]:
+        present: Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]] = None
         ssm_present_state: Optional[torch.Tensor] = None
-        # Extract attention KV from past_kv tuple (attn_kv, ssm_state)
+        ssm_present_conv_state: Optional[torch.Tensor] = None
+        # Extract attention KV from past_kv tuple (attn_kv, ssm_state, ssm_conv_state)
         attn_past_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
         if past_kv is not None:
             attn_past_kv = past_kv[0]
@@ -413,23 +434,23 @@ class TransformerBlock(nn.Module):
             h, present = self.attn(self.ln1(x), attn_past_kv, use_cache, start_pos)
             x = x + self.drop(h)
         elif self.block_type == 'ssm':
-            h, ssm_present_state = self.ssm(self.ln1(x), past_state=ssm_past_state, use_cache=use_cache)
+            h, ssm_present_state, ssm_present_conv_state = self.ssm(self.ln1(x), past_state=ssm_past_state, past_conv_state=ssm_past_conv_state, use_cache=use_cache)
             x = x + self.drop(h)
         elif self.block_type == 'hybrid':
             h, attn_present = self.attn(self.ln1(x), attn_past_kv, use_cache, start_pos)
-            ssm_h, ssm_present_state = self.ssm(self.ln1(x), past_state=ssm_past_state, use_cache=use_cache)
+            ssm_h, ssm_present_state, ssm_present_conv_state = self.ssm(self.ln1(x), past_state=ssm_past_state, past_conv_state=ssm_past_conv_state, use_cache=use_cache)
             x = x + self.drop(h) + self.drop(ssm_h)
             if use_cache:
-                present = (attn_present, ssm_present_state)
+                present = (attn_present, ssm_present_state, ssm_present_conv_state)
         x = x + self.drop(self.ffn(self.ln2(x)))
         # Combine attn KV cache and SSM state
         if use_cache:
             if self.block_type == 'attn':
-                present = (present, None)  # (attn_kv, ssm_state)
+                present = (present, None, None)  # (attn_kv, ssm_state, ssm_conv_state)
             elif self.block_type == 'ssm':
-                present = (None, ssm_present_state)
+                present = (None, ssm_present_state, ssm_present_conv_state)
             elif self.block_type == 'hybrid':
-                present = (attn_present, ssm_present_state)
+                present = (attn_present, ssm_present_state, ssm_present_conv_state)
         return x, present
 
 
@@ -515,22 +536,23 @@ class TransformerModel(nn.Module):
             self.output_head.weight = self.embedding.weight
         return module
 
-    def forward(self, src: torch.Tensor, src_mask: Optional[torch.Tensor] = None, past_key_values: Optional[List[Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor]]]]] = None, use_cache: bool = False) -> Tuple[torch.Tensor, Optional[List[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor]]]]]:
+    def forward(self, src: torch.Tensor, src_mask: Optional[torch.Tensor] = None, past_key_values: Optional[List[Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]]]] = None, use_cache: bool = False) -> Tuple[torch.Tensor, Optional[List[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]]]]:
         # src: (batch, seq_len)；RoPE 在注意力内部按位置旋转，无需外部 PE
         x = self.embedding(src) * math.sqrt(self.embedding_dim)
         x = self.drop(x)
         if past_key_values is None:
             past_key_values = [None] * len(self.blocks)
-        presents: List[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor]]] = []
+        presents: List[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]] = []
         start_pos = 0
         if use_cache:
             for pk in past_key_values:
                 if pk is not None:
-                    # pk is (attn_kv, ssm_state)
+                    # pk is (attn_kv, ssm_state, ssm_conv_state)
                     if pk[0] is not None:
                         start_pos = pk[0][0].size(2)
                         break
         ssm_states: List[Optional[torch.Tensor]] = []
+        ssm_conv_states: List[Optional[torch.Tensor]] = []
         if use_cache:
             # Extract SSM past states
             for pk in past_key_values:
@@ -538,16 +560,22 @@ class TransformerModel(nn.Module):
                     ssm_states.append(pk[1])
                 else:
                     ssm_states.append(None)
+                if pk is not None and pk[2] is not None:
+                    ssm_conv_states.append(pk[2])
+                else:
+                    ssm_conv_states.append(None)
         else:
             ssm_states = [None] * len(self.blocks)
+            ssm_conv_states = [None] * len(self.blocks)
 
         for i, block in enumerate(self.blocks):
             ssm_past_state = ssm_states[i] if use_cache else None
+            ssm_past_conv_state = ssm_conv_states[i] if use_cache else None
             if self.training and self.gradient_checkpointing:
-                x, present = checkpoint(block, x, past_key_values[i], use_cache, start_pos, ssm_past_state,
+                x, present = checkpoint(block, x, past_key_values[i], use_cache, start_pos, ssm_past_state, ssm_past_conv_state,
                                         use_reentrant=False)
             else:
-                x, present = block(x, past_key_values[i], use_cache, start_pos, ssm_past_state)
+                x, present = block(x, past_key_values[i], use_cache, start_pos, ssm_past_state, ssm_past_conv_state)
             presents.append(present)
         x = self.ln_f(x)
         if use_cache:
