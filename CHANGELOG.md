@@ -9,6 +9,11 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
+## `99055cb`（已推送，基于 `aa9d757`）
+
+- test: 鲁棒性探针 `experiments/_robust_enh_sel.py`——对 ENH/SEL 在 `temperature∈{0.5,0.8,1.1,1.4}` 与 `top_k∈{10,30,100}`（固定 `repetition_penalty=1.4`）下生成，计算 **self-loss**（模型对自身生成续写的 cross-entropy）作稳健性代理，并逐提示词记录原文。结果：**ENH 在全部设置下 self-loss 均略低于 SEL（更自洽/稳健）**，差距很小（约 0.1–0.3 nat）；该 8000 行/1 epoch 规模下两者都偏弱。配合肉眼观察：ENH≈SEL > (已删)ALT，与 Val 排序（ENH 7.10 < SEL 7.22 < ALT 7.35）一致。结论：常开 ENH 鲁棒性略优，SEL 接近且训练更快。原始数据见 `experiments/robust_enh_sel.txt`。
+- chore: 清理无用的 BASE/ALT 产物——删除 BASE/ALT 模型（`checkpoints_cmp_base/`、`checkpoints_cmp_alt/`）、`configs/config_cmp_base.yaml`、`experiments/_cmp_enh_base.py`+`experiments/cmp_enh_base.txt`（BASE 专属，已被 `cmp_4way.txt` 覆盖）、`experiments/_cmp_4way.py`（引用已删模型、失效）；删除 `logs_cmp_*` 训练日志。现仅保留 **ENH 与 SEL** 模型及其配置（`config_cmp_enh.yaml`/`config_cmp_sel.yaml`）。`experiments/cmp_4way.txt` 作为历史四方对比快照保留。
+
 ## `290b790`（已推送，基于 `3f8c2c8`）
 
 - feat: `set_enhancements_active` 由仅全开/全关（`bool`）升级为**按开关粒度 dict**（如 `{"qk_norm": False, "residual_gate": True}`）；`TransformerModel`/`TransformerBlock`/`SlidingWindowCausalSelfAttention` 各自只更新自身键。`scripts/train.py` 新增 `training.enhancement_schedule`（分段掩码列表，按 `batch_idx % len` 循环切换；缺省键补 `True`），与旧式整体随机 `enhancement_off_prob` 互斥（schedule 优先）。多段循环仅切几个布尔开关，**无额外开销**。
