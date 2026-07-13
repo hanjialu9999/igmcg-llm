@@ -14,6 +14,7 @@ sys.path.insert(0, str(project_root))
 from models.transformer import TransformerModel
 from models.data_utils import Vocabulary
 from models.device import get_device
+from models.utils import cli_guard
 
 def load_model(model_path, vocab_path, device='cpu', quantize=False, compile_model=False):
     """Load trained model and vocabulary.
@@ -25,7 +26,6 @@ def load_model(model_path, vocab_path, device='cpu', quantize=False, compile_mod
     """
     from torch import nn
     import yaml
-    from pathlib import Path
 
     # Load vocabulary
     with open(vocab_path, 'r', encoding='utf-8') as f:
@@ -488,6 +488,7 @@ def generate_igmcg(model, vocab, prompt, intuition=None, num_candidates=4,
     return candidates[0]['text'], candidates
 
 
+@cli_guard
 def main():
     # 避免中文在 GBK 控制台打印时崩溃；同时把结果写入 UTF-8 文件便于查看
     try:

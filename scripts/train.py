@@ -28,8 +28,8 @@ from models.transformer import TransformerModel
 from models.data_utils import load_data, create_dataloader, split_dataset
 from models.config_loader import build_model
 from models.device import get_device, apply_cpu_threads
-from models.utils import save_checkpoint, cleanup_old_checkpoints, backup_existing_checkpoints, save_final_model
-from models.utils import save_checkpoint, backup_existing_checkpoints, save_final_model
+from models.utils import (save_checkpoint, cleanup_old_checkpoints,
+                             backup_existing_checkpoints, save_final_model, cli_guard)
 
 class AverageMeter:
     def __init__(self):
@@ -212,6 +212,7 @@ def validate(model, dataloader, criterion, device):
 
 
 
+@cli_guard
 def main(config_path='configs/pretrain.yaml'):
     # Load configuration
     config = load_config(config_path)
@@ -279,7 +280,6 @@ def main(config_path='configs/pretrain.yaml'):
         compile_ok = True
         if device.type == 'cpu':
             # Inductor CPU 后端需要 C++ 编译器（g++/clang++/MSVC），缺失则直接跳过避免空耗
-            import shutil
             if not any(shutil.which(c) for c in
                        ('g++.exe', 'g++', 'clang++.exe', 'clang++', 'cl.exe', 'cl')):
                 compile_ok = False
@@ -439,7 +439,6 @@ def main(config_path='configs/pretrain.yaml'):
         'vocab_size': len(vocab),
     }, final_model_path)
     # Save config separately for weights_only=True compatibility
-    import yaml
     config_path = os.path.join(checkpoint_dir, 'final_model_config.yaml')
     with open(config_path, 'w', encoding='utf-8') as f:
         yaml.dump(config['model'], f, allow_unicode=True)

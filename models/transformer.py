@@ -602,7 +602,7 @@ class TransformerModel(nn.Module):
         return self.output_head(x)
 
     def generate(self, token_ids: List[int], max_length: int = 50, temperature: float = 1.0, top_k: int = 50,
-                  device: str = 'cpu', penalty_alpha: float = 0.6, repetition_penalty: float = 1.2,
+                  device: str = 'cpu', repetition_penalty: float = 1.2,
                   ngram_fn: Optional[Callable[[List[int], str], torch.Tensor]] = None, ngram_weight: float = 0.0,
                   eos_id: int = 3, pad_id: int = 0, sep_id: int = 4,
                   min_length: int = 3, eos_penalty: float = -5.0) -> List[int]:
@@ -614,7 +614,6 @@ class TransformerModel(nn.Module):
             temperature: 采样温度
             top_k: top-k 采样，<=0 禁用，>=vocab_size 视为全词表
             device: 设备
-            penalty_alpha: 惩罚系数（保留兼容，暂未使用）
             repetition_penalty: 重复惩罚系数
             ngram_fn: n-gram 先验函数
             ngram_weight: n-gram 权重

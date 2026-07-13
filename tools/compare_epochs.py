@@ -16,7 +16,6 @@ from models.data_utils import Vocabulary
 from models.device import get_device
 import yaml
 import os
-from pathlib import Path
 
 device = get_device()
 

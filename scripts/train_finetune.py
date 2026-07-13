@@ -17,7 +17,7 @@ from models.transformer import TransformerModel
 from models.config_loader import load_config, build_model
 from models.device import get_device, apply_cpu_threads
 from models.data_utils import Vocabulary
-from models.utils import save_checkpoint
+from models.utils import save_checkpoint, cli_guard
 
 
 def load_vocab_from_json(vocab_path):
@@ -179,4 +179,11 @@ def train():
     print("\n🎉 微调任务圆满成功！")
 
 if __name__ == "__main__":
-    train()
+    try:
+        train()
+    except (FileNotFoundError, KeyError, ValueError, RuntimeError) as e:
+        print(f"[ERROR] {type(e).__name__}: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"[FATAL] {type(e).__name__}: {e}", file=sys.stderr)
+        sys.exit(1)

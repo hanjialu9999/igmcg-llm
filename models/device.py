@@ -5,6 +5,17 @@ from typing import Optional, Union
 import torch
 
 
+def _try_dml_device() -> Optional[torch.device]:
+    """尝试返回 DirectML 设备（AMD/Intel 核显/独显）；未安装或不可用时返回 None。"""
+    try:
+        import torch_directml
+    except Exception:
+        return None
+    if getattr(torch_directml, "is_available", lambda: False)():
+        return torch_directml.device()
+    return None
+
+
 def get_device(preferred: Optional[Union[str, torch.device]] = None) -> torch.device:
     """自动选择计算设备，优先级：显式指定 > CUDA(NVIDIA) > DirectML(AMD/Intel) > CPU。
 
@@ -21,13 +32,7 @@ def get_device(preferred: Optional[Union[str, torch.device]] = None) -> torch.de
 
     # 显式指定 DirectML（AMD/Intel 核显/独显），需已安装 torch-directml
     if pref == 'dml':
-        try:
-            import torch_directml
-            if torch_directml.is_available():
-                return torch_directml.device()
-        except Exception:
-            pass
-        return torch.device('cpu')
+        return _try_dml_device() or torch.device('cpu')
 
     if pref not in ('auto', 'none', ''):
         return torch.device(preferred)
@@ -38,12 +43,9 @@ def get_device(preferred: Optional[Union[str, torch.device]] = None) -> torch.de
 
     # 2) AMD / Intel 等 Windows 核显/独显：通过 DirectML 后端
     #    （使用前需在对应环境安装 torch-directml，例如 Python 3.10/3.11 + torch 2.0/2.1）
-    try:
-        import torch_directml
-        if torch_directml.is_available():
-            return torch_directml.device()
-    except Exception:
-        pass
+    dml = _try_dml_device()
+    if dml is not None:
+        return dml
 
     # 3) 兜底 CPU
     return torch.device('cpu')
