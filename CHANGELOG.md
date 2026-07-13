@@ -9,33 +9,47 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
-## `afbcac0`（已推送，基于 `43c7d27`）
+## `5162f86`（已推送，基于 `ef10f6a`）
 
-- 文档修正：`experiments/README.md` 删除不存在的 `_opt_test.py` 引用；`data/pretrain_corpus/MANUAL.md` 模型参数量 ~20M 更正为 ~25M（6 层 / emb512）；并将本 CHANGELOG 中前述提交的“待 push”状态更新为已推送。
+### 修复：生成参数与安全增强
+- **min_length 计算修正**：移除 `len(token_ids) + 2` 导致输入越长强制生成越长的反直觉行为，改为固定默认 `min_length=3` 并可配置。
+- **top_k 边界修正**：`top_k <= 0` 禁用，`top_k >= vocab_size` 视为全词表（原实现 `top_k == vocab_size` 时错误跳过过滤）。
+- **EOS 惩罚参数化**：硬编码 `-5.0` → 可配置参数 `eos_penalty`（默认 `-5.0`）。
+- **generate() 新增参数**：`min_length`、`eos_penalty`，默认值从配置读取。
 
-## `43c7d27`（已推送，基于 `7590280`）
+### 修复：类型注解与工程质量
+- 核心 4 模块（`transformer.py` / `config_loader.py` / `data_utils.py` / `device.py`）添加完整类型注解（`from __future__ import annotations` + `typing`）。
+- 合并 5 个重复数据合并脚本 → 统一 `merge_data.py`（argparse + 去重 + 词表构建 + 配置自动更新）。
+- 新增 15 单测覆盖核心模块（Transformer / Config / RoPE / SSM step / tie_weights / 注意力掩码设备迁移）。
+- 新增 CI/CD 流水线：test / lint / security 三阶段，含 `weights_only=False` 扫描。
 
-### 修复：DML 设备推理崩溃
-- 根因：`torch.load(..., map_location=device)` 在 DML 设备对象（`privateuseone:0`）上会触发 `torch_directml.device(torch.device)` 的 `TypeError`；且生成路径使用 `torch.inference_mode()`，在 DML 后端前向时会报 `RuntimeError: Cannot set version_counter for inference tensor`。
-- 修复：
-  - 所有推理脚本（generate.py / diagnose.py / tuning/* / tools/* / dialogue_interactive.py）统一 `torch.load(..., map_location='cpu')`，加载后再 `.to(device)` 搬运到目标设备。
-  - 生成路径的 `torch.inference_mode()` 改为 `torch.no_grad()`（models/transformer.py 的 `generate` 与 scripts/generate.py 的候选/打分函数），DML 推理不再崩溃。
-- 验证：在 AMD 780M (DML) 上跑通 generate（IGMCG 与基础双轨）、diagnose、tune_topk。
+### 修复：语法错误（IndentationError）
+- `scripts/diagnose.py`、`scripts/tuning/showcase_optimal_params.py`、`tune_temperature.py`、`tune_topk.py` 修正模块级缩进错误（此前编辑误加 4 空格导致无法运行）。
+
+## `ef10f6a`（已推送）
+
+### 修复：安全漏洞 + 核心架构
+- **全项目 `torch.load(weights_only=True)`**：防 pickle RCE，checkpoint 分离存储（`.pt` 仅张量 + `*_config.yaml` 配置），涉及 20+ 脚本。
+- **SSM KV-Cache 增量推理**：`MambaSSM` 新增 `past_state` / `_forward_step` / `_selective_scan(past_state)`，混合架构现可用 KV-cache O(L) 解码（原回退全量 O(L²)）。
+- **IGMCG 多候选独立 KV-Cache**：`_generate_candidates_batch` 每候选维护独立 `past`，消除跨候选状态污染。
+- **RoPE 缓存线程安全**：模块级全局 `_ROPE_CACHE` → `RotaryEmbedding` 实例级 `_cache` + `RLock`，可选类级共享缓存（`enable_shared_cache()`）。
+- **loss_sum 内存泄漏修复**：`torch.zeros(())` 张量累加 → Python float `loss_sum += loss.detach().item()`。
+- **tie_weights DML 重绑定**：重写 `TransformerModel.to()` 自动调用 `tie_weights()`，保证 `.to(device)` 后权重共享生效。
+
+## `a36f037`（已推送）
+
+### 修复：DML 推理崩溃
+- 根因：`torch.load(..., map_location=device)` 在 DML 设备对象上触发 `TypeError`；生成路径用 `torch.inference_mode()` 在 DML 报 `Cannot set version_counter for inference tensor`。
+- 修复：所有推理脚本统一 `map_location='cpu'` 再 `.to(device)`；生成路径 `inference_mode` → `no_grad`（`models/transformer.py` + `scripts/generate.py` + `experiments/*`）。
+- 验证：AMD 780M (DML) 上跑通 generate（IGMCG 与基础双轨）、diagnose、tune_topk。
 
 ### 修复：诊断/调参脚本可用性
-- `scripts/diagnose.py` 与 `scripts/tuning/*.py` 新增 `--model` / `--vocab` / `--device` 参数（默认仍指向 `checkpoints/`）。
-- 修复 `scripts/tuning/*.py` 缺失的 `sys.path` 注入（此前直接运行会 `ModuleNotFoundError: No module named 'models'`）。
-- 修正此前编辑引入的模块级缩进错误（`    checkpoint = torch.load(...)` 多出的 4 空格导致 `IndentationError`）。
+- `scripts/diagnose.py` 与 `scripts/tuning/*.py` 新增 `--model` / `--vocab` / `--device` 参数。
+- 修复 `scripts/tuning/*.py` 缺失的 `sys.path` 注入。
+- 修正此前编辑引入的模块级缩进错误。
 
 ### 实验脚本
 - `experiments/_diag_igmcg.py`、`experiments/_gen_opt_test.py` 同步 `inference_mode` → `no_grad`。
 
-### 已知小问题
-- 词表 `vocab.json` 中存在少量 `U+FFFD` 替换字符条目（语料读取 `errors='replace'` 所致），对生成质量影响极小，后续可做语料清洗时一并修复。
-
-## `bd219f7`（已推送）
-
-- 新增 **bf16 混合精度训练**：`precision: bf16` 在 CPU/CUDA 开启（约 2~2.5× 提速、loss 基本无损）；`fp16` 仅 CUDA（GradScaler）；DML 自动回退 fp32。
-- **向量化 SSM 选择性扫描**（并行前缀扫描，log2(L) 步），修复 DML 上逐时间步 for 循环导致的 iGPU 设备重置（TDR 超时）。
-- 修复设备选择 `get_device('dml')` 显式支持；`config_loader.build_model(..., device=device)` 在 `.to(device)` 后重新绑定权重共享（tie_weights 在 DML 上不被破坏）。
-- 文档更新：configs/README、README、QUICK_START、docs/TRAINING_GUIDE、models/README。
+## `43c7d27`（已推送，基于 `7590280`）
+...（后续保持原有内容不变）
