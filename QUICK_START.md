@@ -4,19 +4,24 @@
 
 ## 1. 安装依赖
 
+推荐使用项目自带环境 `.amd_venv`（已装 torch 2.4.1 + torch-directml，开箱即用）；或自建虚拟环境：
+
 ```bash
-python -m venv .my_venv
-.my_venv\Scripts\activate
+python -m venv .amd_venv
+.amd_venv\Scripts\activate
 pip install -r requirements.txt
+# AMD / Intel 核显或独显（Windows）需额外装 torch-directml；
+# 注意：PyPI 上的 torch-directml 需 torch<2.2，本项目用兼容构建（如 0.2.5.dev240914，配合 torch 2.4.1）
+pip install torch-directml
 ```
 
 ## 2. 准备数据
 
-主训练语料默认是 `data/pretrain_corpus/merged.txt`（本地语料，**不纳入仓库**；小样本调试可用 `merged_sample.txt`）。
+主训练语料默认是 `data/pretrain_corpus/merged.txt`（本地语料，**不纳入仓库**；小样本调试可用 `merged_sample.txt` 或 `merged_sample_8k.txt`）。
 原始 QA 数据在 `data/datasets/`（同样仅本地保留，未上传 git）。如需从 `data/datasets/` 重新构建语料：
 
 ```bash
-python scripts/prepare_training.py     # 合并 datasets/ 下所有 txt
+python scripts/merge_data.py           # 合并 datasets/ 下语料并构建词表（统一入口）
 python scripts/process_data.py         # 转换为 jsonl（可选）
 ```
 
@@ -37,10 +42,10 @@ python scripts/train.py --config configs/pretrain.yaml
 若已有预训练 / 微调模型，可在此基础上继续微调（数据来自 `data/datasets/`）：
 
 ```bash
-python train_finetune.py
+python scripts/train_finetune.py
 ```
 
-产出 `best_finetuned_model.pt`，供 `scripts/chat.py` / `dialogue_interactive.py` 使用。
+产出 `best_finetuned_model.pt`，供 `scripts/chat.py` / `tools/dialogue_interactive.py` 使用。
 
 ## 5. 对话 / 生成
 
@@ -49,13 +54,12 @@ python train_finetune.py
 python scripts/chat.py
 
 # 带历史管理的交互式对话
-python dialogue_interactive.py
+python tools/dialogue_interactive.py
 ```
 
 CPU 推理提速/降功耗：`--dtype bf16`（默认 auto 会启用，支持的 CPU/CUDA 约 1.5~1.8× 提速且质量基本无损）；`--cpu-threads N` 限制线程数；纯 CPU 还可加 `--quantize` 启用 int8 动态量化，进一步降低内存带宽与功耗（约 4× 更小模型，质量无损）。`generate.py` 同样支持这些参数。
 
-生成行为由 `chat_config.json` 控制：`temperature`、`top_k`、`repetition_penalty`、
-`min_new_tokens`、`max_new_tokens`、`context_rounds`。
+生成行为由命令行参数控制（见 `python scripts/chat.py --help`）：`--temperature` / `--top-k` / `--repetition-penalty` / `--max-length` 等。
 
 ## 6. 调参（可选）
 
