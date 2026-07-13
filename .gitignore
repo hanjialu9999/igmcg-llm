@@ -51,6 +51,8 @@ chat_config.json
 # 对比结果文本 + 训练日志入库（可对比）；权重较大（~107MB）且不入库，可由 config + data 复现
 checkpoints_cmp_base/
 checkpoints_cmp_enh/
+checkpoints_cmp_alt/
+checkpoints_cmp_sel/
 
 # OS / editor
 .DS_Store
