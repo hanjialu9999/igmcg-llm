@@ -1,5 +1,7 @@
-import sys
-sys.path.insert(0, r'F:\Projects\igmcg-llm')
+import os, sys
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 import torch
 from models.config_loader import load_config, build_model, load_vocab
 

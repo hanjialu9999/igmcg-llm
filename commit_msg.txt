@@ -1,5 +1,0 @@
-fix: final cleanup + chat test script
-
-- Fix chat_test.py for proper encoding
-- All 15 tests pass
-- Smoke tests pass (training + generation + IGMCG)
