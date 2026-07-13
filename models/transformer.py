@@ -135,6 +135,8 @@ class SlidingWindowCausalSelfAttention(nn.Module):
         self.attn_temp_enabled = attn_temp
         if attn_temp:
             self.log_temp = nn.Parameter(torch.zeros(1))
+        # 运行时增强开关：False 时前向跳过 QK-Norm/可学习温度（用于“交替增强”训练，见 set_enhancements_active）
+        self._enh_active = True
         self._cached_T = -1
         self._mask: Optional[torch.Tensor] = None
         self._rbias: Optional[torch.Tensor] = None
@@ -160,22 +162,35 @@ class SlidingWindowCausalSelfAttention(nn.Module):
         self._cached_T = T
 
     def forward(self, x: torch.Tensor, past_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None, use_cache: bool = False, start_pos: int = 0) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
+        q, k, v = self.project_and_norm(x, start_pos)
+        return self.attend(q, k, v, past_kv, use_cache, start_pos)
+
+    def project_and_norm(self, x: torch.Tensor, start_pos: int = 0):
+        """廉价部分（在梯度检查点重算区域之外执行，避免被反向重算放大）：
+        QKV 投影 + ①QK-Norm + ⑤可学习温度 + RoPE。返回已归一化/旋转后的 (q, k, v)。"""
         B, T, C = x.shape
         qkv = self.qkv(x).reshape(B, T, 3, self.num_heads, self.head_dim)
         qkv = qkv.permute(2, 0, 3, 1, 4)          # (3, B, H, T, D)
         q, k, v = qkv[0], qkv[1], qkv[2]
-        # ① QK-Norm：投影后、RoPE 前对 Q/K 各自归一化
-        if self.qk_norm_enabled:
+        # ① QK-Norm：投影后、RoPE 前对 Q/K 各自归一化（运行时开关 enh_active 可跳过）
+        if self.qk_norm_enabled and self._enh_active:
             q = self.qk_norm(q)
             k = self.qk_norm(k)
         # ⑤ 可学习温度：温度恒正（T=exp(log_temp)），直接缩放 Q/K 幅值（等价 softmax(score/T)）。
         #    融合为单次标量乘法 q*=exp(-0.5*log_temp)，免去额外 sqrt 算子。
-        if self.attn_temp_enabled:
+        if self.attn_temp_enabled and self._enh_active:
             scale = torch.exp(-0.5 * self.log_temp)
             q = q * scale
             k = k * scale
         q, k = self.rope(q, k, start_pos=start_pos, max_len=self.max_seq_length)
+        return q, k, v
 
+    def attend(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
+               past_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None, use_cache: bool = False,
+               start_pos: int = 0) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
+        """重算力部分（在梯度检查点重算区域内执行）：scores/softmax/proj。
+        大幅激活（scores 张量）不落盘、反向时重算，保留大模型显存收益。"""
+        B, _, Tq, _ = q.shape
         if use_cache:
             # 增量解码：拼接待拼接的 K/V 缓存，仅对当前 token 做注意力
             if past_kv is not None:
@@ -184,7 +199,7 @@ class SlidingWindowCausalSelfAttention(nn.Module):
                 v = torch.cat([pv, v], dim=2)
             present = (k, v)
             Tkv = k.size(2)
-            qpos = torch.arange(start_pos, start_pos + T, device=q.device).unsqueeze(1)
+            qpos = torch.arange(start_pos, start_pos + Tq, device=q.device).unsqueeze(1)
             kpos = torch.arange(0, Tkv, device=q.device).unsqueeze(0)
             causal_mask = kpos > qpos
             if self.window > 0:
@@ -195,16 +210,17 @@ class SlidingWindowCausalSelfAttention(nn.Module):
                 attn_mask = attn_mask + self.rel_bias_table[:, idx].unsqueeze(0)
             # 增量解码单 token 查询时，SDPA 在 CPU 上的 per-call 开销远大于一次显式 matmul，
             # 故 CPU 也走手动注意力；CUDA 仍用 fused SDPA（显存带宽充足、kernel 更优）。
-            if x.device.type == 'cuda':
+            if q.device.type == 'cuda':
                 out = scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
             else:
                 out = self._manual_attention(q, k, v, attn_mask)
-            out = out.transpose(1, 2).reshape(B, T, C)
+            out = out.transpose(1, 2).reshape(B, Tq, self.num_heads * self.head_dim)
             return self.proj(out), present
 
         # —— 非缓存（训练 / 含 SSM 模型全量重算）路径 ——
+        T = q.size(2)
         self._build_masks(T, q.device)
-        if x.device.type in ('cuda', 'cpu'):
+        if q.device.type in ('cuda', 'cpu'):
             if self.rel_bias or self.window > 0:
                 attn_mask = self._mask.float() * -1e9
                 if self.rel_bias:
@@ -217,7 +233,7 @@ class SlidingWindowCausalSelfAttention(nn.Module):
             if self.rel_bias and extra is not None:
                 extra = extra + self._rbias.unsqueeze(0)
             out = self._manual_attention(q, k, v, extra)
-        out = out.transpose(1, 2).reshape(B, T, C)
+        out = out.transpose(1, 2).reshape(B, T, self.num_heads * self.head_dim)
         return self.proj(out), None
 
     def _manual_attention(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, attn_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
@@ -430,7 +446,7 @@ class TransformerBlock(nn.Module):
     def __init__(self, dim: int, num_heads: int, hidden_dim: int, block_type: str = 'attn',
                  dropout: float = 0.0, max_seq_length: int = 64,
                  ssm_kwargs: Optional[Dict[str, Any]] = None, attn_kwargs: Optional[Dict[str, Any]] = None,
-                 residual_gate: bool = True, hybrid_gate: bool = True):
+                 residual_gate: bool = True, hybrid_gate: bool = True, gradient_checkpointing: bool = True):
         super().__init__()
         self.block_type = block_type
         self.drop = nn.Dropout(dropout)
@@ -439,6 +455,9 @@ class TransformerBlock(nn.Module):
         # ②/⑥ 残差门控 & ⭐A 混合路径门控开关（默认关，向后兼容）
         self.residual_gate_enabled = residual_gate
         self.hybrid_gate_enabled = hybrid_gate
+        # 运行时增强开关：False 时跳过残差门控（用于“交替增强”训练，见 set_enhancements_active）
+        self._enh_active = True
+        self.gradient_checkpointing = gradient_checkpointing
         # Both attn and ssm blocks need a pre-norm layer
         self.ln1 = RMSNorm(dim)
         if block_type in ('attn', 'hybrid'):
@@ -465,26 +484,45 @@ class TransformerBlock(nn.Module):
         attn_past_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
         if past_kv is not None:
             attn_past_kv = past_kv[0]
+        ckpt = self.training and self.gradient_checkpointing
+        gate1 = (self.sub1_gate if (self.residual_gate_enabled and self._enh_active) else None)
+        gate2 = (self.ffn_gate if (self.residual_gate_enabled and self._enh_active) else None)
+
         if self.block_type == 'attn':
-            h, present = self.attn(self.ln1(x), attn_past_kv, use_cache, start_pos)
-            x = x + self.drop(self.sub1_gate * h if self.residual_gate_enabled else h)
+            if ckpt:
+                q, k, v = self.attn.project_and_norm(self.ln1(x), start_pos)
+                h, present = checkpoint(self.attn.attend, q, k, v, attn_past_kv, use_cache, start_pos, use_reentrant=False)
+            else:
+                h, present = self.attn(self.ln1(x), attn_past_kv, use_cache, start_pos)
+            x = x + self.drop(gate1 * h if gate1 is not None else h)
         elif self.block_type == 'ssm':
-            h, ssm_present_state, ssm_present_conv_state = self.ssm(self.ln1(x), past_state=ssm_past_state, past_conv_state=ssm_past_conv_state, use_cache=use_cache)
-            x = x + self.drop(self.sub1_gate * h if self.residual_gate_enabled else h)
+            if ckpt:
+                h, ssm_present_state, ssm_present_conv_state = checkpoint(self.ssm, self.ln1(x), ssm_past_state, ssm_past_conv_state, use_cache, use_reentrant=False)
+            else:
+                h, ssm_present_state, ssm_present_conv_state = self.ssm(self.ln1(x), past_state=ssm_past_state, past_conv_state=ssm_past_conv_state, use_cache=use_cache)
+            x = x + self.drop(gate1 * h if gate1 is not None else h)
         elif self.block_type == 'hybrid':
-            h, attn_present = self.attn(self.ln1(x), attn_past_kv, use_cache, start_pos)
-            ssm_h, ssm_present_state, ssm_present_conv_state = self.ssm(self.ln1(x), past_state=ssm_past_state, past_conv_state=ssm_past_conv_state, use_cache=use_cache)
-            if self.hybrid_gate_enabled:
+            xn = self.ln1(x)
+            if ckpt:
+                q, k, v = self.attn.project_and_norm(xn, start_pos)
+                h, attn_present = checkpoint(self.attn.attend, q, k, v, attn_past_kv, use_cache, start_pos, use_reentrant=False)
+                ssm_h, ssm_present_state, ssm_present_conv_state = checkpoint(self.ssm, xn, ssm_past_state, ssm_past_conv_state, use_cache, use_reentrant=False)
+            else:
+                h, attn_present = self.attn(xn, attn_past_kv, use_cache, start_pos)
+                ssm_h, ssm_present_state, ssm_present_conv_state = self.ssm(xn, past_state=ssm_past_state, past_conv_state=ssm_past_conv_state, use_cache=use_cache)
+            if self.hybrid_gate_enabled and self._enh_active:
                 # ⭐A 混合块：attn 与 ssm 两路各自可学习门控，让模型自决每层偏重
                 x = x + self.drop(self.hybrid_attn_gate * h) + self.drop(self.hybrid_ssm_gate * ssm_h)
             else:
                 x = x + self.drop(h) + self.drop(ssm_h)
             if use_cache:
                 present = (attn_present, ssm_present_state, ssm_present_conv_state)
-        if self.residual_gate_enabled:
-            x = x + self.drop(self.ffn_gate * self.ffn(self.ln2(x)))
+        # FFN 子层：重算力部分（SwiGLU）放入检查点，轻量 ln2 与门控在区外
+        if ckpt:
+            f = checkpoint(self.ffn, self.ln2(x), use_reentrant=False)
         else:
-            x = x + self.drop(self.ffn(self.ln2(x)))
+            f = self.ffn(self.ln2(x))
+        x = x + self.drop(gate2 * f if gate2 is not None else f)
         # Combine attn KV cache and SSM state
         if use_cache:
             if self.block_type == 'attn':
@@ -494,6 +532,12 @@ class TransformerBlock(nn.Module):
             elif self.block_type == 'hybrid':
                 present = (attn_present, ssm_present_state, ssm_present_conv_state)
         return x, present
+
+    def set_enhancements_active(self, active: bool):
+        """运行时开关：交替增强训练时按批次/轮次切换。关闭时跳过 QK-Norm/温度/门控（恒等）。"""
+        self._enh_active = active
+        if hasattr(self, 'attn'):
+            self.attn._enh_active = active
 
 
 def _parse_layer_plan(layer_plan: Optional[List[str] | str], num_layers: int) -> List[str]:
@@ -564,7 +608,8 @@ class TransformerModel(nn.Module):
             TransformerBlock(embedding_dim, num_heads, hidden_dim, block_type=bt,
                              dropout=dropout, max_seq_length=max_seq_length,
                              ssm_kwargs=ssm_kwargs, attn_kwargs=attn_kwargs,
-                             residual_gate=residual_gate, hybrid_gate=hybrid_gate)
+                             residual_gate=residual_gate, hybrid_gate=hybrid_gate,
+                             gradient_checkpointing=gradient_checkpointing)
             for bt in self.layer_plan
         ])
         self.ln_f = RMSNorm(embedding_dim)
@@ -572,6 +617,17 @@ class TransformerModel(nn.Module):
         self._tie_weights = tie_weights
         if tie_weights:
             self.output_head.weight = self.embedding.weight
+
+    def set_enhancements_active(self, active: bool):
+        """运行时开关：交替增强训练时按批次/轮次切换（关闭则跳过 QK-Norm/温度/门控，恒等）。"""
+        for blk in self.blocks:
+            blk.set_enhancements_active(active)
+
+    def set_gradient_checkpointing(self, enabled: bool):
+        """统一开关梯度检查点（同步到各 block；torch.compile 路径应设为 False）。"""
+        self.gradient_checkpointing = enabled
+        for blk in self.blocks:
+            blk.gradient_checkpointing = enabled
 
     def _init_weights(self):
         for m in self.modules():
@@ -632,11 +688,8 @@ class TransformerModel(nn.Module):
         for i, block in enumerate(self.blocks):
             ssm_past_state = ssm_states[i] if use_cache else None
             ssm_past_conv_state = ssm_conv_states[i] if use_cache else None
-            if self.training and self.gradient_checkpointing:
-                x, present = checkpoint(block, x, past_key_values[i], use_cache, start_pos, ssm_past_state, ssm_past_conv_state,
-                                        use_reentrant=False)
-            else:
-                x, present = block(x, past_key_values[i], use_cache, start_pos, ssm_past_state, ssm_past_conv_state)
+            # 检查点（仅重算力部分）已在 block 内部按 self.gradient_checkpointing 处理，此处直接调用
+            x, present = block(x, past_key_values[i], use_cache, start_pos, ssm_past_state, ssm_past_conv_state)
             presents.append(present)
         x = self.ln_f(x)
         if use_cache:
