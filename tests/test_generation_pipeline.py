@@ -185,6 +185,36 @@ def test_quantization_load():
     assert isinstance(out, str)
 
 
+def test_arch_options_enabled_build_and_forward():
+    """开启全部架构增强（qk_norm/attn_temp/residual_gate/hybrid_gate）后模型可正常前向与生成。"""
+    cfg = load_config('configs/config_hybrid.yaml')
+    # 这些增强通过 config['model'] 开关控制（与训练 YAML 一致）
+    for k in ('qk_norm', 'attn_temp', 'residual_gate', 'hybrid_gate'):
+        cfg['model'][k] = True
+    # 显式放一个 hybrid 块以覆盖混合路径门控（config_hybrid.yaml 默认只用 attn/ssm）
+    cfg['model']['num_layers'] = 2
+    cfg['model']['layer_plan'] = 'attn,hybrid'
+    model = build_model(cfg, device='cpu')
+    model.eval()
+    # 新参数应存在：attn 块含 qk_norm/log_temp，hybrid 块含混合门控，各块含残差门控
+    assert any(hasattr(m, 'qk_norm') for m in model.modules())
+    assert any(hasattr(m, 'log_temp') for m in model.modules())
+    assert any(hasattr(m, 'hybrid_attn_gate') for m in model.modules())
+    assert any(hasattr(m, 'sub1_gate') for m in model.modules())
+    V = cfg['model']['vocab_size']
+    x = torch.randint(0, V, (2, 8))
+    with torch.no_grad():
+        logits, past = model(x, use_cache=True)
+    assert logits.shape == (2, 8, V)
+    assert past is not None
+    # 增量步也走通（带门控的 KV/SSM 状态）
+    with torch.no_grad():
+        logits2, _ = model(x[:, -1:], past_key_values=past, use_cache=True)
+    assert logits2.shape == (2, 1, V)
+    # 门控默认 1.0，前向数值应有限
+    assert torch.isfinite(logits2).all()
+
+
 if __name__ == '__main__':
     test_vocab_empty_corpus_no_divzero()
     test_vocab_encode_decode_roundtrip()
@@ -197,4 +227,5 @@ if __name__ == '__main__':
     test_warmup_scheduler_ramp_and_decay()
     test_gradient_accumulation()
     test_quantization_load()
+    test_arch_options_enabled_build_and_forward()
     print("\nAll pipeline tests passed!")

@@ -113,7 +113,8 @@ class SlidingWindowCausalSelfAttention(nn.Module):
      CUDA/CPU 用原生 fused SDPA；AMD DirectML 的 fused 内核会触发原生崩溃，
      故 DML(及其他后端)走手动 matmul+softmax+因果掩码 以规避该 bug。
     """
-    def __init__(self, dim: int, num_heads: int, window: int = 0, rel_bias: bool = False, max_seq_length: int = 64):
+    def __init__(self, dim: int, num_heads: int, window: int = 0, rel_bias: bool = False, max_seq_length: int = 64,
+                 qk_norm: bool = False, attn_temp: bool = False):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
@@ -126,6 +127,14 @@ class SlidingWindowCausalSelfAttention(nn.Module):
         if self.rel_bias:
             # T5 风格相对位置偏置表：(heads, 2T-1)
             self.rel_bias_table = nn.Parameter(torch.zeros(num_heads, 2 * max_seq_length - 1))
+        # ① QK-Norm：对 Q/K 各自做 RMSNorm 后再进注意力，与 RoPE 互补、稳定训练（默认关，向后兼容）
+        self.qk_norm_enabled = qk_norm
+        if qk_norm:
+            self.qk_norm = RMSNorm(self.head_dim)
+        # ⑤ 可学习注意力温度：softmax(score / T)，T=exp(log_temp) 恒正（默认关，向后兼容）
+        self.attn_temp_enabled = attn_temp
+        if attn_temp:
+            self.log_temp = nn.Parameter(torch.zeros(1))
         self._cached_T = -1
         self._mask: Optional[torch.Tensor] = None
         self._rbias: Optional[torch.Tensor] = None
@@ -155,6 +164,15 @@ class SlidingWindowCausalSelfAttention(nn.Module):
         qkv = self.qkv(x).reshape(B, T, 3, self.num_heads, self.head_dim)
         qkv = qkv.permute(2, 0, 3, 1, 4)          # (3, B, H, T, D)
         q, k, v = qkv[0], qkv[1], qkv[2]
+        # ① QK-Norm：投影后、RoPE 前对 Q/K 各自归一化
+        if self.qk_norm_enabled:
+            q = self.qk_norm(q)
+            k = self.qk_norm(k)
+        # ⑤ 可学习温度：温度恒正（T=exp(log_temp)），直接缩放 Q/K 幅值（等价 softmax(score/T)）
+        if self.attn_temp_enabled:
+            temp = torch.exp(self.log_temp)
+            q = q / torch.sqrt(temp)
+            k = k / torch.sqrt(temp)
         q, k = self.rope(q, k, start_pos=start_pos, max_len=self.max_seq_length)
 
         if use_cache:
@@ -410,12 +428,16 @@ class TransformerBlock(nn.Module):
     """可配置混合块：attn / ssm / hybrid(attn+ssm 并行)。Pre-LN。"""
     def __init__(self, dim: int, num_heads: int, hidden_dim: int, block_type: str = 'attn',
                  dropout: float = 0.0, max_seq_length: int = 64,
-                 ssm_kwargs: Optional[Dict[str, Any]] = None, attn_kwargs: Optional[Dict[str, Any]] = None):
+                 ssm_kwargs: Optional[Dict[str, Any]] = None, attn_kwargs: Optional[Dict[str, Any]] = None,
+                 residual_gate: bool = False, hybrid_gate: bool = False):
         super().__init__()
         self.block_type = block_type
         self.drop = nn.Dropout(dropout)
         ssm_kwargs = ssm_kwargs or {}
         attn_kwargs = attn_kwargs or {}
+        # ②/⑥ 残差门控 & ⭐A 混合路径门控开关（默认关，向后兼容）
+        self.residual_gate_enabled = residual_gate
+        self.hybrid_gate_enabled = hybrid_gate
         # Both attn and ssm blocks need a pre-norm layer
         self.ln1 = RMSNorm(dim)
         if block_type in ('attn', 'hybrid'):
@@ -425,6 +447,14 @@ class TransformerBlock(nn.Module):
             self.ssm = MambaSSM(dim, **ssm_kwargs)
         self.ln2 = RMSNorm(dim)
         self.ffn = SwiGLU(dim, hidden_dim)
+        # ②/⑥ 每层可学习残差门控：x = x + gate * f(x)（init 1.0，默认行为不变）
+        if residual_gate:
+            self.sub1_gate = nn.Parameter(torch.ones(1))   # 第一子层残差（attn 或 ssm）
+            self.ffn_gate = nn.Parameter(torch.ones(1))    # FFN 子层残差
+        # ⭐A 混合块内 attn/ssm 两路可学习门控（init 1.0）
+        if hybrid_gate and block_type == 'hybrid':
+            self.hybrid_attn_gate = nn.Parameter(torch.ones(1))
+            self.hybrid_ssm_gate = nn.Parameter(torch.ones(1))
 
     def forward(self, x: torch.Tensor, past_kv: Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]] = None, use_cache: bool = False, start_pos: int = 0, ssm_past_state: Optional[torch.Tensor] = None, ssm_past_conv_state: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]]]:
         present: Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]] = None
@@ -436,17 +466,24 @@ class TransformerBlock(nn.Module):
             attn_past_kv = past_kv[0]
         if self.block_type == 'attn':
             h, present = self.attn(self.ln1(x), attn_past_kv, use_cache, start_pos)
-            x = x + self.drop(h)
+            x = x + self.drop(self.sub1_gate * h if self.residual_gate_enabled else h)
         elif self.block_type == 'ssm':
             h, ssm_present_state, ssm_present_conv_state = self.ssm(self.ln1(x), past_state=ssm_past_state, past_conv_state=ssm_past_conv_state, use_cache=use_cache)
-            x = x + self.drop(h)
+            x = x + self.drop(self.sub1_gate * h if self.residual_gate_enabled else h)
         elif self.block_type == 'hybrid':
             h, attn_present = self.attn(self.ln1(x), attn_past_kv, use_cache, start_pos)
             ssm_h, ssm_present_state, ssm_present_conv_state = self.ssm(self.ln1(x), past_state=ssm_past_state, past_conv_state=ssm_past_conv_state, use_cache=use_cache)
-            x = x + self.drop(h) + self.drop(ssm_h)
+            if self.hybrid_gate_enabled:
+                # ⭐A 混合块：attn 与 ssm 两路各自可学习门控，让模型自决每层偏重
+                x = x + self.drop(self.hybrid_attn_gate * h) + self.drop(self.hybrid_ssm_gate * ssm_h)
+            else:
+                x = x + self.drop(h) + self.drop(ssm_h)
             if use_cache:
                 present = (attn_present, ssm_present_state, ssm_present_conv_state)
-        x = x + self.drop(self.ffn(self.ln2(x)))
+        if self.residual_gate_enabled:
+            x = x + self.drop(self.ffn_gate * self.ffn(self.ln2(x)))
+        else:
+            x = x + self.drop(self.ffn(self.ln2(x)))
         # Combine attn KV cache and SSM state
         if use_cache:
             if self.block_type == 'attn':
@@ -495,7 +532,9 @@ class TransformerModel(nn.Module):
                  ssm_D_init: float = 1.0,
                  attn_window: int = 0, attn_rel_bias: bool = False,
                  rope_base: float = 10000.0, rope_max_len: int = 4096,
-                 mask_fill_value: float = -1e9):
+                 mask_fill_value: float = -1e9,
+                 qk_norm: bool = False, attn_temp: bool = False,
+                 residual_gate: bool = False, hybrid_gate: bool = False):
         super(TransformerModel, self).__init__()
 
         self.vocab_size = vocab_size
@@ -518,11 +557,13 @@ class TransformerModel(nn.Module):
             a_log_init_range=ssm_a_log_init_range,
             D_init=ssm_D_init,
         )
-        attn_kwargs = dict(window=attn_window, rel_bias=attn_rel_bias)
+        attn_kwargs = dict(window=attn_window, rel_bias=attn_rel_bias,
+                           qk_norm=qk_norm, attn_temp=attn_temp)
         self.blocks = nn.ModuleList([
             TransformerBlock(embedding_dim, num_heads, hidden_dim, block_type=bt,
                              dropout=dropout, max_seq_length=max_seq_length,
-                             ssm_kwargs=ssm_kwargs, attn_kwargs=attn_kwargs)
+                             ssm_kwargs=ssm_kwargs, attn_kwargs=attn_kwargs,
+                             residual_gate=residual_gate, hybrid_gate=hybrid_gate)
             for bt in self.layer_plan
         ])
         self.ln_f = RMSNorm(embedding_dim)

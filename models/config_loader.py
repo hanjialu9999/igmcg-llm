@@ -51,6 +51,11 @@ def build_model(config: Dict[str, Any], device: Optional[torch.device] = None) -
         rope_base=mc.get('rope_base', 10000.0),
         rope_max_len=mc.get('rope_max_len', 4096),
         mask_fill_value=mc.get('mask_fill_value', -1e9),
+        # 架构增强（默认全关，向后兼容旧权重；开启后需重新训练以生效）
+        qk_norm=mc.get('qk_norm', False),
+        attn_temp=mc.get('attn_temp', False),
+        residual_gate=mc.get('residual_gate', False),
+        hybrid_gate=mc.get('hybrid_gate', False),
     )
     if device is not None:
         model = model.to(device)
