@@ -9,6 +9,12 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
+## `523aff7`（本地，基于 `7df19b6`）
+
+- exp: 增强 vs 基线 受控对比扩展至 20000 行（`data/pretrain_corpus/merged_sample_20k_top.txt` = merged.txt 前 20000 行，确定性）。SEL 改用**新版 8 段掩码**（`enhancement_schedule`：attn_temp 恒开；qk_norm/residual_gate 段间切换、永不同时关、偏向全开 4/8），取代旧 4 段。`configs/config_cmp_enh_20k.yaml` / `config_cmp_sel_20k.yaml`，同参数（1 epoch / batch32 / seq64 / lr3e-3 / seed42 / test_split0.1）DML fp32。
+- 结果：ENH(常开) **Val 6.2188 / ~3278 tok/s**，SEL(8 段选择性交替) **Val 6.2808 / ~3471 tok/s**——质量差距从 8000 行的 ~0.12 缩到 **0.062（几乎持平）**，SEL 训练快约 7%，但**推理无提速**（两权重解码均全开：top-k ~38、IGMCG ~10.8 tok/s）。鲁棒性 self-loss：8 档中 ENH 6 档略优、SEL 2 档略优，差距 ~0.1–0.3，基本打平。结论：数据量越大 SEL 越接近常开 ENH，仅省训练时间、不省推理；两套 20k 权重均保留作对照。原始数据见 `experiments/cmp_20k.txt`（`experiments/_cmp_20k.py` 复现）。
+- chore: 清理旧的 8000 行对比产物——删除 `configs/config_cmp_enh.yaml` / `config_cmp_sel.yaml`、`experiments/_robust_enh_sel.py` / `robust_enh_sel.txt` / `cmp_4way.txt`，及本地 `checkpoints_cmp_enh/` / `checkpoints_cmp_sel/` 权重；`.gitignore` 仅保留 20k 两项（`checkpoints_cmp_enh_20k/` / `checkpoints_cmp_sel_20k/`）。`pytest` 27 passed（本次未改训练链路）。
+
 ## `99055cb`（已推送，基于 `aa9d757`）
 
 - test: 鲁棒性探针 `experiments/_robust_enh_sel.py`——对 ENH/SEL 在 `temperature∈{0.5,0.8,1.1,1.4}` 与 `top_k∈{10,30,100}`（固定 `repetition_penalty=1.4`）下生成，计算 **self-loss**（模型对自身生成续写的 cross-entropy）作稳健性代理，并逐提示词记录原文。结果：**ENH 在全部设置下 self-loss 均略低于 SEL（更自洽/稳健）**，差距很小（约 0.1–0.3 nat）；该 8000 行/1 epoch 规模下两者都偏弱。配合肉眼观察：ENH≈SEL > (已删)ALT，与 Val 排序（ENH 7.10 < SEL 7.22 < ALT 7.35）一致。结论：常开 ENH 鲁棒性略优，SEL 接近且训练更快。原始数据见 `experiments/robust_enh_sel.txt`。

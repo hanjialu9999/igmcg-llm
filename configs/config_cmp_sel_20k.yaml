@@ -1,7 +1,6 @@
-# 对比实验：分段「选择性」交替增强（与 enh 仅训练期增强调度不同，其余完全一致）
-# 思路：attn_temp 开销可忽略且恒有益 -> 始终开；qk_norm/residual_gate/hybrid_gate 有非忽略开销 ->
-# 按 batch 在 4 个分段掩码间循环切换（多分段、非整体 50% 关闭），模型始终至少保留 attn_temp，
-# 不会经历“全关”状态，既给模型多样性又尽量保留增强收益。推理时同 enh 全开。
+# 对比实验（20k 行）：分段选择性交替增强（SEL）。与 enh_20k 仅训练期增强调度不同，其余完全一致。
+# 8 段掩码：attn_temp 恒开；qk_norm/residual_gate 在段间切换，但永不同时关闭（每批至少留一个真增强）；
+# 偏向全开（全开 4/8、单关 qk 2/8、单关 rg 2/8），比 4 段版去掉了“两者同时关”的最退化批次。多段循环无额外开销。
 model:
   vocab_size: 12000
   embedding_dim: 512
@@ -46,16 +45,20 @@ training:
   lr_schedule: "constant"
   compile: false
   show_progress: false
-  # 分段选择性交替：按 batch 循环取以下掩码（缺省键补 True=开）。attn_temp 始终开；
-  # 4 段分别：仅 attn_temp / +qk_norm / +residual_gate / 全开（hybrid 纯 attn 惰性）。
+  # 分段选择性交替：按 batch 循环取下表掩码（缺省键补 True=开）。attn_temp 始终开；
+  # 8 段：全开×4 / 单关 qk_norm×2 / 单关 residual_gate×2，永不同时关两个真增强。
   enhancement_schedule:
-    - { qk_norm: false, attn_temp: true, residual_gate: false, hybrid_gate: false }
-    - { qk_norm: true,  attn_temp: true, residual_gate: false, hybrid_gate: false }
+    - { qk_norm: true,  attn_temp: true, residual_gate: true,  hybrid_gate: false }
     - { qk_norm: false, attn_temp: true, residual_gate: true,  hybrid_gate: false }
     - { qk_norm: true,  attn_temp: true, residual_gate: true,  hybrid_gate: false }
+    - { qk_norm: true,  attn_temp: true, residual_gate: false, hybrid_gate: false }
+    - { qk_norm: true,  attn_temp: true, residual_gate: true,  hybrid_gate: false }
+    - { qk_norm: false, attn_temp: true, residual_gate: true,  hybrid_gate: false }
+    - { qk_norm: true,  attn_temp: true, residual_gate: true,  hybrid_gate: false }
+    - { qk_norm: true,  attn_temp: true, residual_gate: false, hybrid_gate: false }
 
 data:
-  train_file: "data/pretrain_corpus/merged_sample_8k_top.txt"   # 前 8000 行（自上而下），与 base/enh/alt 同文件
+  train_file: "data/pretrain_corpus/merged_sample_20k_top.txt"   # 前 20000 行（自上而下），与 enh_20k 同文件
   vocab_size: 12000
   max_seq_length: 64
   num_workers: 0
@@ -63,8 +66,8 @@ data:
   test_split: 0.1
 
 paths:
-  checkpoint_dir: "checkpoints_cmp_sel"
-  log_dir: "logs_cmp_sel"
+  checkpoint_dir: "checkpoints_cmp_sel_20k"
+  log_dir: "logs_cmp_sel_20k"
 
 device: "auto"
 seed: 42

@@ -47,12 +47,10 @@ experiments/smoke_8k_gen.txt
 # 运行期生成的对话参数（由 scripts/tuning/showcase_optimal_params.py 回写）
 chat_config.json
 
-# 增强 vs 基线 对比实验产物
+# 增强 vs 基线 对比实验产物（20k 行受控对比）
 # 对比结果文本 + 训练日志入库（可对比）；权重较大（~107MB）且不入库，可由 config + data 复现
-checkpoints_cmp_base/
-checkpoints_cmp_enh/
-checkpoints_cmp_alt/
-checkpoints_cmp_sel/
+checkpoints_cmp_enh_20k/
+checkpoints_cmp_sel_20k/
 
 # OS / editor
 .DS_Store
