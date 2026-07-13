@@ -1,4 +1,4 @@
-refactor: extract shared checkpoint utility, fix IGMCG config, unify checkpoint logic
+fix: IGMCG weights to config + shared checkpoint utility + dedup optimization
 
 - Extract shared checkpoint saving to models/utils.py
 - Fix IGMCG hardcoded weights in generate.py, move to config YAML
