@@ -173,6 +173,9 @@ class NGramModel:
         self.bi = defaultdict(Counter)     # (w_{i-1}) -> Counter(next)
         self.tri = defaultdict(Counter)    # (w_{i-2}, w_{i-1}) -> Counter(next)
         self._build(corpus_file)
+        # 解码期同一上下文会被多个候选反复查询，缓存 logprob 向量避免重复建表计算
+        self._logprob_cache: Dict = {}
+        self._logprob_cache_max = 8192
 
     def _build(self, corpus_file):
         with open(corpus_file, 'r', encoding='utf-8') as f:
@@ -199,11 +202,22 @@ class NGramModel:
 
     def logprob_vector(self, generated, device):
         """返回词表每个 token 的 log 概率向量（uni/bi/tri 插值，三元真正参与）。
-        只在与当前上下文相关的少量 token 上计算，避免遍历全词表。"""
+        只在与当前上下文相关的少量 token 上计算，避免遍历全词表。结果按上下文
+        (w2,w1) 缓存，因为解码期同一上下文会被多个候选反复查询。"""
         V = self.vocab_size
         w2 = generated[-2] if len(generated) >= 2 else None
         w1 = generated[-1] if len(generated) >= 1 else None
+        cache_key = (w2, w1)
+        if cache_key in self._logprob_cache:
+            return self._logprob_cache[cache_key].to(device)
+        vec = self._compute_logprob(w2, w1, V, device)
+        if len(self._logprob_cache) > self._logprob_cache_max:
+            self._logprob_cache.clear()
+        self._logprob_cache[cache_key] = vec.cpu()
+        return vec
 
+    def _compute_logprob(self, w2, w1, V, device):
+        """实际计算上下文 (w2,w1) 下的 log 概率向量（无缓存）。"""
         vec = self.uni_prob.to(device).clone()      # (V,) 已归一化的 unigram 先验
         uni_total = self.uni_total
 
@@ -344,55 +358,32 @@ def _style_features(text):
 def _generate_candidates_batch(model, ids, temps, max_length, top_k, rep_penalty,
                                 device, ngram_fn, ngram_weight, pad_id, sep_id, eos_id,
                                 min_length=3, eos_penalty=-5.0):
-    """并行生成 N 个候选：每个候选维护独立的 KV-cache，避免候选间污染。
-    逐步并行前向（batch=N），但每行独立维护 past 状态。"""
+    """并行生成 N 个候选：单次 batch 前向（batch=N），每个候选在 batch 内各自独立维护
+    KV-cache / SSM 状态，避免候选间污染，也避免逐候选串行 forward（num_candidates 倍提速）。
+    已完成候选喂 pad 占位以保持 batch 对齐。"""
     N = len(temps)
     generated = [list(ids) for _ in range(N)]
     done = [False] * N
-    min_len = min_length
-    past = [None] * N  # 每个候选独立的 past
 
     with torch.no_grad():
-        # 初始前向：所有候选共享同一输入
+        # 初始前向：所有候选共享同一输入，得到 batched past（batch 维 = N）
         inp = torch.tensor([ids] * N, dtype=torch.long, device=device)
-        logits, past_list = model.forward(inp, past_key_values=None, use_cache=True)
-        # past_list 是长度为 num_layers 的列表，每个元素是 (B, ...) 这里 B=N
-        # 需要拆分为每个候选的独立 past
-        for i in range(N):
-            candidate_past = []
-            for layer_past in past_list:
-                if layer_past is None:
-                    candidate_past.append(None)
-                else:
-                    # layer_past 是 (attn_kv, ssm_state, ssm_conv_state)
-                    attn_kv = layer_past[0]
-                    ssm_state = layer_past[1] if len(layer_past) > 1 else None
-                    ssm_conv_state = layer_past[2] if len(layer_past) > 2 else None
-                    if attn_kv is not None:
-                        # attn_kv 是 (key, value)，每个形状 (N, H, T, D)
-                        k, v = attn_kv
-                        candidate_past.append(((k[i:i+1], v[i:i+1]), ssm_state[i:i+1] if ssm_state is not None else None, ssm_conv_state[i:i+1] if ssm_conv_state is not None else None))
-                    else:
-                        candidate_past.append((None, ssm_state[i:i+1] if ssm_state is not None else None, ssm_conv_state[i:i+1] if ssm_conv_state is not None else None))
-            past[i] = candidate_past
+        logits, past = model.forward(inp, past_key_values=None, use_cache=True)
 
         for step in range(max_length):
+            if all(done):
+                break
             if len(generated[0]) >= model.max_seq_length:
                 break
             nt = []
-            next_past = [None] * N
-            
             for n in range(N):
                 if done[n]:
-                    # 候选已完成，生成 pad
                     nt.append(pad_id)
-                    next_past[n] = past[n]  # 保持不变
                     continue
-                
                 lt = logits[n, -1, :] / temps[n]
+                # 符号感知的重复惩罚：正值除、负值乘（与 HF 一致）
                 for prev in set(generated[n]):
                     if 0 <= prev < lt.shape[0]:
-                        # 符号感知的重复惩罚：正值除、负值乘（与 HF 一致）
                         if lt[prev] > 0:
                             lt[prev] = lt[prev] / rep_penalty
                         else:
@@ -401,7 +392,7 @@ def _generate_candidates_batch(model, ids, temps, max_length, top_k, rep_penalty
                     lt = lt + ngram_weight * ngram_fn(generated[n], device)
                 lt[pad_id] = float('-inf')
                 lt[sep_id] = float('-inf')
-                if len(generated[n]) - len(ids) < min_len:
+                if len(generated[n]) - len(ids) < min_length:
                     lt[eos_id] = float('-inf')
                 else:
                     lt[eos_id] = lt[eos_id] + eos_penalty
@@ -411,31 +402,15 @@ def _generate_candidates_batch(model, ids, temps, max_length, top_k, rep_penalty
                 if torch.isinf(lt).all():
                     lt = logits[n, -1, :] / temps[n]
                     lt[pad_id] = float('-inf')
-                next_token = torch.multinomial(torch.softmax(lt, 0), 1).item()
-                nt.append(next_token)
-                generated[n].append(next_token)
-                if next_token == eos_id and len(generated[n]) - len(ids) >= min_len:
-                    done[n] = True
-            
-            # 并行前向：构造 batch 输入，每个候选用自己的 past
-            feed = torch.tensor(nt, dtype=torch.long, device=device).unsqueeze(1)  # (N, 1)
-            
-            # 合并所有候选的 past 进行 batch 前向
-            # 但这很复杂，简化方案：逐个候选前向（因为 N 通常很小，如 4-5）
-            # 或者重新组装 past
-            all_logits = []
+                nt.append(int(torch.multinomial(torch.softmax(lt, 0), 1).item()))
+            # 单次 batched 前向：feed 形状 (N,1)，past 为 batched（batch 维 = N）
+            feed = torch.tensor(nt, dtype=torch.long, device=device).unsqueeze(1)
+            logits, past = model.forward(feed, past_key_values=past, use_cache=True)
             for n in range(N):
-                if past[n] is not None:
-                    l, new_past = model.forward(feed[n:n+1], past_key_values=past[n], use_cache=True)
-                    all_logits.append(l)
-                    next_past[n] = new_past
-                else:
-                    l = model.forward(feed[n:n+1])
-                    all_logits.append(l)
-                    next_past[n] = None
-            
-            logits = torch.cat(all_logits, dim=0)  # (N, 1, vocab)
-            past = next_past
+                if not done[n]:
+                    generated[n].append(nt[n])
+                    if nt[n] == eos_id and len(generated[n]) - len(ids) >= min_length:
+                        done[n] = True
 
     return generated
 
