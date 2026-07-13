@@ -95,7 +95,8 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
                  warmup_steps=0, base_lr=0.0005, gradient_clip=1.0, scaler=None,
                  use_amp=True, autocast_dtype=torch.float32, grad_accum_steps=1,
                  lr_schedule='cosine', eta_min=0.0, wsd_decay_frac=0.1,
-                 show_progress=True, amp_device=None, enhancement_off_prob=0.0):
+                 show_progress=True, amp_device=None, enhancement_off_prob=0.0,
+                 enhancement_schedule=None):
     """Train one epoch with warmup, gradient accumulation and mixed precision.
 
     - warmup_steps: 预热步数。若 <1 则按"占整个 epoch 有效步数的比例"解释（如 0.1=前 10% 步预热）。
@@ -144,9 +145,15 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
         input_ids = batch['input_ids'].to(device)
         target_ids = batch['target_ids'].to(device)
 
-        # 交替增强训练：以 enhancement_off_prob 的概率跳过本批次的增强（QK-Norm/温度/门控恒等）。
-        # 关闭时增强参数本步不更新梯度；开启时正常训练。默认 0 = 始终开启。
-        if enhancement_off_prob > 0.0:
+        # 交替/分段增强训练：
+        #  - enhancement_schedule（分段，按开关粒度）：按 batch_idx 循环取各分段的增强掩码（dict）。
+        #    每个掩码仅切换指定增强（如只动 residual_gate/hybrid_gate，qk_norm/attn_temp 恒开），
+        #    关闭的增强本步不更新梯度。多段循环无额外开销（仅切几个布尔开关）。
+        #  - enhancement_off_prob（整体随机）：以该概率跳过本批次全部增强。
+        # 默认两者皆无 = 始终全开。
+        if enhancement_schedule is not None:
+            model.set_enhancements_active(enhancement_schedule[batch_idx % len(enhancement_schedule)])
+        elif enhancement_off_prob > 0.0:
             model.set_enhancements_active(random.random() >= enhancement_off_prob)
 
         # Forward pass (optionally under autocast for mixed precision)
@@ -390,7 +397,21 @@ def main(config_path='configs/pretrain.yaml'):
     print(f"  Epochs: {epochs}")
     print(f"  Learning rate: {config['training']['learning_rate']}  (schedule={lr_schedule}, eta_min={eta_min})")
     print(f"  Early stop patience: {config['training'].get('early_stop_patience', 5)}")
-    
+
+    # 交替/分段增强训练配置：
+    #  - enhancement_schedule：分段掩码列表（dict），按 batch 循环切换；缺省键补 True（恒开）。
+    #  - enhancement_off_prob：整体随机关闭概率（旧式交替，与 schedule 互斥，schedule 优先）。
+    enhancement_schedule = config['training'].get('enhancement_schedule')
+    if enhancement_schedule is not None:
+        _full_keys = ["qk_norm", "attn_temp", "residual_gate", "hybrid_gate"]
+        enhancement_schedule = [{**{k: True for k in _full_keys}, **m}
+                                for m in enhancement_schedule]
+        print(f"  Enhancement schedule: {len(enhancement_schedule)} 段分段（按开关粒度交替）")
+    else:
+        enhancement_off_prob = config['training'].get('enhancement_off_prob', 0.0)
+        if enhancement_off_prob > 0:
+            print(f"  Enhancement off-prob: {enhancement_off_prob}（整体随机交替）")
+
     # Training loop
     print("\n[Training] Starting training...")
     best_loss = float('inf')
@@ -413,7 +434,8 @@ def main(config_path='configs/pretrain.yaml'):
             eta_min=eta_min,
             wsd_decay_frac=wsd_decay_frac,
             show_progress=config['training'].get('show_progress', True),
-            enhancement_off_prob=config['training'].get('enhancement_off_prob', 0.0)
+            enhancement_off_prob=config['training'].get('enhancement_off_prob', 0.0),
+            enhancement_schedule=enhancement_schedule
         )
 
         history['train_loss'].append(train_loss)

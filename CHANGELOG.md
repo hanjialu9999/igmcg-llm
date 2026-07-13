@@ -9,7 +9,14 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
-## `0ee3ed6`（本地，基于 `b5da36a`/`23a09ff`）
+## `290b790`（已推送，基于 `3f8c2c8`）
+
+- feat: `set_enhancements_active` 由仅全开/全关（`bool`）升级为**按开关粒度 dict**（如 `{"qk_norm": False, "residual_gate": True}`）；`TransformerModel`/`TransformerBlock`/`SlidingWindowCausalSelfAttention` 各自只更新自身键。`scripts/train.py` 新增 `training.enhancement_schedule`（分段掩码列表，按 `batch_idx % len` 循环切换；缺省键补 `True`），与旧式整体随机 `enhancement_off_prob` 互斥（schedule 优先）。多段循环仅切几个布尔开关，**无额外开销**。
+- 设计：**attn_temp 开销可忽略且恒有益 → 始终开**；qk_norm/residual_gate/hybrid_gate 有非忽略开销 → 在 4 段掩码间循环切换，模型**永不完全“全关”**（始终至少保留 attn_temp，且在分段间只切换部分增强）。`validate` 仍强制全开。
+- 三方→四方对比（复用 BASE/ENH/ALT 权重，仅新训 SEL；8000 行×1 epoch，DML fp32，含②）：SEL **Val 7.2254 / ~3413 tok/s** vs ALT **Val 7.3543 / ~3596**；SEL 明显优于 ALT 且接近 ENH(7.10)。**结论：弃用 ALT、采用 SEL**（分段选择性比整体 50% 全关更能保住增强收益）。
+- 入库：`configs/config_cmp_sel.yaml`、`experiments/_cmp_4way.py`、`experiments/cmp_4way.txt`（4 组含原文）；删除 `config_cmp_alt.yaml` / `experiments/_cmp_3way.py` / `experiments/cmp_3way.txt`（被 4 方对比取代）；`checkpoints_cmp_alt/` / `checkpoints_cmp_sel/` 加入 `.gitignore`。`pytest` 27 passed。
+
+## `3f8c2c8`（已推送，基于 `b5da36a`/`23a09ff`）
 
 ### 优化②：重构梯度检查点边界，消除加速开销
 - perf: `SlidingWindowCausalSelfAttention.forward` 拆为 `project_and_norm`（廉价：QKV 投影 + QK-Norm + 温度 + RoPE）与 `attend`（重算力：scores/softmax/proj）；`TransformerBlock.forward` 仅对 `attn.attend`/`ssm`/`ffn` 做 `checkpoint`，`ln1`/`ln2`/门控在重算区外只跑一次；同步移除模型层 `forward` 对整块展开的重复包裹，新增 `set_gradient_checkpointing`。

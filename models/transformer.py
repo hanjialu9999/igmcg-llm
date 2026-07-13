@@ -135,8 +135,8 @@ class SlidingWindowCausalSelfAttention(nn.Module):
         self.attn_temp_enabled = attn_temp
         if attn_temp:
             self.log_temp = nn.Parameter(torch.zeros(1))
-        # 运行时增强开关：False 时前向跳过 QK-Norm/可学习温度（用于“交替增强”训练，见 set_enhancements_active）
-        self._enh_active = True
+        # 运行时增强开关（按开关粒度，用于“交替/分段增强”训练）：默认全开
+        self._rt: Dict[str, bool] = {"qk_norm": True, "attn_temp": True}
         self._cached_T = -1
         self._mask: Optional[torch.Tensor] = None
         self._rbias: Optional[torch.Tensor] = None
@@ -165,6 +165,19 @@ class SlidingWindowCausalSelfAttention(nn.Module):
         q, k, v = self.project_and_norm(x, start_pos)
         return self.attend(q, k, v, past_kv, use_cache, start_pos)
 
+    def set_enhancements_active(self, spec):
+        """运行时开关（按开关粒度）：`spec=True/False` 全开/全关；`spec=dict` 仅更新存在的键。
+        用于“交替/分段增强”训练，关闭时跳过对应 QK-Norm/可学习温度（恒等）。"""
+        if isinstance(spec, bool):
+            on = spec
+            self._rt = {"qk_norm": on, "attn_temp": on}
+        elif isinstance(spec, dict):
+            for k, v in spec.items():
+                if k in self._rt:
+                    self._rt[k] = bool(v)
+        else:
+            raise TypeError(f"set_enhancements_active 期望 bool 或 dict，收到 {type(spec)}")
+
     def project_and_norm(self, x: torch.Tensor, start_pos: int = 0):
         """廉价部分（在梯度检查点重算区域之外执行，避免被反向重算放大）：
         QKV 投影 + ①QK-Norm + ⑤可学习温度 + RoPE。返回已归一化/旋转后的 (q, k, v)。"""
@@ -172,13 +185,13 @@ class SlidingWindowCausalSelfAttention(nn.Module):
         qkv = self.qkv(x).reshape(B, T, 3, self.num_heads, self.head_dim)
         qkv = qkv.permute(2, 0, 3, 1, 4)          # (3, B, H, T, D)
         q, k, v = qkv[0], qkv[1], qkv[2]
-        # ① QK-Norm：投影后、RoPE 前对 Q/K 各自归一化（运行时开关 enh_active 可跳过）
-        if self.qk_norm_enabled and self._enh_active:
+        # ① QK-Norm：投影后、RoPE 前对 Q/K 各自归一化（运行时开关 _rt 可跳过）
+        if self.qk_norm_enabled and self._rt["qk_norm"]:
             q = self.qk_norm(q)
             k = self.qk_norm(k)
         # ⑤ 可学习温度：温度恒正（T=exp(log_temp)），直接缩放 Q/K 幅值（等价 softmax(score/T)）。
         #    融合为单次标量乘法 q*=exp(-0.5*log_temp)，免去额外 sqrt 算子。
-        if self.attn_temp_enabled and self._enh_active:
+        if self.attn_temp_enabled and self._rt["attn_temp"]:
             scale = torch.exp(-0.5 * self.log_temp)
             q = q * scale
             k = k * scale
@@ -455,8 +468,8 @@ class TransformerBlock(nn.Module):
         # ②/⑥ 残差门控 & ⭐A 混合路径门控开关（默认关，向后兼容）
         self.residual_gate_enabled = residual_gate
         self.hybrid_gate_enabled = hybrid_gate
-        # 运行时增强开关：False 时跳过残差门控（用于“交替增强”训练，见 set_enhancements_active）
-        self._enh_active = True
+        # 运行时增强开关（按开关粒度，用于“交替/分段增强”训练）：默认全开
+        self._rt: Dict[str, bool] = {"residual_gate": True, "hybrid_gate": True}
         self.gradient_checkpointing = gradient_checkpointing
         # Both attn and ssm blocks need a pre-norm layer
         self.ln1 = RMSNorm(dim)
@@ -485,8 +498,8 @@ class TransformerBlock(nn.Module):
         if past_kv is not None:
             attn_past_kv = past_kv[0]
         ckpt = self.training and self.gradient_checkpointing
-        gate1 = (self.sub1_gate if (self.residual_gate_enabled and self._enh_active) else None)
-        gate2 = (self.ffn_gate if (self.residual_gate_enabled and self._enh_active) else None)
+        gate1 = (self.sub1_gate if (self.residual_gate_enabled and self._rt["residual_gate"]) else None)
+        gate2 = (self.ffn_gate if (self.residual_gate_enabled and self._rt["residual_gate"]) else None)
 
         if self.block_type == 'attn':
             if ckpt:
@@ -510,7 +523,7 @@ class TransformerBlock(nn.Module):
             else:
                 h, attn_present = self.attn(xn, attn_past_kv, use_cache, start_pos)
                 ssm_h, ssm_present_state, ssm_present_conv_state = self.ssm(xn, past_state=ssm_past_state, past_conv_state=ssm_past_conv_state, use_cache=use_cache)
-            if self.hybrid_gate_enabled and self._enh_active:
+            if self.hybrid_gate_enabled and self._rt["hybrid_gate"]:
                 # ⭐A 混合块：attn 与 ssm 两路各自可学习门控，让模型自决每层偏重
                 x = x + self.drop(self.hybrid_attn_gate * h) + self.drop(self.hybrid_ssm_gate * ssm_h)
             else:
@@ -533,11 +546,20 @@ class TransformerBlock(nn.Module):
                 present = (attn_present, ssm_present_state, ssm_present_conv_state)
         return x, present
 
-    def set_enhancements_active(self, active: bool):
-        """运行时开关：交替增强训练时按批次/轮次切换。关闭时跳过 QK-Norm/温度/门控（恒等）。"""
-        self._enh_active = active
+    def set_enhancements_active(self, spec):
+        """运行时开关（按开关粒度）：`spec=True/False` 全开/全关；`spec=dict` 按键更新。
+        用于“交替/分段增强”训练，关闭时跳过对应残差门控/混合门控（恒等）。"""
+        if isinstance(spec, bool):
+            on = spec
+            self._rt = {"residual_gate": on, "hybrid_gate": on}
+        elif isinstance(spec, dict):
+            for k, v in spec.items():
+                if k in self._rt:
+                    self._rt[k] = bool(v)
+        else:
+            raise TypeError(f"set_enhancements_active 期望 bool 或 dict，收到 {type(spec)}")
         if hasattr(self, 'attn'):
-            self.attn._enh_active = active
+            self.attn.set_enhancements_active(spec)
 
 
 def _parse_layer_plan(layer_plan: Optional[List[str] | str], num_layers: int) -> List[str]:
@@ -618,10 +640,11 @@ class TransformerModel(nn.Module):
         if tie_weights:
             self.output_head.weight = self.embedding.weight
 
-    def set_enhancements_active(self, active: bool):
-        """运行时开关：交替增强训练时按批次/轮次切换（关闭则跳过 QK-Norm/温度/门控，恒等）。"""
+    def set_enhancements_active(self, spec):
+        """运行时开关（按开关粒度）：`spec=True/False` 全开/全关；`spec=dict` 按键更新。
+        用于“交替/分段增强”训练（关闭则跳过对应增强，恒等）。"""
         for blk in self.blocks:
-            blk.set_enhancements_active(active)
+            blk.set_enhancements_active(spec)
 
     def set_gradient_checkpointing(self, enabled: bool):
         """统一开关梯度检查点（同步到各 block；torch.compile 路径应设为 False）。"""
