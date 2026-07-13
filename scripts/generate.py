@@ -16,54 +16,47 @@ from models.data_utils import Vocabulary
 from models.device import get_device
 from models.utils import cli_guard
 
-import re
-import pickle
-import importlib
+
+# weights_only=True 仅允许的白名单全局符号：均为张量/numpy 反序列化的官方重建函数。
+# 只放行这些固定符号，杜绝被恶意 .pt 诱导放行任意全局符号（即 CVE-2026-24747 类绕过）。
+def _safe_getattr(dotted):
+    """逐段 getattr，任意一段缺失都返回 None（兼容 numpy 1.x/2.x 的路径差异）。"""
+    parts = dotted.split('.')
+    obj = __import__(parts[0])
+    for attr in parts[1:]:
+        obj = getattr(obj, attr, None)
+        if obj is None:
+            return None
+    return obj
 
 
-def _resolve_global(name: str):
-    """把 'a.b.c' 形式的全局符号名解析为实际对象（按需 import 模块）。"""
-    parts = name.split('.')
-    for i in range(len(parts) - 1, 0, -1):
-        modname = '.'.join(parts[:i])
-        try:
-            mod = importlib.import_module(modname)
-        except ImportError:
-            continue
-        obj = mod
-        ok = True
-        for attr in parts[i:]:
-            obj = getattr(obj, attr, None)
-            if obj is None:
-                ok = False
-                break
-        if ok:
-            return obj
-    return None
+def _build_safe_globals():
+    import numpy as np
+    cands = [
+        getattr(torch._utils, '_rebuild_device_tensor_from_numpy', None),
+        _safe_getattr('numpy.core.multiarray._reconstruct'),   # numpy 1.x
+        _safe_getattr('numpy._core.multiarray._reconstruct'),   # numpy 2.x
+        getattr(np, 'ndarray', None),
+        getattr(np, 'dtype', None),
+    ]
+    return [g for g in cands if g is not None]
+
+
+_SAFE_GLOBALS = _build_safe_globals()
+for _g in _SAFE_GLOBALS:
+    try:
+        torch.serialization.add_safe_globals([_g])
+    except Exception:
+        pass
 
 
 def _safe_torch_load(path, map_location='cpu'):
-    """以 weights_only=True 加载 checkpoint；若被拒的全局符号为官方重建函数，
-    则放行后重试，直至加载成功或遇到非白名单类报错。checkpoint 均来自可信来源。"""
-    last_err = None
-    for _ in range(25):
-        try:
-            return torch.load(path, map_location=map_location, weights_only=True)
-        except (pickle.UnpicklingError, RuntimeError) as e:
-            msg = str(e)
-            m = re.search(r"GLOBAL\s+([A-Za-z0-9_.]+)\s+was not an allowed", msg)
-            if not m:
-                raise
-            obj = _resolve_global(m.group(1))
-            if obj is None:
-                raise
-            try:
-                torch.serialization.add_safe_globals([obj])
-            except Exception:
-                raise
-            last_err = e
-    if last_err is not None:
-        raise last_err
+    """以 weights_only=True 加载 checkpoint。
+
+    白名单全局符号（仅官方张量/numpy 重建函数，见 _SAFE_GLOBALS）已在模块导入时放行；
+    若仍遇到非白名单的全局符号，说明该文件可能不是可信 checkpoint，直接抛错拒绝加载，
+    避免被诱导放行危险全局符号（CVE-2026-24747 类绕过）。"""
+    return torch.load(path, map_location=map_location, weights_only=True)
 
 def load_model(model_path, vocab_path, device='cpu', quantize=False, compile_model=False):
     """Load trained model and vocabulary.

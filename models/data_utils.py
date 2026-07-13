@@ -139,7 +139,7 @@ class Vocabulary:
             'special_tokens': len(self.special_tokens),
             'regular_words': len(self.word2idx) - len(self.special_tokens),
             'unique_words_in_corpus': len(self.word_freq),
-            'coverage': len(self.word2idx) / len(self.word_freq) * 100
+            'coverage': (len(self.word2idx) / len(self.word_freq) * 100) if self.word_freq else 0
         }
     
     def __len__(self) -> int:

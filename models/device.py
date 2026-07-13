@@ -6,13 +6,19 @@ import torch
 
 
 def _try_dml_device() -> Optional[torch.device]:
-    """尝试返回 DirectML 设备（AMD/Intel 核显/独显）；未安装或不可用时返回 None。"""
+    """尝试返回 DirectML 设备（AMD/Intel 核显/独显）；未安装或不可用时返回 None。
+
+    各分支均打印一行日志，避免静默回退到 CPU 让用户误以为在用 DML。
+    """
     try:
         import torch_directml
-    except Exception:
+    except Exception as e:
+        print(f"[Device] 未启用 DirectML：torch_directml 不可用（{type(e).__name__}: {e}），将回退 CPU")
         return None
     if getattr(torch_directml, "is_available", lambda: False)():
+        print("[Device] 已检测到 DirectML 设备（AMD/Intel 核显/独显）")
         return torch_directml.device()
+    print("[Device] torch_directml 已安装但当前不可用，回退 CPU")
     return None
 
 

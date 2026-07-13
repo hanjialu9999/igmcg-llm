@@ -107,7 +107,9 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
 
     total_steps = len(dataloader)
     total_eff = (total_steps + grad_accum_steps - 1) // grad_accum_steps
-    warmup_target = int(warmup_steps * total_eff) if 0 < warmup_steps < 1 else int(warmup_steps)
+    # warmup_steps 可能为小数（占 epoch 比例）或整数步数；钳制不超过总有效步数，
+    # 避免误配过大预热导致全程线性升温、永不进入稳定/衰减期。
+    warmup_target = min(int(warmup_steps * total_eff) if 0 < warmup_steps < 1 else int(warmup_steps), total_eff)
 
     optimizer.zero_grad()
     accumulated = 0
