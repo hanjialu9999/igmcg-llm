@@ -99,7 +99,7 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
     - lr_schedule: cosine | constant | wsd（见 compute_lr）。
     """
     model.train()
-    loss_sum = torch.zeros((), device='cpu')   # 以张量累加，避免每微批都 .item() 触发设备同步
+    loss_sum = 0.0  # 用 Python float 累加，避免张量创建开销与潜在计算图残留
     loss_count = 0
 
     total_steps = len(dataloader)
@@ -158,10 +158,10 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
         if accumulated % grad_accum_steps == 0:
             step_optimizer()
 
-        # 累加损失（保持为张量，仅日志打印/返回时再 .item()）
+        # 累加损失（用 Python float，避免张量创建开销与潜在计算图残留）
         # 注意：这里累加的是未缩放的原始 loss（backward 内部已用 /grad_accum_steps 缩放梯度），
         # 不要乘以 grad_accum_steps，否则在累积步数>1 时报告值被错误地放大约 grad_accum_steps 倍。
-        loss_sum = loss_sum + loss.detach()
+        loss_sum += loss.detach().item()
         loss_count += 1
 
         if (batch_idx + 1) % 10 == 0:
@@ -208,7 +208,7 @@ def validate(model, dataloader, criterion, device):
 
 
 def save_checkpoint(model, optimizer, epoch, best_loss, checkpoint_dir, vocab_size, model_config=None):
-    """Save model checkpoint（含 model_config，使中间 checkpoint 也能被 generate.py 直接加载）"""
+    """Save model checkpoint (model_config saved separately as YAML for weights_only=True compatibility)"""
     checkpoint_path = os.path.join(checkpoint_dir, f'model_epoch_{epoch}.pt')
     torch.save({
         'epoch': epoch,
@@ -216,8 +216,13 @@ def save_checkpoint(model, optimizer, epoch, best_loss, checkpoint_dir, vocab_si
         'optimizer_state_dict': optimizer.state_dict(),
         'best_loss': best_loss,
         'vocab_size': vocab_size,
-        'config': model_config,
     }, checkpoint_path)
+    # Save config separately for weights_only=True compatibility
+    if model_config is not None:
+        import yaml
+        config_path = os.path.join(checkpoint_dir, f'model_epoch_{epoch}_config.yaml')
+        with open(config_path, 'w', encoding='utf-8') as f:
+            yaml.dump(model_config, f, allow_unicode=True)
     print(f"Checkpoint saved at {checkpoint_path}")
     return checkpoint_path
 
@@ -240,6 +245,10 @@ def cleanup_old_checkpoints(checkpoint_dir, keep_last_n=5):
     for file_path in files_to_delete:
         try:
             os.remove(file_path)
+            # Also remove corresponding config YAML
+            config_path = file_path.replace('.pt', '_config.yaml')
+            if os.path.exists(config_path):
+                os.remove(config_path)
             deleted_count += 1
             print(f"Removed: {os.path.basename(file_path)}")
         except Exception as e:
@@ -487,8 +496,12 @@ def main(config_path='configs/pretrain.yaml'):
     torch.save({
         'model_state_dict': model.state_dict(),
         'vocab_size': len(vocab),
-        'config': config['model']
     }, final_model_path)
+    # Save config separately for weights_only=True compatibility
+    import yaml
+    config_path = os.path.join(checkpoint_dir, 'final_model_config.yaml')
+    with open(config_path, 'w', encoding='utf-8') as f:
+        yaml.dump(config['model'], f, allow_unicode=True)
     
     vocab_path = os.path.join(checkpoint_dir, 'vocab.json')
     vocab_data = {

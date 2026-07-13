@@ -2,7 +2,7 @@
 import torch
 import json
 
-ckpt = torch.load('checkpoints/model_epoch_99.pt', map_location='cpu')
+ckpt = torch.load('checkpoints/model_epoch_99.pt', map_location='cpu', weights_only=True)
 print('检查点中的键:')
 for key in ckpt.keys():
     if isinstance(ckpt[key], dict):

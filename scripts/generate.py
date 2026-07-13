@@ -24,6 +24,8 @@ def load_model(model_path, vocab_path, device='cpu', quantize=False, compile_mod
     算子在自回归解码上通常带来 1.5~3× 吞吐提升；DML 设备自动跳过。
     """
     from torch import nn
+    import yaml
+    from pathlib import Path
 
     # Load vocabulary
     with open(vocab_path, 'r', encoding='utf-8') as f:
@@ -37,17 +39,25 @@ def load_model(model_path, vocab_path, device='cpu', quantize=False, compile_mod
     # 注意：DML 设备下若直接用 torch.device('privateuseone:0') 作 map_location，
     # torch.load 内部会调用 torch_directml.device(torch.device) 触发 TypeError，
     # 导致 DML 推理无法加载权重；统一先加载到 CPU 可绕开该问题。
-    checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
+    checkpoint = torch.load(model_path, map_location='cpu', weights_only=True)
 
-    model_config = checkpoint.get('config', {
-        'vocab_size': checkpoint['vocab_size'],
-        'embedding_dim': 128,
-        'num_heads': 4,
-        'num_layers': 2,
-        'hidden_dim': 256,
-        'max_seq_length': 32,
-        'dropout': 0.1
-    })
+    # Load config from separate YAML file (for weights_only=True compatibility)
+    model_path_obj = Path(model_path)
+    config_path = model_path_obj.parent / f"{model_path_obj.stem}_config.yaml"
+    if config_path.exists():
+        with open(config_path, 'r', encoding='utf-8') as f:
+            model_config = yaml.safe_load(f)
+    else:
+        # Fallback for old checkpoints with config embedded
+        model_config = checkpoint.get('config', {
+            'vocab_size': checkpoint.get('vocab_size', 12000),
+            'embedding_dim': 128,
+            'num_heads': 4,
+            'num_layers': 2,
+            'hidden_dim': 256,
+            'max_seq_length': 32,
+            'dropout': 0.1
+        })
 
     model = TransformerModel(
         vocab_size=checkpoint['vocab_size'],
@@ -276,23 +286,50 @@ def _style_features(text):
 
 
 def _generate_candidates_batch(model, ids, temps, max_length, top_k, rep_penalty,
-                               device, ngram_fn, ngram_weight, pad_id, sep_id, eos_id):
-    """并行生成 N 个候选：所有候选在一个 batch 内共享 KV-cache 前向，
-    避免逐候选各跑一遍自回归（约 N 倍加速）。
-    每行独立温度/重复惩罚/n-gram 先验；行内命中 EOS 后该行走 pad 保持静态。"""
+                                device, ngram_fn, ngram_weight, pad_id, sep_id, eos_id):
+    """并行生成 N 个候选：每个候选维护独立的 KV-cache，避免候选间污染。
+    逐步并行前向（batch=N），但每行独立维护 past 状态。"""
     N = len(temps)
     generated = [list(ids) for _ in range(N)]
     done = [False] * N
     min_len = max(3, len(ids) + 2)
+    past = [None] * N  # 每个候选独立的 past
 
     with torch.no_grad():
+        # 初始前向：所有候选共享同一输入
         inp = torch.tensor([ids] * N, dtype=torch.long, device=device)
-        logits, past = model.forward(inp, past_key_values=None, use_cache=True)
+        logits, past_list = model.forward(inp, past_key_values=None, use_cache=True)
+        # past_list 是长度为 num_layers 的列表，每个元素是 (B, ...) 这里 B=N
+        # 需要拆分为每个候选的独立 past
+        for i in range(N):
+            candidate_past = []
+            for layer_past in past_list:
+                if layer_past is None:
+                    candidate_past.append(None)
+                else:
+                    # layer_past 是 (attn_kv, ssm_state)
+                    attn_kv, ssm_state = layer_past
+                    if attn_kv is not None:
+                        # attn_kv 是 (key, value)，每个形状 (N, H, T, D)
+                        k, v = attn_kv
+                        candidate_past.append(((k[i:i+1], v[i:i+1]), ssm_state[i:i+1] if ssm_state is not None else None))
+                    else:
+                        candidate_past.append((None, ssm_state[i:i+1] if ssm_state is not None else None))
+            past[i] = candidate_past
+
         for step in range(max_length):
             if len(generated[0]) >= model.max_seq_length:
                 break
             nt = []
+            next_past = [None] * N
+            
             for n in range(N):
+                if done[n]:
+                    # 候选已完成，生成 pad
+                    nt.append(pad_id)
+                    next_past[n] = past[n]  # 保持不变
+                    continue
+                
                 lt = logits[n, -1, :] / temps[n]
                 for prev in set(generated[n]):
                     if 0 <= prev < lt.shape[0]:
@@ -301,9 +338,9 @@ def _generate_candidates_batch(model, ids, temps, max_length, top_k, rep_penalty
                     lt = lt + ngram_weight * ngram_fn(generated[n], device)
                 lt[pad_id] = float('-inf')
                 lt[sep_id] = float('-inf')
-                if not done[n] and len(generated[n]) < min_len:
+                if len(generated[n]) < min_len:
                     lt[eos_id] = float('-inf')
-                elif not done[n]:
+                else:
                     lt[eos_id] = lt[eos_id] - 5.0
                 if top_k > 0 and top_k < lt.shape[0]:
                     thr = torch.topk(lt, min(top_k, lt.shape[0]))[0][-1]
@@ -311,16 +348,32 @@ def _generate_candidates_batch(model, ids, temps, max_length, top_k, rep_penalty
                 if torch.isinf(lt).all():
                     lt = logits[n, -1, :] / temps[n]
                     lt[pad_id] = float('-inf')
-                nt.append(torch.multinomial(torch.softmax(lt, 0), 1).item())
-            feed = torch.tensor(nt, dtype=torch.long, device=device).unsqueeze(1)
+                next_token = torch.multinomial(torch.softmax(lt, 0), 1).item()
+                nt.append(next_token)
+                generated[n].append(next_token)
+                if next_token == eos_id and len(generated[n]) >= min_len:
+                    done[n] = True
+            
+            # 并行前向：构造 batch 输入，每个候选用自己的 past
+            feed = torch.tensor(nt, dtype=torch.long, device=device).unsqueeze(1)  # (N, 1)
+            
+            # 合并所有候选的 past 进行 batch 前向
+            # 但这很复杂，简化方案：逐个候选前向（因为 N 通常很小，如 4-5）
+            # 或者重新组装 past
+            all_logits = []
             for n in range(N):
-                if not done[n]:
-                    generated[n].append(nt[n])
-                    if nt[n] == eos_id and len(generated[n]) >= min_len:
-                        done[n] = True
+                if past[n] is not None:
+                    l, new_past = model.forward(feed[n:n+1], past_key_values=past[n], use_cache=True)
+                    all_logits.append(l)
+                    next_past[n] = new_past
                 else:
-                    feed[n, 0] = pad_id
-            logits, past = model.forward(feed, past_key_values=past, use_cache=True)
+                    l = model.forward(feed[n:n+1])
+                    all_logits.append(l)
+                    next_past[n] = None
+            
+            logits = torch.cat(all_logits, dim=0)  # (N, 1, vocab)
+            past = next_past
+
     return generated
 
 

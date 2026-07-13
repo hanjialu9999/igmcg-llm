@@ -94,7 +94,7 @@ for model_file, label in models_to_test:
     
     try:
         model = create_model()
-        checkpoint = torch.load(checkpoint_path, map_location='cpu')
+        checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=True)
         model.load_state_dict(checkpoint['model_state_dict'])
         model = model.to(device)
         model.eval()

@@ -119,7 +119,7 @@ def train():
 
     if os.path.exists(model_path):
         print("加载权重参数...")
-        checkpoint = torch.load(model_path, map_location='cpu')
+        checkpoint = torch.load(model_path, map_location='cpu', weights_only=True)
         if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
             model.load_state_dict(checkpoint['model_state_dict'])
             print("✅ 从 checkpoint 成功加载权重")

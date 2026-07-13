@@ -14,7 +14,7 @@ def view_model_structure():
     model_path = "checkpoints/final_model.pt"
 
     print("正在加载模型...")
-    checkpoint = torch.load(model_path, map_location='cpu')
+    checkpoint = torch.load(model_path, map_location='cpu', weights_only=True)
 
     # 兼容两种保存格式：完整模型对象 或 含 model_state_dict 的字典
     if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:

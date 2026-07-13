@@ -42,7 +42,7 @@ model = TransformerModel(
 )
 
 # Load checkpoint
-checkpoint = torch.load('checkpoints/final_model.pt', map_location='cpu')
+checkpoint = torch.load('checkpoints/final_model.pt', map_location='cpu', weights_only=True)
 model.load_state_dict(checkpoint['model_state_dict'])
 model = model.to(device)
 model.eval()

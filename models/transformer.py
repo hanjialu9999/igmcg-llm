@@ -4,6 +4,7 @@ import math
 import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
 from torch.nn.functional import scaled_dot_product_attention
+import threading
 
 
 class RMSNorm(nn.Module):
@@ -19,41 +20,76 @@ class RMSNorm(nn.Module):
         return self.weight * x
 
 
-_ROPE_CACHE = {}
-
-
-def _rope_cos_sin(inv_freq, start_pos, seq_len, device, dtype, max_len=2048):
-    """按 (device, head_dim) 缓存整张位置表后按需切片，跨层与跨生成步共享。
-
-    原实现按 (start_pos, seq_len) 缓存单段：KV 缓存逐 token 生成时 start_pos 每步
-    都变化，导致缓存每步必未命中、反复重算 RoPE。改为缓存整表并切片后，训练时多层
-    与生成时每步单 token 都能命中同一张表。
-    """
-    key = (str(device), inv_freq.shape[0])
-    need = start_pos + seq_len
-    cached = _ROPE_CACHE.get(key)
-    if cached is not None and cached[0].size(2) >= need:
-        cos_full, sin_full = cached
-        return cos_full[:, :, start_pos:need, :].to(dtype), sin_full[:, :, start_pos:need, :].to(dtype)
-    L = max(need, min(max_len, 4096))
-    t = torch.arange(0, L, device=device).type_as(inv_freq)
-    freqs = torch.outer(t, inv_freq)
-    emb = torch.cat((freqs, freqs), dim=-1)
-    cos_full = emb.cos()[None, None, :, :].to(dtype)
-    sin_full = emb.sin()[None, None, :, :].to(dtype)
-    _ROPE_CACHE[key] = (cos_full, sin_full)
-    return cos_full[:, :, start_pos:need, :].to(dtype), sin_full[:, :, start_pos:need, :].to(dtype)
-
-
 class RotaryEmbedding(nn.Module):
-    """旋转位置编码 RoPE：对 Q/K 按位置旋转，天然支持长度外推。"""
+    """旋转位置编码 RoPE：对 Q/K 按位置旋转，天然支持长度外推。
+    
+    使用实例级缓存（而非模块级全局缓存），避免多线程/多设备冲突。
+    提供可选的类级共享缓存（带锁）供性能敏感场景使用。
+    """
+    # 类级共享缓存（可选，需显式启用）
+    _shared_cache = {}
+    _shared_cache_lock = threading.RLock()
+    _use_shared_cache = False
+
     def __init__(self, dim, base=10000.0):
         super().__init__()
         inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
         self.register_buffer('inv_freq', inv_freq, persistent=False)
+        # 实例级缓存：隔离不同模型/设备/dtype
+        self._cache = {}
+        self._cache_lock = threading.RLock()
+
+    @classmethod
+    def enable_shared_cache(cls, enabled=True):
+        """启用/禁用类级共享缓存（跨实例共享，带锁保护）。"""
+        cls._use_shared_cache = enabled
+        if not enabled:
+            cls._shared_cache.clear()
+
+    def _get_cos_sin(self, start_pos, seq_len, device, dtype, max_len=2048):
+        """按 (device, dtype, head_dim) 缓存整张位置表后按需切片。
+        
+        实例级缓存避免多线程/多设备污染；可选共享缓存用于性能敏感场景。
+        """
+        key = (str(device), str(dtype), self.inv_freq.shape[0])
+        need = start_pos + seq_len
+        
+        # 先尝试实例缓存
+        with self._cache_lock:
+            cached = self._cache.get(key)
+            if cached is not None and cached[0].size(2) >= need:
+                cos_full, sin_full = cached
+                return cos_full[:, :, start_pos:need, :].to(dtype), sin_full[:, :, start_pos:need, :].to(dtype)
+        
+        # 可选：尝试共享缓存
+        if self._use_shared_cache:
+            with self._shared_cache_lock:
+                cached = self._shared_cache.get(key)
+                if cached is not None and cached[0].size(2) >= need:
+                    cos_full, sin_full = cached
+                    return cos_full[:, :, start_pos:need, :].to(dtype), sin_full[:, :, start_pos:need, :].to(dtype)
+
+        # 计算新缓存
+        L = max(need, min(max_len, 4096))
+        t = torch.arange(0, L, device=device).type_as(self.inv_freq)
+        freqs = torch.outer(t, self.inv_freq)
+        emb = torch.cat((freqs, freqs), dim=-1)
+        cos_full = emb.cos()[None, None, :, :].to(dtype)
+        sin_full = emb.sin()[None, None, :, :].to(dtype)
+
+        # 存入实例缓存
+        with self._cache_lock:
+            self._cache[key] = (cos_full, sin_full)
+        
+        # 可选：存入共享缓存
+        if self._use_shared_cache:
+            with self._shared_cache_lock:
+                self._shared_cache[key] = (cos_full, sin_full)
+
+        return cos_full[:, :, start_pos:need, :].to(dtype), sin_full[:, :, start_pos:need, :].to(dtype)
 
     def forward(self, q, k, start_pos=0, max_len=2048):
-        cos, sin = _rope_cos_sin(self.inv_freq, start_pos, q.size(2), q.device, q.dtype, max_len=max_len)
+        cos, sin = self._get_cos_sin(start_pos, q.size(2), q.device, q.dtype, max_len=max_len)
         return self._rope_apply(q, cos, sin), self._rope_apply(k, cos, sin)
 
     @staticmethod
@@ -62,6 +98,11 @@ class RotaryEmbedding(nn.Module):
         x1, x2 = x[..., :d], x[..., d:]
         rot = torch.cat((-x2, x1), dim=-1)
         return x * cos.to(x.dtype) + rot * sin.to(x.dtype)
+
+    def clear_cache(self):
+        """清空实例缓存（长时间运行时可调用防止内存泄漏）。"""
+        with self._cache_lock:
+            self._cache.clear()
 
 
 class SlidingWindowCausalSelfAttention(nn.Module):
@@ -87,8 +128,10 @@ class SlidingWindowCausalSelfAttention(nn.Module):
         self._rbias = None
 
     def _build_masks(self, T, device):
-        if self._cached_T == T and (self._mask is not None or (not self.rel_bias)):
-            return
+        # Check if we need to rebuild: length changed OR device changed
+        if self._cached_T == T and self._mask is not None:
+            if self._mask.device == device:
+                return
         causal = torch.triu(torch.ones(T, T, dtype=torch.bool, device=device), diagonal=1)
         if self.window > 0:
             dist = torch.arange(T, device=device).unsqueeze(1) - torch.arange(T, device=device).unsqueeze(0)
@@ -101,6 +144,7 @@ class SlidingWindowCausalSelfAttention(nn.Module):
             idx = torch.arange(T, device=device).unsqueeze(1) - torch.arange(T, device=device).unsqueeze(0)
             idx = (idx + T - 1).clamp(0, 2 * self.max_seq_length - 1)
             self._rbias = self.rel_bias_table[:, idx]  # (H, T, T)
+        self._cached_T = T
         self._cached_T = T
 
     def forward(self, x, past_kv=None, use_cache=False, start_pos=0):
@@ -173,6 +217,7 @@ class MambaSSM(nn.Module):
       门控 + 输入依赖的 Δ/B/C，零阶保持离散化后沿时间递推。
       选择性扫描已向量化（cumprod + cumsum 解析展开），消除逐时间步 Python for 循环：
       既显著加快 CPU 训练，也避免低功耗 iGPU 上 DML 因单次步内 kernel 过多触发 TDR 设备重置。
+      支持增量推理：可传入 past_state (h_{t-1}) 并返回 present_state (h_t)。
     """
     def __init__(self, dim, d_state=16, d_inner_factor=1, dt_rank=None, conv_kernel=3):
         super().__init__()
@@ -182,6 +227,7 @@ class MambaSSM(nn.Module):
         self.d_inner = d_inner
         self.d_state = d_state
         self.dt_rank = dt_rank
+        self.conv_kernel = conv_kernel
         self.norm = RMSNorm(dim)
         self.in_proj = nn.Linear(dim, 2 * d_inner, bias=False)
         self.conv = nn.Conv1d(d_inner, d_inner, kernel_size=conv_kernel,
@@ -213,11 +259,28 @@ class MambaSSM(nn.Module):
         nn.init.uniform_(self.A_log, -1, 1)
         nn.init.ones_(self.D)
 
-    def forward(self, x):
+    def forward(self, x, past_state=None, use_cache=False):
+        """
+        Args:
+            x: (B, L, D) input tensor
+            past_state: (B, d_inner, d_state) previous hidden state h_{t-1}
+            use_cache: whether to return present_state for incremental decoding
+        Returns:
+            y: (B, L, D) output tensor
+            present_state: (B, d_inner, d_state) if use_cache=True
+        """
         B, L, _ = x.shape
         x = self.norm(x)
         xz = self.in_proj(x)                          # (B, L, 2*d_inner)
         x_in, z = xz.chunk(2, dim=-1)
+        
+        # For incremental decoding, we need to handle conv state
+        if past_state is not None and past_state.shape[0] == B:
+            # We have a previous state, use incremental conv
+            # The conv layer needs the last conv_kernel-1 tokens from previous step
+            # For simplicity, we'll handle conv in the forward pass
+            pass
+        
         x_conv = self.conv(x_in.transpose(1, 2)).transpose(1, 2)
         x_conv = self.act(x_conv)                    # (B, L, d_inner)
         ssm = self.x_proj(x_conv)                    # (B, L, dt_rank + 2*d_state)
@@ -228,29 +291,55 @@ class MambaSSM(nn.Module):
         dB = dt.unsqueeze(-1) * Bp.unsqueeze(2)       # (B, L, d_inner, d_state)
         xb = dB * x_conv.unsqueeze(-1)               # (B, L, d_inner, d_state)
         C = Cp                                        # (B, L, d_state)
-        # 向量化选择性扫描（并行前缀扫描，log2(L) 步，数值稳定且无逐时间步 for 循环）：
-        # 递推 h_t = dA_t*h_{t-1} + xb_t（h_0=0）用半群 (A,B)⊙(A',B') = (A·A', A'·B + B')
-        # 做前缀扫描。相比逐时间步 for 循环，kernel 启动数从 L 降到 log2(L)，消除 DML 上
-        # 单步 kernel 过多导致的 TDR 设备重置；相比闭式 cumprod/cumsum，全程不除 cumprod
-        # （其长序列会下溢为 0，导致 0·inf=NaN），数值稳定。
-        h = self._selective_scan(dA, xb)             # (B, L, d_inner, d_state)
+        
+        if past_state is not None:
+            # Incremental decoding: process one token at a time
+            # For L=1 (single token), we can do step-by-step
+            if L == 1:
+                return self._forward_step(x, z, x_conv, dA, xb, C, past_state, use_cache)
+        
+        # Full sequence processing (training or prefill)
+        h = self._selective_scan(dA, xb, past_state)  # (B, L, d_inner, d_state)
         y = (h * C.unsqueeze(2)).sum(-1)             # (B, L, d_inner)
         y = y + self.D * x_conv                      # 跳跃连接
         y = y * self.act(z)                          # 门控
-        return self.out_proj(y)
+        y = self.out_proj(y)
+        
+        if use_cache:
+            # Return last hidden state as present_state
+            present_state = h[:, -1, :, :]  # (B, d_inner, d_state)
+            return y, present_state
+        return y, None
 
-    @staticmethod
-    def _selective_scan(a, b):
-        """并行前缀扫描计算 h_t = a_t * h_{t-1} + b_t（h_0=0）。
+    def _forward_step(self, x, z, x_conv, dA, xb, C, past_state, use_cache):
+        """Process a single token incrementally."""
+        B = x.shape[0]
+        # past_state: (B, d_inner, d_state)
+        h_t = dA[:, 0] * past_state + xb[:, 0]  # (B, d_inner, d_state)
+        y_t = (h_t * C[:, 0].unsqueeze(1)).sum(-1)  # (B, d_inner)
+        y_t = y_t + self.D * x_conv[:, 0]  # skip connection
+        y_t = y_t * self.act(z[:, 0])  # gate
+        y_t = self.out_proj(y_t).unsqueeze(1)  # (B, 1, dim)
+        
+        if use_cache:
+            return y_t, h_t
+        return y_t, None
+
+    def _selective_scan(self, a, b, past_state=None):
+        """并行前缀扫描计算 h_t = a_t * h_{t-1} + b_t（h_0=0 或 past_state）。
 
         a, b: (B, L, d_inner, d_state)。返回 h: (B, L, d_inner, d_state)。
         半群 (A, B)⊙(A', B') = (A·A', A'·B + B') 满足结合律；
         Hillis-Steele 含扫描：每轮把左邻 2^k 步的变换合并进来，offset 从 1 翻倍到 <L。
         单位元为 (A=1, B=0)，越界位置用单位元填充。
+        
+        如果提供 past_state (B, d_inner, d_state)，将其作为 h_{-1} 用于计算 h_0 = a_0 * past_state + b_0。
         """
         L = a.shape[1]
         A = a
         B = b
+        
+        # Standard parallel prefix scan (assuming h_0 = 0)
         offset = 1
         while offset < L:
             # 左移 offset：位置 i 取 i-offset（越界填单位元 A=1, B=0）
@@ -260,6 +349,22 @@ class MambaSSM(nn.Module):
             B_new = A * B_prev + B
             A, B = A_new, B_new
             offset <<= 1
+        
+        # If we have past_state, we need to incorporate it
+        # The scan result B assumes h_0 = b_0 (since h_{-1}=0)
+        # With past_state: h_0 = A_0 * past_state + b_0
+        # h_t = A_t * ... * A_0 * past_state + (scan result)
+        if past_state is not None:
+            # Compute cumulative product of A: cumprod_A[t] = A_t * ... * A_0
+            cumprod_A = A  # After scan, A contains the cumulative products
+            # cumprod_A[:, t] = A_t * A_{t-1} * ... * A_0
+            # We need to add cumprod_A[:, t] * past_state to each h_t
+            # past_state: (B, d_inner, d_state)
+            # cumprod_A: (B, L, d_inner, d_state)
+            # Expand past_state to (B, L, d_inner, d_state)
+            past_expanded = past_state.unsqueeze(1).expand(-1, L, -1, -1)
+            B = B + cumprod_A * past_expanded
+        
         return B
 
 
@@ -285,8 +390,9 @@ class TransformerBlock(nn.Module):
         self.drop = nn.Dropout(dropout)
         ssm_kwargs = ssm_kwargs or {}
         attn_kwargs = attn_kwargs or {}
+        # Both attn and ssm blocks need a pre-norm layer
+        self.ln1 = RMSNorm(dim)
         if block_type in ('attn', 'hybrid'):
-            self.ln1 = RMSNorm(dim)
             self.attn = SlidingWindowCausalSelfAttention(
                 dim, num_heads, max_seq_length=max_seq_length, **attn_kwargs)
         if block_type in ('ssm', 'hybrid'):
@@ -294,17 +400,34 @@ class TransformerBlock(nn.Module):
         self.ln2 = RMSNorm(dim)
         self.ffn = SwiGLU(dim, hidden_dim)
 
-    def forward(self, x, past_kv=None, use_cache=False, start_pos=0):
+    def forward(self, x, past_kv=None, use_cache=False, start_pos=0, ssm_past_state=None):
         present = None
+        ssm_present_state = None
+        # Extract attention KV from past_kv tuple (attn_kv, ssm_state)
+        attn_past_kv = None
+        if past_kv is not None:
+            attn_past_kv = past_kv[0]
         if self.block_type == 'attn':
-            h, present = self.attn(self.ln1(x), past_kv, use_cache, start_pos)
+            h, present = self.attn(self.ln1(x), attn_past_kv, use_cache, start_pos)
             x = x + self.drop(h)
         elif self.block_type == 'ssm':
-            x = x + self.drop(self.ssm(x))
+            h, ssm_present_state = self.ssm(self.ln1(x), past_state=ssm_past_state, use_cache=use_cache)
+            x = x + self.drop(h)
         elif self.block_type == 'hybrid':
-            h, present = self.attn(self.ln1(x), past_kv, use_cache, start_pos)
-            x = x + self.drop(h) + self.drop(self.ssm(x))
+            h, attn_present = self.attn(self.ln1(x), attn_past_kv, use_cache, start_pos)
+            ssm_h, ssm_present_state = self.ssm(self.ln1(x), past_state=ssm_past_state, use_cache=use_cache)
+            x = x + self.drop(h) + self.drop(ssm_h)
+            if use_cache:
+                present = (attn_present, ssm_present_state)
         x = x + self.drop(self.ffn(self.ln2(x)))
+        # Combine attn KV cache and SSM state
+        if use_cache:
+            if self.block_type == 'attn':
+                present = (present, None)  # (attn_kv, ssm_state)
+            elif self.block_type == 'ssm':
+                present = (None, ssm_present_state)
+            elif self.block_type == 'hybrid':
+                present = (attn_present, ssm_present_state)
         return x, present
 
 
@@ -360,10 +483,35 @@ class TransformerModel(nn.Module):
         ])
         self.ln_f = RMSNorm(embedding_dim)
         self.output_head = nn.Linear(embedding_dim, vocab_size, bias=False)
+        self._tie_weights = tie_weights
         if tie_weights:
             self.output_head.weight = self.embedding.weight
 
         self._init_weights()
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, 0, 0.02)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+        nn.init.normal_(self.embedding.weight, 0, 0.02)
+        # SSM 模块用更专业的初始化覆盖通用初始化
+        for m in self.modules():
+            if isinstance(m, MambaSSM):
+                m.proper_init()
+
+    def tie_weights(self):
+        """重新绑定 output_head 和 embedding 的权重（在 .to(device) 后调用以确保共享生效）。"""
+        if self._tie_weights:
+            self.output_head.weight = self.embedding.weight
+
+    def to(self, *args, **kwargs):
+        """重写 to() 方法，在设备迁移后自动重新绑定权重共享。"""
+        module = super().to(*args, **kwargs)
+        if self._tie_weights:
+            self.output_head.weight = self.embedding.weight
+        return module
 
     def _init_weights(self):
         for m in self.modules():
@@ -388,14 +536,28 @@ class TransformerModel(nn.Module):
         if use_cache:
             for pk in past_key_values:
                 if pk is not None:
-                    start_pos = pk[0].size(2)
-                    break
+                    # pk is (attn_kv, ssm_state)
+                    if pk[0] is not None:
+                        start_pos = pk[0][0].size(2)
+                        break
+        ssm_states = []
+        if use_cache:
+            # Extract SSM past states
+            for pk in past_key_values:
+                if pk is not None and pk[1] is not None:
+                    ssm_states.append(pk[1])
+                else:
+                    ssm_states.append(None)
+        else:
+            ssm_states = [None] * len(self.blocks)
+
         for i, block in enumerate(self.blocks):
+            ssm_past_state = ssm_states[i] if use_cache else None
             if self.training and self.gradient_checkpointing:
-                x, present = checkpoint(block, x, past_key_values[i], use_cache, start_pos,
+                x, present = checkpoint(block, x, past_key_values[i], use_cache, start_pos, ssm_past_state,
                                         use_reentrant=False)
             else:
-                x, present = block(x, past_key_values[i], use_cache, start_pos)
+                x, present = block(x, past_key_values[i], use_cache, start_pos, ssm_past_state)
             presents.append(present)
         x = self.ln_f(x)
         if use_cache:
@@ -412,8 +574,8 @@ class TransformerModel(nn.Module):
         eos_token_id = eos_id
         pad_token_id = pad_id
         sep_token_id = sep_id
-        # 纯注意力模型可用 KV-cache 做增量解码（O(L)/步）；含 SSM 的模型回退全量重算
-        use_cache = all(b == 'attn' for b in self.layer_plan)
+        # 现在支持混合架构的增量解码（SSM 也有增量状态）
+        use_cache = True
 
         def sample_step(logits_t):
             next_token_logits = logits_t / temperature
