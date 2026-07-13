@@ -37,27 +37,27 @@ vocab.word2idx = vocab_data['word2idx']
 vocab.idx2word = {int(k): v for k, v in vocab_data['idx2word'].items()}
 
 # Load model
-    import yaml
-    from pathlib import Path
-    
-    checkpoint = torch.load(model_path, map_location='cpu', weights_only=True)
-    # Load config from separate YAML file (for weights_only=True compatibility)
-    model_path_obj = Path(model_path)
-    config_path = model_path_obj.parent / f"{model_path_obj.stem}_config.yaml"
-    if config_path.exists():
-        with open(config_path, 'r', encoding='utf-8') as f:
-            model_config = yaml.safe_load(f)
-    else:
-        # Fallback for old checkpoints with config embedded
-        model_config = checkpoint.get('config', {
-            'vocab_size': checkpoint['vocab_size'],
-            'embedding_dim': 128,
-            'num_heads': 4,
-            'num_layers': 2,
-            'hidden_dim': 256,
-            'max_seq_length': 32,
-            'dropout': 0.1
-        })
+import yaml
+from pathlib import Path
+
+checkpoint = torch.load(model_path, map_location='cpu', weights_only=True)
+# Load config from separate YAML file (for weights_only=True compatibility)
+model_path_obj = Path(model_path)
+config_path = model_path_obj.parent / f"{model_path_obj.stem}_config.yaml"
+if config_path.exists():
+    with open(config_path, 'r', encoding='utf-8') as f:
+        model_config = yaml.safe_load(f)
+else:
+    # Fallback for old checkpoints with config embedded
+    model_config = checkpoint.get('config', {
+        'vocab_size': checkpoint['vocab_size'],
+        'embedding_dim': 128,
+        'num_heads': 4,
+        'num_layers': 2,
+        'hidden_dim': 256,
+        'max_seq_length': 32,
+        'dropout': 0.1
+    })
 
 model = TransformerModel(
     vocab_size=checkpoint['vocab_size'],

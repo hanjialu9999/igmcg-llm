@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import torch
 import torch.nn as nn
 import math
@@ -5,16 +7,17 @@ import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
 from torch.nn.functional import scaled_dot_product_attention
 import threading
+from typing import Optional, List, Tuple, Any, Dict, Callable
 
 
 class RMSNorm(nn.Module):
     """Root Mean Square Layer Normalization（LLaMA 风格，比 LayerNorm 更省且更稳定）。"""
-    def __init__(self, dim, eps=1e-6):
+    def __init__(self, dim: int, eps: float = 1e-6):
         super().__init__()
         self.weight = nn.Parameter(torch.ones(dim))
         self.eps = eps
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         variance = x.pow(2).mean(-1, keepdim=True)
         x = x * torch.rsqrt(variance + self.eps)
         return self.weight * x
@@ -27,26 +30,26 @@ class RotaryEmbedding(nn.Module):
     提供可选的类级共享缓存（带锁）供性能敏感场景使用。
     """
     # 类级共享缓存（可选，需显式启用）
-    _shared_cache = {}
+    _shared_cache: Dict[Tuple[str, str, int], Tuple[torch.Tensor, torch.Tensor]] = {}
     _shared_cache_lock = threading.RLock()
     _use_shared_cache = False
 
-    def __init__(self, dim, base=10000.0):
+    def __init__(self, dim: int, base: float = 10000.0):
         super().__init__()
         inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
         self.register_buffer('inv_freq', inv_freq, persistent=False)
         # 实例级缓存：隔离不同模型/设备/dtype
-        self._cache = {}
+        self._cache: Dict[Tuple[str, str, int], Tuple[torch.Tensor, torch.Tensor]] = {}
         self._cache_lock = threading.RLock()
 
     @classmethod
-    def enable_shared_cache(cls, enabled=True):
+    def enable_shared_cache(cls, enabled: bool = True):
         """启用/禁用类级共享缓存（跨实例共享，带锁保护）。"""
         cls._use_shared_cache = enabled
         if not enabled:
             cls._shared_cache.clear()
 
-    def _get_cos_sin(self, start_pos, seq_len, device, dtype, max_len=2048):
+    def _get_cos_sin(self, start_pos: int, seq_len: int, device: torch.device, dtype: torch.dtype, max_len: int = 2048) -> Tuple[torch.Tensor, torch.Tensor]:
         """按 (device, dtype, head_dim) 缓存整张位置表后按需切片。
         
         实例级缓存避免多线程/多设备污染；可选共享缓存用于性能敏感场景。
@@ -88,12 +91,12 @@ class RotaryEmbedding(nn.Module):
 
         return cos_full[:, :, start_pos:need, :].to(dtype), sin_full[:, :, start_pos:need, :].to(dtype)
 
-    def forward(self, q, k, start_pos=0, max_len=2048):
+    def forward(self, q: torch.Tensor, k: torch.Tensor, start_pos: int = 0, max_len: int = 2048) -> Tuple[torch.Tensor, torch.Tensor]:
         cos, sin = self._get_cos_sin(start_pos, q.size(2), q.device, q.dtype, max_len=max_len)
         return self._rope_apply(q, cos, sin), self._rope_apply(k, cos, sin)
 
     @staticmethod
-    def _rope_apply(x, cos, sin):
+    def _rope_apply(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
         d = x.size(-1) // 2
         x1, x2 = x[..., :d], x[..., d:]
         rot = torch.cat((-x2, x1), dim=-1)
@@ -110,7 +113,7 @@ class SlidingWindowCausalSelfAttention(nn.Module):
      CUDA/CPU 用原生 fused SDPA；AMD DirectML 的 fused 内核会触发原生崩溃，
      故 DML(及其他后端)走手动 matmul+softmax+因果掩码 以规避该 bug。
     """
-    def __init__(self, dim, num_heads, window=0, rel_bias=False, max_seq_length=64):
+    def __init__(self, dim: int, num_heads: int, window: int = 0, rel_bias: bool = False, max_seq_length: int = 64):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
@@ -124,10 +127,10 @@ class SlidingWindowCausalSelfAttention(nn.Module):
             # T5 风格相对位置偏置表：(heads, 2T-1)
             self.rel_bias_table = nn.Parameter(torch.zeros(num_heads, 2 * max_seq_length - 1))
         self._cached_T = -1
-        self._mask = None
-        self._rbias = None
+        self._mask: Optional[torch.Tensor] = None
+        self._rbias: Optional[torch.Tensor] = None
 
-    def _build_masks(self, T, device):
+    def _build_masks(self, T: int, device: torch.device):
         # Check if we need to rebuild: length changed OR device changed
         if self._cached_T == T and self._mask is not None:
             if self._mask.device == device:
@@ -147,7 +150,7 @@ class SlidingWindowCausalSelfAttention(nn.Module):
         self._cached_T = T
         self._cached_T = T
 
-    def forward(self, x, past_kv=None, use_cache=False, start_pos=0):
+    def forward(self, x: torch.Tensor, past_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None, use_cache: bool = False, start_pos: int = 0) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         B, T, C = x.shape
         qkv = self.qkv(x).reshape(B, T, 3, self.num_heads, self.head_dim)
         qkv = qkv.permute(2, 0, 3, 1, 4)          # (3, B, H, T, D)
@@ -198,7 +201,7 @@ class SlidingWindowCausalSelfAttention(nn.Module):
         out = out.transpose(1, 2).reshape(B, T, C)
         return self.proj(out), None
 
-    def _manual_attention(self, q, k, v, attn_mask=None):
+    def _manual_attention(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, attn_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         # q,k,v: (B, H, Tq, D)；attn_mask: (1,1,Tq,Tkv) 或 None(纯因果)
         scale = 1.0 / math.sqrt(self.head_dim)
         scores = torch.matmul(q, k.transpose(-2, -1)) * scale   # (B, H, Tq, Tkv)
@@ -219,7 +222,7 @@ class MambaSSM(nn.Module):
       既显著加快 CPU 训练，也避免低功耗 iGPU 上 DML 因单次步内 kernel 过多触发 TDR 设备重置。
       支持增量推理：可传入 past_state (h_{t-1}) 并返回 present_state (h_t)。
     """
-    def __init__(self, dim, d_state=16, d_inner_factor=1, dt_rank=None, conv_kernel=3):
+    def __init__(self, dim: int, d_state: int = 16, d_inner_factor: int = 1, dt_rank: Optional[int] = None, conv_kernel: int = 3):
         super().__init__()
         d_inner = dim * d_inner_factor
         dt_rank = dt_rank or max(1, math.ceil(dim / 16))
@@ -259,7 +262,7 @@ class MambaSSM(nn.Module):
         nn.init.uniform_(self.A_log, -1, 1)
         nn.init.ones_(self.D)
 
-    def forward(self, x, past_state=None, use_cache=False):
+    def forward(self, x: torch.Tensor, past_state: Optional[torch.Tensor] = None, use_cache: bool = False) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
         Args:
             x: (B, L, D) input tensor
@@ -294,7 +297,6 @@ class MambaSSM(nn.Module):
         
         if past_state is not None:
             # Incremental decoding: process one token at a time
-            # For L=1 (single token), we can do step-by-step
             if L == 1:
                 return self._forward_step(x, z, x_conv, dA, xb, C, past_state, use_cache)
         
@@ -311,7 +313,7 @@ class MambaSSM(nn.Module):
             return y, present_state
         return y, None
 
-    def _forward_step(self, x, z, x_conv, dA, xb, C, past_state, use_cache):
+    def _forward_step(self, x: torch.Tensor, z: torch.Tensor, x_conv: torch.Tensor, dA: torch.Tensor, xb: torch.Tensor, C: torch.Tensor, past_state: torch.Tensor, use_cache: bool) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """Process a single token incrementally."""
         B = x.shape[0]
         # past_state: (B, d_inner, d_state)
@@ -325,7 +327,7 @@ class MambaSSM(nn.Module):
             return y_t, h_t
         return y_t, None
 
-    def _selective_scan(self, a, b, past_state=None):
+    def _selective_scan(self, a: torch.Tensor, b: torch.Tensor, past_state: Optional[torch.Tensor] = None) -> torch.Tensor:
         """并行前缀扫描计算 h_t = a_t * h_{t-1} + b_t（h_0=0 或 past_state）。
 
         a, b: (B, L, d_inner, d_state)。返回 h: (B, L, d_inner, d_state)。
@@ -370,21 +372,21 @@ class MambaSSM(nn.Module):
 
 class SwiGLU(nn.Module):
     """SwiGLU 前馈（LLaMA 风格门控 FFN，比 GELU MLP 更有表达力）。"""
-    def __init__(self, dim, hidden_dim):
+    def __init__(self, dim: int, hidden_dim: int):
         super().__init__()
         self.w1 = nn.Linear(dim, hidden_dim, bias=False)
         self.w2 = nn.Linear(hidden_dim, dim, bias=False)
         self.w3 = nn.Linear(dim, hidden_dim, bias=False)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.w2(torch.nn.functional.silu(self.w1(x)) * self.w3(x))
 
 
 class TransformerBlock(nn.Module):
     """可配置混合块：attn / ssm / hybrid(attn+ssm 并行)。Pre-LN。"""
-    def __init__(self, dim, num_heads, hidden_dim, block_type='attn',
-                 dropout=0.0, max_seq_length=64,
-                 ssm_kwargs=None, attn_kwargs=None):
+    def __init__(self, dim: int, num_heads: int, hidden_dim: int, block_type: str = 'attn',
+                 dropout: float = 0.0, max_seq_length: int = 64,
+                 ssm_kwargs: Optional[Dict[str, Any]] = None, attn_kwargs: Optional[Dict[str, Any]] = None):
         super().__init__()
         self.block_type = block_type
         self.drop = nn.Dropout(dropout)
@@ -400,11 +402,11 @@ class TransformerBlock(nn.Module):
         self.ln2 = RMSNorm(dim)
         self.ffn = SwiGLU(dim, hidden_dim)
 
-    def forward(self, x, past_kv=None, use_cache=False, start_pos=0, ssm_past_state=None):
-        present = None
-        ssm_present_state = None
+    def forward(self, x: torch.Tensor, past_kv: Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor]]] = None, use_cache: bool = False, start_pos: int = 0, ssm_past_state: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor]]]]:
+        present: Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor]]] = None
+        ssm_present_state: Optional[torch.Tensor] = None
         # Extract attention KV from past_kv tuple (attn_kv, ssm_state)
-        attn_past_kv = None
+        attn_past_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
         if past_kv is not None:
             attn_past_kv = past_kv[0]
         if self.block_type == 'attn':
@@ -431,7 +433,7 @@ class TransformerBlock(nn.Module):
         return x, present
 
 
-def _parse_layer_plan(layer_plan, num_layers):
+def _parse_layer_plan(layer_plan: Optional[List[str] | str], num_layers: int) -> List[str]:
     """layer_plan: None / 'attn' / 'attn,ssm,attn,ssm' / list。
      返回长度为 num_layers 的 block 类型列表。"""
     if layer_plan is None:
@@ -458,11 +460,11 @@ class TransformerModel(nn.Module):
      默认 layer_plan=None 时全为 attn，与旧权重完全兼容。
     """
 
-    def __init__(self, vocab_size, embedding_dim, num_heads, num_layers,
-                 hidden_dim, max_seq_length, dropout=0.0, tie_weights=True,
-                 gradient_checkpointing=True,
-                 layer_plan=None, ssm_d_state=16, ssm_d_inner_factor=1,
-                 ssm_dt_rank=None, attn_window=0, attn_rel_bias=False):
+    def __init__(self, vocab_size: int, embedding_dim: int, num_heads: int, num_layers: int,
+                 hidden_dim: int, max_seq_length: int, dropout: float = 0.0, tie_weights: bool = True,
+                 gradient_checkpointing: bool = True,
+                 layer_plan: Optional[List[str] | str] = None, ssm_d_state: int = 16, ssm_d_inner_factor: int = 1,
+                 ssm_dt_rank: Optional[int] = None, attn_window: int = 0, attn_rel_bias: bool = False):
         super(TransformerModel, self).__init__()
 
         self.vocab_size = vocab_size
@@ -506,32 +508,20 @@ class TransformerModel(nn.Module):
         if self._tie_weights:
             self.output_head.weight = self.embedding.weight
 
-    def to(self, *args, **kwargs):
+    def to(self, *args: Any, **kwargs: Any):
         """重写 to() 方法，在设备迁移后自动重新绑定权重共享。"""
         module = super().to(*args, **kwargs)
         if self._tie_weights:
             self.output_head.weight = self.embedding.weight
         return module
 
-    def _init_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.normal_(m.weight, 0, 0.02)
-                if m.bias is not None:
-                    nn.init.zeros_(m.bias)
-        nn.init.normal_(self.embedding.weight, 0, 0.02)
-        # SSM 模块用更专业的初始化覆盖通用初始化
-        for m in self.modules():
-            if isinstance(m, MambaSSM):
-                m.proper_init()
-
-    def forward(self, src, src_mask=None, past_key_values=None, use_cache=False):
+    def forward(self, src: torch.Tensor, src_mask: Optional[torch.Tensor] = None, past_key_values: Optional[List[Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor]]]]] = None, use_cache: bool = False) -> Tuple[torch.Tensor, Optional[List[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor]]]]]:
         # src: (batch, seq_len)；RoPE 在注意力内部按位置旋转，无需外部 PE
         x = self.embedding(src) * math.sqrt(self.embedding_dim)
         x = self.drop(x)
         if past_key_values is None:
             past_key_values = [None] * len(self.blocks)
-        presents = []
+        presents: List[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor]]] = []
         start_pos = 0
         if use_cache:
             for pk in past_key_values:
@@ -540,7 +530,7 @@ class TransformerModel(nn.Module):
                     if pk[0] is not None:
                         start_pos = pk[0][0].size(2)
                         break
-        ssm_states = []
+        ssm_states: List[Optional[torch.Tensor]] = []
         if use_cache:
             # Extract SSM past states
             for pk in past_key_values:
@@ -564,10 +554,29 @@ class TransformerModel(nn.Module):
             return self.output_head(x), presents
         return self.output_head(x)
 
-    def generate(self, token_ids, max_length=50, temperature=1.0, top_k=50,
-                  device='cpu', penalty_alpha=0.6, repetition_penalty=1.2,
-                  ngram_fn=None, ngram_weight=0.0,
-                  eos_id=3, pad_id=0, sep_id=4):
+    def generate(self, token_ids: List[int], max_length: int = 50, temperature: float = 1.0, top_k: int = 50,
+                  device: str = 'cpu', penalty_alpha: float = 0.6, repetition_penalty: float = 1.2,
+                  ngram_fn: Optional[Callable[[List[int], str], torch.Tensor]] = None, ngram_weight: float = 0.0,
+                  eos_id: int = 3, pad_id: int = 0, sep_id: int = 4,
+                  min_length: int = 3, eos_penalty: float = -5.0) -> List[int]:
+        """生成文本（自回归解码）。
+
+        Args:
+            token_ids: 初始 token id 列表
+            max_length: 最大生成长度
+            temperature: 采样温度
+            top_k: top-k 采样，<=0 禁用，>=vocab_size 视为全词表
+            device: 设备
+            penalty_alpha: 惩罚系数（保留兼容，暂未使用）
+            repetition_penalty: 重复惩罚系数
+            ngram_fn: n-gram 先验函数
+            ngram_weight: n-gram 权重
+            eos_id: EOS token id
+            pad_id: PAD token id
+            sep_id: SEP token id
+            min_length: 最小生成长度（不含 prompt），默认 3（避免过短生成）
+            eos_penalty: EOS 惩罚值，默认 -5.0（负值抑制 EOS，正值鼓励 EOS）
+        """
         self.eval()
         generated = list(token_ids)
         max_seq_length = self.max_seq_length
@@ -577,7 +586,7 @@ class TransformerModel(nn.Module):
         # 现在支持混合架构的增量解码（SSM 也有增量状态）
         use_cache = True
 
-        def sample_step(logits_t):
+        def sample_step(logits_t: torch.Tensor) -> Optional[int]:
             next_token_logits = logits_t / temperature
             for prev_token in set(generated):
                 if 0 <= prev_token < next_token_logits.shape[0]:
@@ -586,13 +595,16 @@ class TransformerModel(nn.Module):
                 next_token_logits = next_token_logits + ngram_weight * ngram_fn(generated, device)
             next_token_logits[pad_token_id] = float('-inf')
             next_token_logits[sep_token_id] = float('-inf')
-            min_length = max(3, len(token_ids) + 2)
-            if len(generated) < min_length:
+            # min_length: 最小生成长度（不含 prompt），默认 3
+            if len(generated) - len(token_ids) < min_length:
                 next_token_logits[eos_token_id] = float('-inf')
             else:
-                next_token_logits[eos_token_id] = next_token_logits[eos_token_id] - 5.0
-            if top_k > 0 and top_k < next_token_logits.shape[0]:
-                top_k_vals = torch.topk(next_token_logits, min(top_k, next_token_logits.shape[0]))[0]
+                # eos_penalty: EOS 惩罚值，默认 -5.0（抑制 EOS）
+                next_token_logits[eos_token_id] = next_token_logits[eos_token_id] + eos_penalty
+            # top_k: <=0 禁用，>=vocab_size 视为全词表
+            vocab_size = next_token_logits.shape[0]
+            if top_k > 0 and top_k < vocab_size:
+                top_k_vals = torch.topk(next_token_logits, min(top_k, vocab_size))[0]
                 threshold = top_k_vals[..., -1]
                 next_token_logits[next_token_logits < threshold] = float('-inf')
             if torch.isinf(next_token_logits).all():
@@ -621,7 +633,7 @@ class TransformerModel(nn.Module):
                 if next_token is None:
                     break
                 generated.append(next_token)
-                if next_token == eos_token_id and len(generated) >= max(3, len(token_ids) + 2):
+                if next_token == eos_token_id and len(generated) - len(token_ids) >= min_length:
                     break
                 if use_cache:
                     input_ids = torch.tensor([[next_token]], dtype=torch.long, device=device)

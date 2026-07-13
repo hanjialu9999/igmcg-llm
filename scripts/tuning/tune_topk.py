@@ -27,8 +27,8 @@ vocab = load_vocab(args.vocab)
 device = get_device(args.device)
 
 model = build_model(load_config(), device=device)
-    cp = torch.load(args.model, map_location='cpu', weights_only=True)
-    model.load_state_dict(cp['model_state_dict'])
+cp = torch.load(args.model, map_location='cpu', weights_only=True)
+model.load_state_dict(cp['model_state_dict'])
 model.eval()
 
 test_questions = [
