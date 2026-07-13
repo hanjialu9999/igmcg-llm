@@ -12,6 +12,7 @@ from pathlib import Path
 from datetime import datetime
 import json
 import random
+import time
 import numpy as np
 
 try:
@@ -104,6 +105,8 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
     model.train()
     loss_sum = 0.0  # 用 Python float 累加，避免张量创建开销与潜在计算图残留
     loss_count = 0
+    t_start = time.time()
+    tokens_total = 0
 
     total_steps = len(dataloader)
     total_eff = (total_steps + grad_accum_steps - 1) // grad_accum_steps
@@ -168,15 +171,20 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
         # 不要乘以 grad_accum_steps，否则在累积步数>1 时上报值被错误地放大约 grad_accum_steps 倍。
         loss_sum += loss.detach().item()
         loss_count += 1
+        tokens_total += int(input_ids.numel())
 
         if (batch_idx + 1) % 10 == 0:
             avg = loss_sum / loss_count
+            elapsed = time.time() - t_start
+            tps = tokens_total / elapsed if elapsed > 0 else 0.0
             if progress is not None:
                 progress.set_postfix(loss=f"{avg:.4f}",
-                                     lr=f"{optimizer.param_groups[0]['lr']:.6f}")
+                                     lr=f"{optimizer.param_groups[0]['lr']:.6f}",
+                                     tok_s=f"{tps:.0f}")
             else:
                 print(f"Epoch {epoch} | Batch {batch_idx + 1}/{total_steps} | "
-                      f"Loss: {avg:.4f} | LR: {optimizer.param_groups[0]['lr']:.6f}")
+                      f"Loss: {avg:.4f} | LR: {optimizer.param_groups[0]['lr']:.6f} | "
+                      f"Speed: {tps:.0f} tok/s ({elapsed:.0f}s)")
 
     if progress is not None:
         progress.close()
@@ -397,7 +405,8 @@ def main(config_path='configs/pretrain.yaml'):
             grad_accum_steps=grad_accum_steps,
             lr_schedule=lr_schedule,
             eta_min=eta_min,
-            wsd_decay_frac=wsd_decay_frac
+            wsd_decay_frac=wsd_decay_frac,
+            show_progress=config['training'].get('show_progress', True)
         )
 
         history['train_loss'].append(train_loss)
