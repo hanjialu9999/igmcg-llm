@@ -7,6 +7,8 @@ from typing import Any, Dict, Optional
 import logging
 import sys
 import functools
+from collections import OrderedDict
+import numpy as np
 import torch
 
 
@@ -49,6 +51,22 @@ def cli_guard(func):
     return wrapper
 
 
+def _cpu_offload(obj):
+    """递归把任意嵌套结构中的张量搬到 CPU，并把 numpy 数组/标量转为 torch 张量或原生类型
+    （用于保存可移植 checkpoint：避免 pickle 中出现 numpy 反序列化全局符号）。"""
+    if isinstance(obj, np.ndarray):
+        return torch.from_numpy(np.ascontiguousarray(obj)).cpu()
+    if isinstance(obj, np.generic):
+        return obj.item()
+    if hasattr(obj, 'detach') and hasattr(obj, 'cpu'):
+        return obj.detach().cpu()
+    if isinstance(obj, dict):
+        return {k: _cpu_offload(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return type(obj)(_cpu_offload(v) for v in obj)
+    return obj
+
+
 def save_checkpoint(model: torch.nn.Module,
                     optimizer: torch.optim.Optimizer,
                     epoch: int,
@@ -72,10 +90,11 @@ def save_checkpoint(model: torch.nn.Module,
         Path to saved checkpoint
     """
     checkpoint_path = os.path.join(checkpoint_dir, f'model_epoch_{epoch}.pt')
+    # 保存为 CPU 张量，保证在任意设备（含 DML/CUDA）上都能用 weights_only=True 加载
     torch.save({
         'epoch': epoch,
-        'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
+        'model_state_dict': _cpu_offload(model.state_dict()),
+        'optimizer_state_dict': _cpu_offload(optimizer.state_dict()),
         'best_loss': best_loss,
         'vocab_size': vocab_size,
     }, checkpoint_path)
@@ -153,8 +172,9 @@ def save_final_model(model: torch.nn.Module,
         Tuple of (final_model_path, vocab_path)
     """
     final_model_path = os.path.join(checkpoint_dir, 'final_model.pt')
+    # 保存为 CPU 张量，保证在任意设备上都能用 weights_only=True 加载
     torch.save({
-        'model_state_dict': model.state_dict(),
+        'model_state_dict': _cpu_offload(model.state_dict()),
         'vocab_size': len(vocab),
     }, final_model_path)
 

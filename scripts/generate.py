@@ -16,6 +16,55 @@ from models.data_utils import Vocabulary
 from models.device import get_device
 from models.utils import cli_guard
 
+import re
+import pickle
+import importlib
+
+
+def _resolve_global(name: str):
+    """把 'a.b.c' 形式的全局符号名解析为实际对象（按需 import 模块）。"""
+    parts = name.split('.')
+    for i in range(len(parts) - 1, 0, -1):
+        modname = '.'.join(parts[:i])
+        try:
+            mod = importlib.import_module(modname)
+        except ImportError:
+            continue
+        obj = mod
+        ok = True
+        for attr in parts[i:]:
+            obj = getattr(obj, attr, None)
+            if obj is None:
+                ok = False
+                break
+        if ok:
+            return obj
+    return None
+
+
+def _safe_torch_load(path, map_location='cpu'):
+    """以 weights_only=True 加载 checkpoint；若被拒的全局符号为官方重建函数，
+    则放行后重试，直至加载成功或遇到非白名单类报错。checkpoint 均来自可信来源。"""
+    last_err = None
+    for _ in range(25):
+        try:
+            return torch.load(path, map_location=map_location, weights_only=True)
+        except (pickle.UnpicklingError, RuntimeError) as e:
+            msg = str(e)
+            m = re.search(r"GLOBAL\s+([A-Za-z0-9_.]+)\s+was not an allowed", msg)
+            if not m:
+                raise
+            obj = _resolve_global(m.group(1))
+            if obj is None:
+                raise
+            try:
+                torch.serialization.add_safe_globals([obj])
+            except Exception:
+                raise
+            last_err = e
+    if last_err is not None:
+        raise last_err
+
 def load_model(model_path, vocab_path, device='cpu', quantize=False, compile_model=False):
     """Load trained model and vocabulary.
 
@@ -39,7 +88,10 @@ def load_model(model_path, vocab_path, device='cpu', quantize=False, compile_mod
     # 注意：DML 设备下若直接用 torch.device('privateuseone:0') 作 map_location，
     # torch.load 内部会调用 torch_directml.device(torch.device) 触发 TypeError，
     # 导致 DML 推理无法加载权重；统一先加载到 CPU 可绕开该问题。
-    checkpoint = torch.load(model_path, map_location='cpu', weights_only=True)
+    # torch 2.4 的 weights_only 默认白名单不含张量/numpy 反序列化所需的若干全局符号。
+    # checkpoint 均来自可信来源，故用 _safe_torch_load 按需放行被拒的官方重建符号并重试，
+    # 既保留 weights_only 的安全语义，又能兼容不同 torch/numpy 版本产出的权重。
+    checkpoint = _safe_torch_load(model_path, map_location='cpu')
 
     # Load config from separate YAML file (for weights_only=True compatibility)
     model_path_obj = Path(model_path)

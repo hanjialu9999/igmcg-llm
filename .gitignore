@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments (don't commit)
+.my_venv/
+.amd_venv/
+venv/
+
+# Archived/legacy scripts & data (historical, not part of active project)
+archive_unused/
+
+# Pretraining corpus (large data, kept locally not in git)
+# 只跟踪目录结构与说明脚本，不跟踪大体量数据文件
+data/pretrain_corpus/raw/
+data/pretrain_corpus/*.txt
+!data/pretrain_corpus/MANUAL.md
+
+# Collected training datasets (个人收集，仅本地保留，不上传 git)
+data/datasets/
+data/train_data_final.txt
+
+# 本地自测脚本（仅本地运行，不上传 git）
+test/
+
+# Model checkpoints & large artifacts (do NOT commit)
+*.pt
+*.pth
+*.ckpt
+checkpoints/
+checkpoints_smoke_4k/
+best_finetuned_model.pt
+
+# Logs
+*.log
+logs/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
