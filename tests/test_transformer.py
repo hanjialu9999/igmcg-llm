@@ -124,20 +124,29 @@ def test_rope_instance_cache():
 
 
 def test_mamba_ssm_incremental():
-    """Test MambaSSM incremental forward with past_state."""
+    """MambaSSM 增量解码必须与全量重算一致（捕获因果卷积 / conv 状态错位回归）。"""
     ssm = MambaSSM(dim=64, d_state=16)
     ssm.eval()
     # Prefill
     x = torch.randn(1, 4, 64)
     with torch.no_grad():
-        y1, state, _ = ssm(x, use_cache=True)
-    # Incremental step
+        y1, state, conv_state = ssm(x, use_cache=True)
+    # 增量步：在 past_state / past_conv_state 之上处理下一个 token
     x_step = torch.randn(1, 1, 64)
     with torch.no_grad():
-        y2, new_state, _ = ssm(x_step, past_state=state, use_cache=True)
+        y2, new_state, new_conv = ssm(x_step, past_state=state, past_conv_state=conv_state, use_cache=True)
+    # 全量重算（prefill + step 拼接）应当等于增量 step 的输出
+    x_full = torch.cat([x, x_step], dim=1)
+    with torch.no_grad():
+        y_full, _, _ = ssm(x_full, use_cache=False)
+    assert torch.allclose(y2, y_full[:, -1:], atol=1e-5), (
+        f"增量解码与全量重算不一致：max diff = {(y2 - y_full[:, -1:]).abs().max().item()}")
+    # 形状与状态维度校验
     assert y1.shape == (1, 4, 64)
     assert y2.shape == (1, 1, 64)
     assert state.shape == new_state.shape == (1, 64, 16)
+    assert conv_state is not None and new_conv is not None
+    assert conv_state.shape == new_conv.shape == (1, 64, ssm.conv_kernel - 1)
     print("✅ test_mamba_ssm_incremental passed")
 
 

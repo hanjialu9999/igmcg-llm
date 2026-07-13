@@ -74,25 +74,20 @@ class QADataset(Dataset):
     
     def __getitem__(self, idx):
         question, answer = self.qa_pairs[idx]
-        input_ids = self.vocab.encode(question)
-        target_ids = self.vocab.encode(answer)
-        
-        # --- 核心修复：强制对齐输入和目标的长度 ---
-        # 1. 对输入进行填充/截断
-        if len(input_ids) < self.max_length:
-            input_ids += [self.vocab.pad_idx] * (self.max_length - len(input_ids))
-        else:
-            input_ids = input_ids[:self.max_length]
-            
-        # 2. 对目标进行填充/截断 (必须和输入一样长，否则 Loss 计算会报错)
-        if len(target_ids) < self.max_length:
-            target_ids += [self.vocab.pad_idx] * (self.max_length - len(target_ids))
-        else:
-            target_ids = target_ids[:self.max_length]
-        
+        # 拼成单条序列 [BOS] 问题 [SEP] 答案 [EOS]，做标准 next-token 语言模型训练：
+        # 原实现 input=问题 / target=答案 在因果 LM 下位置错位（output[t] 预测的是问题[t+1] 而非答案[t]），
+        # 这里用整条序列错位一位得到输入/目标，与 data_utils.TextDataset 的构造方式一致
+        seq = ([self.vocab.bos_idx] + self.vocab.encode(question) + [self.vocab.sep_idx]
+               + self.vocab.encode(answer) + [self.vocab.eos_idx])
+        # 截断到 max_length+1，再拆成输入/目标（错位一位）
+        if len(seq) > self.max_length + 1:
+            seq = seq[:self.max_length + 1]
+        elif len(seq) < self.max_length + 1:
+            seq = seq + [self.vocab.pad_idx] * (self.max_length + 1 - len(seq))
+
         return {
-            'input_ids': torch.tensor(input_ids, dtype=torch.long),
-            'target_ids': torch.tensor(target_ids, dtype=torch.long)
+            'input_ids': torch.tensor(seq[:-1], dtype=torch.long),
+            'target_ids': torch.tensor(seq[1:], dtype=torch.long)
         }
 
 # ===== 3. 微调训练 =====

@@ -80,7 +80,11 @@ def load_model(model_path, vocab_path, device='cpu', quantize=False, compile_mod
     model.eval()
 
     if quantize and getattr(device, 'type', None) != 'dml':
-        torch.quantization.quantize_dynamic(model, {nn.Linear}, dtype=torch.qint8)
+        # 量化返回新模型对象，必须重新赋值；DML 无量化算子支持，已在上面跳过
+        try:
+            model = torch.quantization.quantize_dynamic(model, {nn.Linear}, dtype=torch.qint8)
+        except Exception as e:
+            print(f"[warn] int8 动态量化不可用，回退 fp32：{e}")
 
     if compile_model and getattr(device, 'type', None) != 'dml':
         try:
@@ -343,7 +347,11 @@ def _generate_candidates_batch(model, ids, temps, max_length, top_k, rep_penalty
                 lt = logits[n, -1, :] / temps[n]
                 for prev in set(generated[n]):
                     if 0 <= prev < lt.shape[0]:
-                        lt[prev] /= rep_penalty
+                        # 符号感知的重复惩罚：正值除、负值乘（与 HF 一致）
+                        if lt[prev] > 0:
+                            lt[prev] = lt[prev] / rep_penalty
+                        else:
+                            lt[prev] = lt[prev] * rep_penalty
                 if ngram_fn is not None and ngram_weight != 0.0:
                     lt = lt + ngram_weight * ngram_fn(generated[n], device)
                 lt[pad_id] = float('-inf')
