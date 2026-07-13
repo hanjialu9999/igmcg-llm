@@ -9,6 +9,13 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
+## `f9452ed`（已推送，基于 `462a849`）
+
+### 修复：load_model 透传架构增强标志 + 增强/基线 A/B 对比
+- fix: `scripts/generate.py` 的 `load_model` 重建 `TransformerModel` 时未传入 `qk_norm`/`attn_temp`/`residual_gate`/`hybrid_gate`，导致开启增强训练的 checkpoint 因 state_dict 多出子层参数而无法加载；现从 `*_config.yaml` 读取并透传，向后兼容旧权重。
+- 新增受控 A/B 对比配置与脚本：`configs/config_cmp_base.yaml`（四开关全关）、`configs/config_cmp_enh.yaml`（四开关全开）、`experiments/_cmp_enh_base.py`（同数据多提示词生成对比，结果写 `experiments/cmp_enh_base.txt`）。
+- 实测（8000 行×1 epoch，DML fp32）：ENH Val Loss 7.22 vs BASE 7.72；训练吞吐 ~2370 vs ~3270 tok/s（慢约 28%）；生成解码开销可忽略（top-k/IGMCG 约 0.95–0.98x）；增强版文本略更连贯。
+
 ## `462a849`（已推送，基于 `adfd63d`）
 
 ### 性能 / 可观测性：训练速度日志 + 8000 行冒烟
