@@ -29,7 +29,8 @@ from models.data_utils import load_data, create_dataloader, split_dataset
 from models.config_loader import build_model
 from models.device import get_device, apply_cpu_threads
 from models.utils import (save_checkpoint, cleanup_old_checkpoints,
-                             backup_existing_checkpoints, save_final_model, cli_guard)
+                             backup_existing_checkpoints, save_final_model, cli_guard,
+                             _cpu_offload)
 
 class AverageMeter:
     def __init__(self):
@@ -434,8 +435,9 @@ def main(config_path='configs/pretrain.yaml'):
     
     # Save final model and vocab
     final_model_path = os.path.join(checkpoint_dir, 'final_model.pt')
+    # CPU-offload 后再保存，确保任意设备（含 DML/CUDA）都能用 weights_only=True 加载
     torch.save({
-        'model_state_dict': model.state_dict(),
+        'model_state_dict': _cpu_offload(model.state_dict()),
         'vocab_size': len(vocab),
     }, final_model_path)
     # Save config separately for weights_only=True compatibility

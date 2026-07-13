@@ -32,6 +32,7 @@ test/
 *.pth
 *.ckpt
 checkpoints/
+checkpoints_smoke_4k/
 best_finetuned_model.pt
 
 # Logs
