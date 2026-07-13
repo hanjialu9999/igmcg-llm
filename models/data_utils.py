@@ -170,6 +170,7 @@ class TextDataset(Dataset):
     def _preprocess_texts(self, texts: List[str]) -> List[str]:
         """Clean and validate texts"""
         cleaned: List[str] = []
+        seen: set = set()
         for text in texts:
             # Remove extra whitespace
             text = ' '.join(text.split())
@@ -178,8 +179,9 @@ class TextDataset(Dataset):
             if len(text.strip()) == 0:
                 continue
             
-            # Skip duplicate texts
-            if text not in cleaned:
+            # Skip duplicate texts (O(1) lookup with set)
+            if text not in seen:
+                seen.add(text)
                 cleaned.append(text)
         
         return cleaned

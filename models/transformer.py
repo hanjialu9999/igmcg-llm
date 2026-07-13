@@ -223,7 +223,8 @@ class MambaSSM(nn.Module):
       支持增量推理：可传入 past_state (h_{t-1}) 并返回 present_state (h_t)。
       支持增量卷积状态：维护最后 conv_kernel-1 个输入用于因果卷积。
     """
-    def __init__(self, dim: int, d_state: int = 16, d_inner_factor: int = 1, dt_rank: Optional[int] = None, conv_kernel: int = 3):
+    def __init__(self, dim: int, d_state: int = 16, d_inner_factor: int = 1, dt_rank: Optional[int] = None, conv_kernel: int = 3,
+                 dt_proj_bias_init: float = 0.1, a_log_init_range: Tuple[float, float] = (-1.0, 1.0), D_init: float = 1.0):
         super().__init__()
         d_inner = dim * d_inner_factor
         dt_rank = dt_rank or max(1, math.ceil(dim / 16))
@@ -232,6 +233,9 @@ class MambaSSM(nn.Module):
         self.d_state = d_state
         self.dt_rank = dt_rank
         self.conv_kernel = conv_kernel
+        self.dt_proj_bias_init = dt_proj_bias_init
+        self.a_log_init_range = a_log_init_range
+        self.D_init = D_init
         self.norm = RMSNorm(dim)
         self.in_proj = nn.Linear(dim, 2 * d_inner, bias=False)
         self.conv = nn.Conv1d(d_inner, d_inner, kernel_size=conv_kernel,
@@ -240,11 +244,11 @@ class MambaSSM(nn.Module):
         # 从 conv 输出投影出 Δ 输入、B、C（选择性）
         self.x_proj = nn.Linear(d_inner, dt_rank + 2 * d_state, bias=False)
         self.dt_proj = nn.Linear(dt_rank, d_inner, bias=True)
-        nn.init.constant_(self.dt_proj.bias, 0.1)
+        nn.init.constant_(self.dt_proj.bias, dt_proj_bias_init)
         # A 以对数形式存储，保证 A = -exp(A_log) 为负且稳定
         self.A_log = nn.Parameter(torch.empty(d_inner, d_state))
-        nn.init.uniform_(self.A_log, -1, 1)
-        self.D = nn.Parameter(torch.ones(d_inner))   # 跳跃连接
+        nn.init.uniform_(self.A_log, a_log_init_range[0], a_log_init_range[1])
+        self.D = nn.Parameter(torch.ones(d_inner) * D_init)   # 跳跃连接
         self.out_proj = nn.Linear(d_inner, dim, bias=False)
         self.proper_init()
 
@@ -252,15 +256,15 @@ class MambaSSM(nn.Module):
         """SSM 专用初始化（避免被 TransformerModel._init_weights 的通用初始化覆盖）：
          - in/out/x_proj/dt_proj 权重用 Xavier（B/C 投影更稳）
          - dt_proj 偏置置 0.1（遗忘偏置，缓解早期不稳定）
-         - A_log 用 uniform(-1,1) -> A=-exp(A_log) 为负且稳定（Mamba 风格）
-         - D 跳跃连接置 1
+         - A_log 用 uniform(a_log_init_range) -> A=-exp(A_log) 为负且稳定（Mamba 风格）
+         - D 跳跃连接置 D_init
         """
         nn.init.xavier_uniform_(self.in_proj.weight)
         nn.init.xavier_uniform_(self.out_proj.weight)
         nn.init.xavier_uniform_(self.x_proj.weight)
         nn.init.xavier_uniform_(self.dt_proj.weight)
         nn.init.constant_(self.dt_proj.bias, 0.1)
-        nn.init.uniform_(self.A_log, -1, 1)
+        nn.init.uniform_(self.A_log, *self.a_log_init_range)
         nn.init.ones_(self.D)
 
     def forward(self, x: torch.Tensor, past_state: Optional[torch.Tensor] = None, past_conv_state: Optional[torch.Tensor] = None, use_cache: bool = False) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
@@ -484,8 +488,14 @@ class TransformerModel(nn.Module):
     def __init__(self, vocab_size: int, embedding_dim: int, num_heads: int, num_layers: int,
                  hidden_dim: int, max_seq_length: int, dropout: float = 0.0, tie_weights: bool = True,
                  gradient_checkpointing: bool = True,
-                 layer_plan: Optional[List[str] | str] = None, ssm_d_state: int = 16, ssm_d_inner_factor: int = 1,
-                 ssm_dt_rank: Optional[int] = None, attn_window: int = 0, attn_rel_bias: bool = False):
+                 layer_plan: Optional[List[str] | str] = None,
+                 ssm_d_state: int = 16, ssm_d_inner_factor: int = 1, ssm_dt_rank: Optional[int] = None,
+                 ssm_conv_kernel: int = 3, ssm_dt_proj_bias_init: float = 0.1,
+                 ssm_a_log_init_range: List[float] = [-1, 1],
+                 ssm_D_init: float = 1.0,
+                 attn_window: int = 0, attn_rel_bias: bool = False,
+                 rope_base: float = 10000.0, rope_max_len: int = 4096,
+                 mask_fill_value: float = -1e9):
         super(TransformerModel, self).__init__()
 
         self.vocab_size = vocab_size
@@ -493,10 +503,21 @@ class TransformerModel(nn.Module):
         self.max_seq_length = max_seq_length
         self.gradient_checkpointing = gradient_checkpointing
         self.layer_plan = _parse_layer_plan(layer_plan, num_layers)
+        self.rope_base = rope_base
+        self.rope_max_len = rope_max_len
+        self.mask_fill_value = mask_fill_value
 
         self.embedding = nn.Embedding(vocab_size, embedding_dim)
         self.drop = nn.Dropout(dropout)
-        ssm_kwargs = dict(d_state=ssm_d_state, d_inner_factor=ssm_d_inner_factor, dt_rank=ssm_dt_rank)
+        ssm_kwargs = dict(
+            d_state=ssm_d_state,
+            d_inner_factor=ssm_d_inner_factor,
+            dt_rank=ssm_dt_rank,
+            conv_kernel=ssm_conv_kernel,
+            dt_proj_bias_init=ssm_dt_proj_bias_init,
+            a_log_init_range=ssm_a_log_init_range,
+            D_init=ssm_D_init,
+        )
         attn_kwargs = dict(window=attn_window, rel_bias=attn_rel_bias)
         self.blocks = nn.ModuleList([
             TransformerBlock(embedding_dim, num_heads, hidden_dim, block_type=bt,
@@ -509,8 +530,6 @@ class TransformerModel(nn.Module):
         self._tie_weights = tie_weights
         if tie_weights:
             self.output_head.weight = self.embedding.weight
-
-        self._init_weights()
 
     def _init_weights(self):
         for m in self.modules():

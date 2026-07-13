@@ -11,6 +11,43 @@ model:
   tie_weights: true           # 输出头复用 embedding 权重：减参并常改善 LM 质量
   gradient_checkpointing: true  # 用计算换显存（CPU 上也可开，DML 显存紧张时更稳）
   # 架构固定为 2026 主流小模型配方：Pre-LN + RMSNorm + RoPE + SwiGLU（见 models/transformer.py）
+  # RoPE 配置
+  rope_base: 10000.0          # RoPE 基频
+  rope_max_len: 4096          # RoPE 最大缓存长度
+  # 注意力掩码填充值
+  mask_fill_value: -1e9
+  # SSM (Mamba) 配置
+  layer_plan: null            # null 表示全注意力；如 "attn,ssm,attn,ssm" 启用混合架构
+  ssm_d_state: 16             # SSM 状态维度
+  ssm_d_inner_factor: 1       # SSM 内部维度倍数
+  ssm_dt_rank: null           # SSM dt_rank (默认 dim/16)
+  ssm_conv_kernel: 3          # SSM 卷积核大小
+  ssm_dt_proj_bias_init: 0.1  # dt_proj 偏置初始化
+  ssm_a_log_init_range: [-1, 1]  # A_log 初始化范围
+  # 注意力增强
+  attn_window: 0              # >0 启用滑动窗口；0=全因果
+  attn_rel_bias: false        # true 启用可学习相对位置偏置
+  # 注意力掩码填充值
+  mask_fill_value: -1e9
+  rope_base: 10000.0          # RoPE 基础频率
+  rope_max_len: 4096          # RoPE 最大缓存长度
+  attn_mask_fill_value: -1e9  # 注意力掩码填充值
+  # MambaSSM 配置
+  ssm_d_state: 16             # SSM 状态维度
+  ssm_d_inner_factor: 1       # SSM 内部维度倍数
+  ssm_conv_kernel: 3          # SSM 卷积核大小
+  ssm_dt_proj_bias_init: 0.1  # dt_proj 偏置初始化
+  ssm_a_log_init_range: [-1, 1] # A_log 初始化范围
+  ssm_D_init: 1.0             # D 参数初始化
+  # 生成参数默认值
+  gen_temperature: 1.0
+  gen_top_k: 50
+  gen_repetition_penalty: 1.2
+  gen_eos_penalty: -5.0
+  gen_min_length: 3
+  gen_eos_id: 3
+  gen_pad_id: 0
+  gen_sep_id: 4
 
 # Training Configuration
 training:
@@ -53,4 +90,17 @@ paths:
 # Device
 device: "auto"
 
+# Seed
 seed: 42
+
+# Generation Configuration
+generation:
+  temperature: 0.8
+  top_k: 50
+  repetition_penalty: 1.2
+  min_length: 3
+  eos_penalty: -5.0
+  ngram_weight: 0.0
+  igmcg_candidates: 5
+  igmcg_intuition: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
+  igmcg_weights: [1.5, 0.15, 0.15, 2.5]  # coh, flu, style, rep

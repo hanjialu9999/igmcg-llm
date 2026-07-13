@@ -315,14 +315,16 @@ def _generate_candidates_batch(model, ids, temps, max_length, top_k, rep_penalty
                 if layer_past is None:
                     candidate_past.append(None)
                 else:
-                    # layer_past 是 (attn_kv, ssm_state)
-                    attn_kv, ssm_state = layer_past
+                    # layer_past 是 (attn_kv, ssm_state, ssm_conv_state)
+                    attn_kv = layer_past[0]
+                    ssm_state = layer_past[1] if len(layer_past) > 1 else None
+                    ssm_conv_state = layer_past[2] if len(layer_past) > 2 else None
                     if attn_kv is not None:
                         # attn_kv 是 (key, value)，每个形状 (N, H, T, D)
                         k, v = attn_kv
-                        candidate_past.append(((k[i:i+1], v[i:i+1]), ssm_state[i:i+1] if ssm_state is not None else None))
+                        candidate_past.append(((k[i:i+1], v[i:i+1]), ssm_state[i:i+1] if ssm_state is not None else None, ssm_conv_state[i:i+1] if ssm_conv_state is not None else None))
                     else:
-                        candidate_past.append((None, ssm_state[i:i+1] if ssm_state is not None else None))
+                        candidate_past.append((None, ssm_state[i:i+1] if ssm_state is not None else None, ssm_conv_state[i:i+1] if ssm_conv_state is not None else None))
             past[i] = candidate_past
 
         for step in range(max_length):
@@ -424,14 +426,15 @@ def _ngram_coherence(ngram_fn, ids, device):
 def generate_igmcg(model, vocab, prompt, intuition=None, num_candidates=4,
                     max_length=60, device='cpu', base_temp=0.7, top_k=30,
                     ngram_fn=None, ngram_weight=0.0, repetition_penalty=1.4,
-                    min_length=3, eos_penalty=-5.0):
+                    min_length=3, eos_penalty=-5.0,
+                    coh_w=1.5, flu_w=0.15, style_w=0.15, rep_w=2.5):
     """IGMCG 多候选生成：返回 (最优文本, 各候选评分详情)。
 
      intuition: 长度 7 的 float 列表（默认全 0.5 中性）。
      ngram_fn / ngram_weight: 可选叠加 n-gram 统计先验（双轨解码）。
      所有候选并行生成（单次 batch 前向），显著降低多候选开销。
 
-     评分 = 1.5*连贯度(coh) + 0.15*流畅度 + 0.15*风格匹配 - 1.5*重复度
+     评分 = COH_W*连贯度(coh) + FLU_W*流畅度 + STYLE_W*风格匹配 - REP_W*重复度
        - coh 直接奖励相邻 token 的相连性，是抑制"碎片化"的核心信号；
        - 流畅度(单 token 置信度)只作轻微 tiebreaker——孤立高频词也会拉高它，故不主导；
        - 风格匹配为直觉引导的温和偏置（在连贯候选之间做微调，绝不压过连贯度）；
@@ -455,7 +458,7 @@ def generate_igmcg(model, vocab, prompt, intuition=None, num_candidates=4,
                                        min_length=min_length, eos_penalty=eos_penalty)
     flus = _fluency_batch(model, seqs, device, pad_id)
 
-    COH_W, FLU_W, STYLE_W, REP_W = 1.5, 0.15, 0.15, 2.5
+    COH_W, FLU_W, STYLE_W, REP_W = coh_w, flu_w, style_w, rep_w
     candidates = []
     for k, gen in enumerate(seqs):
         cand_ids = gen[len(ids):]
@@ -523,6 +526,14 @@ def main():
                         help='IGMCG 候选数')
     parser.add_argument('--intuition', type=str, default='0.5,0.5,0.5,0.5,0.5,0.5,0.5',
                         help='IGMCG 7 维直觉向量(逗号分隔, 0~1)')
+    parser.add_argument('--igmcg-coh-w', type=float, default=1.5,
+                        help='IGMCG 连贯度权重')
+    parser.add_argument('--igmcg-flu-w', type=float, default=0.15,
+                        help='IGMCG 流畅度权重')
+    parser.add_argument('--igmcg-style-w', type=float, default=0.15,
+                        help='IGMCG 风格匹配权重')
+    parser.add_argument('--igmcg-rep-w', type=float, default=2.5,
+                        help='IGMCG 重复惩罚权重')
     
     args = parser.parse_args()
 
@@ -593,7 +604,11 @@ def main():
                 ngram_fn=(ngram.logprob_vector if ngram else None),
                 ngram_weight=args.ngram_weight,
                 min_length=3,
-                eos_penalty=-5.0)
+                eos_penalty=-5.0,
+                coh_w=args.igmcg_coh_w,
+                flu_w=args.igmcg_flu_w,
+                style_w=args.igmcg_style_w,
+                rep_w=args.igmcg_rep_w)
             best = cands[0] if cands else None
             gen_info = (f"\n  [IGMCG候选={len(cands)}, 最优分={best['score']:.3f}, 重复度={best['rep']:.3f}]"
                         if best else "")
