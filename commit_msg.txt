@@ -1,10 +1,5 @@
-fix: IGMCG weights to config + shared checkpoint utility + dedup optimization
+fix: final cleanup + chat test script
 
-- Extract shared checkpoint saving to models/utils.py
-- Fix IGMCG hardcoded weights in generate.py, move to config YAML
-- Unify checkpoint saving logic between train.py and train_finetune.py
-- Move magic numbers from transformer.py to config YAML
-- Fix IGMCG cache unpacking bug in generate.py
-- Fix duplicate weights_only=True in test/archive files
-- Remove dead code (shared RoPE cache, clear_cache)
-- Add IGMCG weights to config YAML and CLI args
+- Fix chat_test.py for proper encoding
+- All 15 tests pass
+- Smoke tests pass (training + generation + IGMCG)
