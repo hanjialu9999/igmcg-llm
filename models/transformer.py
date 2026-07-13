@@ -114,7 +114,7 @@ class SlidingWindowCausalSelfAttention(nn.Module):
      故 DML(及其他后端)走手动 matmul+softmax+因果掩码 以规避该 bug。
     """
     def __init__(self, dim: int, num_heads: int, window: int = 0, rel_bias: bool = False, max_seq_length: int = 64,
-                 qk_norm: bool = False, attn_temp: bool = False):
+                 qk_norm: bool = True, attn_temp: bool = True):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
@@ -127,11 +127,11 @@ class SlidingWindowCausalSelfAttention(nn.Module):
         if self.rel_bias:
             # T5 风格相对位置偏置表：(heads, 2T-1)
             self.rel_bias_table = nn.Parameter(torch.zeros(num_heads, 2 * max_seq_length - 1))
-        # ① QK-Norm：对 Q/K 各自做 RMSNorm 后再进注意力，与 RoPE 互补、稳定训练（默认关，向后兼容）
+        # ① QK-Norm：对 Q/K 各自做 RMSNorm 后再进注意力，与 RoPE 互补、稳定训练（默认开）
         self.qk_norm_enabled = qk_norm
         if qk_norm:
             self.qk_norm = RMSNorm(self.head_dim)
-        # ⑤ 可学习注意力温度：softmax(score / T)，T=exp(log_temp) 恒正（默认关，向后兼容）
+        # ⑤ 可学习注意力温度：softmax(score / T)，T=exp(log_temp) 恒正（默认开）
         self.attn_temp_enabled = attn_temp
         if attn_temp:
             self.log_temp = nn.Parameter(torch.zeros(1))
@@ -168,11 +168,12 @@ class SlidingWindowCausalSelfAttention(nn.Module):
         if self.qk_norm_enabled:
             q = self.qk_norm(q)
             k = self.qk_norm(k)
-        # ⑤ 可学习温度：温度恒正（T=exp(log_temp)），直接缩放 Q/K 幅值（等价 softmax(score/T)）
+        # ⑤ 可学习温度：温度恒正（T=exp(log_temp)），直接缩放 Q/K 幅值（等价 softmax(score/T)）。
+        #    融合为单次标量乘法 q*=exp(-0.5*log_temp)，免去额外 sqrt 算子。
         if self.attn_temp_enabled:
-            temp = torch.exp(self.log_temp)
-            q = q / torch.sqrt(temp)
-            k = k / torch.sqrt(temp)
+            scale = torch.exp(-0.5 * self.log_temp)
+            q = q * scale
+            k = k * scale
         q, k = self.rope(q, k, start_pos=start_pos, max_len=self.max_seq_length)
 
         if use_cache:
@@ -429,7 +430,7 @@ class TransformerBlock(nn.Module):
     def __init__(self, dim: int, num_heads: int, hidden_dim: int, block_type: str = 'attn',
                  dropout: float = 0.0, max_seq_length: int = 64,
                  ssm_kwargs: Optional[Dict[str, Any]] = None, attn_kwargs: Optional[Dict[str, Any]] = None,
-                 residual_gate: bool = False, hybrid_gate: bool = False):
+                 residual_gate: bool = True, hybrid_gate: bool = True):
         super().__init__()
         self.block_type = block_type
         self.drop = nn.Dropout(dropout)
@@ -533,8 +534,8 @@ class TransformerModel(nn.Module):
                  attn_window: int = 0, attn_rel_bias: bool = False,
                  rope_base: float = 10000.0, rope_max_len: int = 4096,
                  mask_fill_value: float = -1e9,
-                 qk_norm: bool = False, attn_temp: bool = False,
-                 residual_gate: bool = False, hybrid_gate: bool = False):
+                  qk_norm: bool = True, attn_temp: bool = True,
+                  residual_gate: bool = True, hybrid_gate: bool = True):
         super(TransformerModel, self).__init__()
 
         self.vocab_size = vocab_size

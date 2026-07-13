@@ -119,7 +119,7 @@ def load_model(model_path, vocab_path, device='cpu', quantize=False, compile_mod
         ssm_dt_rank=model_config.get('ssm_dt_rank', None),
         attn_window=model_config.get('attn_window', 0),
         attn_rel_bias=model_config.get('attn_rel_bias', False),
-        # 可配置架构增强（默认关，向后兼容旧权重）
+        # 可配置架构增强：从本 checkpoint 的 *_config.yaml 读取；旧权重（无该键）默认关，保持向后兼容
         qk_norm=model_config.get('qk_norm', False),
         attn_temp=model_config.get('attn_temp', False),
         residual_gate=model_config.get('residual_gate', False),
