@@ -6,13 +6,13 @@
 
 | 文件 | 说明 |
 |------|------|
-| `train.py` | 训练主程序：`python scripts/train.py --config configs/pretrain.yaml`。支持 warmup、label smoothing、早停、自动备份旧检查点。 |
+| `train.py` | 训练主程序：`python scripts/train.py --config configs/pretrain.yaml`。支持 warmup、早停、自动备份旧检查点（label smoothing 因 PyTorch 限制当前未启用，见 `docs/TRAINING_GUIDE.md`）。 |
 | `generate.py` | 生成 API：`generate_text` / `generate_igmcg` / `NGramModel`。IGMCG 多候选按 `1.5*连贯度 + 0.15*流畅度 + 0.15*风格 - 2.5*重复度` 选优，生成期 `repetition_penalty=1.4`。CLI 支持 `--dtype fp32/bf16/auto`（默认 auto：支持的 CPU/CUDA 用 bf16，约 1.5~1.8× 提速且质量基本无损）、`--cpu-threads N`（降功耗）、`--quantize`（纯 CPU int8 动态量化，约 4× 更小模型/降带宽）、`--compile`（需本机 C++ 编译器）。 |
-| `chat.py` | 对话式 CLI：`--ngram` / `--igmcg` / `--intuition`，行为由 `chat_config.json` 控制；同样支持 `--dtype` / `--cpu-threads` / `--quantize` / `--compile`。 |
+| `chat.py` | 对话式 CLI：`--ngram` / `--igmcg` / `--intuition`，行为由命令行参数控制（`chat_config.json` 仅 `tools/dialogue_interactive.py` 使用）；同样支持 `--dtype` / `--cpu-threads` / `--quantize` / `--compile`。 |
 
 ## 数据处理
 
-`prepare_data.py` · `prepare_training.py`（合并 `data/datasets/` 为单一语料）· `merge_datasets.py` · `merge_data.py` · `merge_data_clean.py` · `improve_data.py` · `reformat_data.py` · `convert_dialogue_to_qa.py` · `convert_statements_to_qa.py` · `data_manager.py` · `diagnose.py` · `analyze_datasets.py` · `process_data.py`（可选转 jsonl）。
+`merge_data.py`（合并 `data/datasets/` 为单一语料）· `improve_data.py` · `reformat_data.py` · `data_manager.py` · `convert_dialogue_to_qa.py` · `convert_statements_to_qa.py` · `diagnose.py` · `analyze_datasets.py` · `process_data.py`（可选转 jsonl）。
 
 ## 子目录
 

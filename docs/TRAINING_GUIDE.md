@@ -42,7 +42,7 @@ data:
 
 - **混合精度 (AMP)**：`precision: bf16` 在 CUDA 与 CPU 下自动开启（约 2~2.5× 提速，loss 基本无损，无需 loss scaling）；`fp16` 仅 CUDA（用 GradScaler）。AMD DirectML 暂不支持 AMP，自动回退 fp32。
 - **Warmup**：训练首 epoch 内线性升温学习率。
-- **Label Smoothing**：`CrossEntropyLoss(label_smoothing=0.1)` 提升泛化。
+- **Label Smoothing**：当前**未启用**——`CrossEntropyLoss` 在同时使用 `label_smoothing` 与 `ignore_index`（padding 屏蔽）时不支持，训练脚本会忽略该配置并打印警告（见 `scripts/train.py`）。
 - **早停**：连续 `early_stop_patience` 个 epoch 无提升则停止。
 - **检查点清理**：仅保留最近若干 epoch 与最佳模型。
 
@@ -54,18 +54,20 @@ python tools/monitor/monitor_gpu_training.py   # GPU 显存 / 利用率
 python tools/monitor/monitor_live.py
 ```
 
-## 断点续训 / 恢复
+## 检查点与恢复
 
-训练脚本每次 epoch 都会保存 `model_epoch_*.pt` 与 `final_model.pt`，
-如需从某检查点恢复，可加载对应 `.pt` 后继续。
+- 训练脚本每次运行都从配置**重新构建模型并从头训练**（当前未实现自动断点续训）。
+- 当 `epochs > 1` 时，每个 epoch 结束会保存 `model_epoch_*.pt` 与最佳模型备份，主要用作容错备份（非自动续训）。
+- 单 epoch 配置（`epochs=1`）不保存逐 epoch 检查点，仅输出 `final_model.pt` + `vocab.json`。
+- 若需从已有权重继续，可手动加载 `final_model.pt` 的 `model_state_dict` 后再训练（或作为微调底座）。
 
 ## 微调
 
 若要在预训练模型基础上针对对话数据微调：
 
 ```bash
-python train_finetune.py
+python scripts/train_finetune.py
 ```
 
 微调数据来自 `data/datasets/`（每两个非空行构成一对 Q/A；该目录仅本地保留，未上传 git）。
-产出 `best_finetuned_model.pt`，供 `scripts/chat.py` / `dialogue_interactive.py` 使用。
+产出 `best_finetuned_model.pt`，供 `scripts/chat.py` / `tools/dialogue_interactive.py` 使用。

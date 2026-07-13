@@ -1,6 +1,6 @@
 # 调参指南 (Tuning Guide)
 
-生成质量主要受三个采样参数影响，均在 `chat_config.json` 中配置。
+生成质量主要受三个采样参数影响：`scripts/chat.py` 通过命令行参数（`--temperature` / `--top-k` / `--repetition-penalty`）传入；`tools/dialogue_interactive.py` 则持久化到仓库根的 `chat_config.json`。
 
 | 参数 | 含义 | 经验范围 | 本项目推荐 |
 |------|------|----------|------------|
@@ -28,7 +28,7 @@ python scripts/tuning/showcase_optimal_params.py
 ```
 
 该脚本会用实验得到的最优 `temperature / top_k / repetition_penalty` **合并回写**
-到 `chat_config.json`，供 `dialogue_interactive.py` 与 `scripts/chat.py` 直接使用。
+到仓库根的 `chat_config.json`，供 `tools/dialogue_interactive.py` 直接使用（`scripts/chat.py` 仍走命令行参数）。
 
 ## 调参建议
 

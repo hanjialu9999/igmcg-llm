@@ -38,6 +38,14 @@ best_finetuned_model.pt
 # Logs
 *.log
 logs/
+logs_smoke_8k/
+
+# 冒烟/实验对比结果（生成质量仅验证机制，不入库）
+experiments/smoke_out.txt
+experiments/smoke_8k_gen.txt
+
+# 运行期生成的对话参数（由 scripts/tuning/showcase_optimal_params.py 回写）
+chat_config.json
 
 # OS / editor
 .DS_Store

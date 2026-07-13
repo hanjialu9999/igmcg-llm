@@ -45,7 +45,7 @@ python tools/view_model.py
 python scripts/chat.py
 ```
 
-`chat.py` 从 `best_finetuned_model.pt` 加载微调模型与 `checkpoints/vocab.json`，生成参数来自 `chat_config.json`。
+`chat.py` 默认从 `checkpoints/final_model.pt` 加载模型与 `checkpoints/vocab.json`，生成参数由命令行参数（`--temperature` / `--top-k` / `--repetition-penalty` / `--max-length` 等）控制。`tools/dialogue_interactive.py` 则会读取仓库根的 `chat_config.json`（由 `scripts/tuning/showcase_optimal_params.py` 回写）作为持久化对话参数。
 
 ## 诊断 / 对比
 

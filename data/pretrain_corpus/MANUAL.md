@@ -15,7 +15,7 @@
   3. type data\pretrain_corpus\*.txt > data\pretrain_corpus\merged.txt
   4. 修改 configs/pretrain.yaml 中的 train_file
   5. python scripts/train.py --config configs/pretrain.yaml  (预训练)
-  6. python train_finetune.py                             (微调)
+  6. python scripts/train_finetune.py                             (微调)
 ```
 
 ---

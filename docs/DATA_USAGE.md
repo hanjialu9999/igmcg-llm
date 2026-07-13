@@ -21,16 +21,15 @@ data/
 将 `data/datasets/` 下的多个 QA 文件合并为单一训练文本：
 
 ```bash
-python scripts/prepare_training.py
+python scripts/merge_data.py
 ```
 
 也可对单个目录做更细的处理：
 
 ```bash
-python scripts/merge_data.py
-python scripts/merge_data_clean.py
 python scripts/improve_data.py
 python scripts/reformat_data.py
+python scripts/data_manager.py
 ```
 
 ## 转换为 JSONL（可选）

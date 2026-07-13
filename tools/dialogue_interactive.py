@@ -28,7 +28,8 @@ with open('configs/pretrain.yaml', 'r', encoding='utf-8') as f:
     config = yaml.safe_load(f)
 
 # Path for persisted dialogue parameters (single source of truth: chat_config.json)
-params_path = 'configs/chat_config.json'
+# 与 showcase_optimal_params.py / load_generation_config 默认路径保持一致（仓库根目录）
+params_path = 'chat_config.json'
 
 # default generation configuration (may be overwritten by saved settings)
 gen_config = {

@@ -11,4 +11,4 @@
 | `datasets/` | 原始 QA 数据（每文件「问题行 / 答案行」交替），用于微调。 | 否（本地） |
 | `processed/` | `process_data.py` 生成的 jsonl（可选）。 | 否（本地） |
 
-> 重新构建语料：`python scripts/prepare_training.py`（合并 `datasets/`）。词表在训练时由 `data/pretrain_corpus/merged.txt` 自动构建，存于 `checkpoints/vocab.json`。
+> 重新构建语料：`python scripts/merge_data.py`（合并 `datasets/`）。词表在训练时由 `data/pretrain_corpus/merged.txt` 自动构建，存于 `checkpoints/vocab.json`。另可用 `merged_sample.txt` / `merged_sample_8k.txt` 做小样本冒烟。
