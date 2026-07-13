@@ -1,0 +1,29 @@
+fix: SSM KV-cache with conv state + security fixes + type annotations
+
+Critical fixes:
+- SSM KV-cache now supports incremental decoding with proper conv state handling
+- Fixed _selective_scan past_state integration bug (used original 'a' for prefix products)
+- Added past_conv_state parameter to MambaSSM.forward for incremental conv state
+
+Security fixes:
+- All torch.load() calls now use weights_only=True (prevents pickle RCE)
+- Checkpoint format split: .pt (tensors) + *_config.yaml (config)
+
+Code quality:
+- Added type annotations to core modules (transformer.py, config_loader.py, etc.)
+- Merged 5 duplicate data merge scripts into single merge_data.py with argparse
+- Fixed train_finetune.py UNK token (那些 -> 那些)
+- Fixed 4 IndentationError in tuning/diagnose scripts
+- Fixed config_loader.py to use model.tie_weights() instead of manual rebind
+
+Testing:
+- 15 unit tests pass (core transformer, config, SSM incremental, hybrid KV-cache)
+- Hybrid model KV-cache verified: attn KV + SSM state + SSM conv state
+- Hybrid model generation works with new cache format
+- Training flow works without cache
+- Security: torch.load(weights_only=True) prevents pickle RCE
+
+Documentation:
+- Updated CHANGELOG.md with all fixes
+- Updated docs/MODEL_USAGE_GUIDE.md with correct architecture
+- Updated AGENT_MEMORY.md with current status
