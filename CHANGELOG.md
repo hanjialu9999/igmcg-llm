@@ -9,6 +9,22 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
+## `0ee3ed6`（本地，基于 `b5da36a`/`23a09ff`）
+
+### 优化②：重构梯度检查点边界，消除加速开销
+- perf: `SlidingWindowCausalSelfAttention.forward` 拆为 `project_and_norm`（廉价：QKV 投影 + QK-Norm + 温度 + RoPE）与 `attend`（重算力：scores/softmax/proj）；`TransformerBlock.forward` 仅对 `attn.attend`/`ssm`/`ffn` 做 `checkpoint`，`ln1`/`ln2`/门控在重算区外只跑一次；同步移除模型层 `forward` 对整块展开的重复包裹，新增 `set_gradient_checkpointing`。
+- 根因消除：`gradient_checkpointing=True` 原本在反向重算整个 block 前向，使廉价增强算子执行两次（约 +28%）；② 后增强训练开销大幅下降。
+- 实测（DML 微基准）：`all` 增强单步 147.8 → **132.5 ms**（约 -10%）。训练吞吐（8000 行×1 epoch）：ENH ~2374 → **~3424 tok/s**（+44%），与 BASE 差距由 ~28% 缩至 ~8%。
+
+### 交替增强训练（按批次开关增强）
+- feat: `TransformerModel.set_enhancements_active(bool)` / `TransformerBlock.set_enhancements_active` / `SlidingWindowCausalSelfAttention` 的 `_enh_active` 运行时开关；关闭时跳过 QK-Norm/温度/门控（恒等）。
+- `scripts/train.py`：新增 `training.enhancement_off_prob`（缺省 0），`train_epoch` 按批次 `random.random() >= prob` 切换增强开关；`validate` 强制开。`configs/config_cmp_alt.yaml`（enh + `enhancement_off_prob: 0.5`）。
+- A/B/ALT 三方对比（8000 行×1 epoch，DML fp32，含②）：
+  - 训练 Val Loss / 吞吐：BASE 7.8300 / ~3735；ENH 7.1021 / ~3424；ALT 7.3543 / ~3596 tok/s。
+  - 结论：交替（off=0.5）比常开快约 +5% 训练，但 Val Loss 回升到 7.35，**介于 BASE 与 ENH 之间**，属速度/质量折中（非免费提速）；② 已把“常开”开销压到很小，质量优先推荐常开。
+  - 生成解码（推理时 ALT 同常开）：top-k BASE 40.1 / ENH 35.4 / ALT 36.2；IGMCG BASE 12.5 / ENH 10.8 / ALT 10.7 tok/s。
+  - 结果入库：`experiments/cmp_3way.txt`（含原文）+ 新增 `experiments/_cmp_3way.py`；权重不入库（可由配置+数据复现）。
+
 ## `b5da36a`（已推送，基于 `f9452ed`）
 
 ### 架构增强默认开启 + 性能定位/微优

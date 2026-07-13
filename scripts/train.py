@@ -92,10 +92,10 @@ def compute_lr(eff_step, total_eff, warmup_target, base_lr, eta_min, lr_schedule
 
 
 def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
-                warmup_steps=0, base_lr=0.0005, gradient_clip=1.0, scaler=None,
-                use_amp=True, autocast_dtype=torch.float32, grad_accum_steps=1,
-                lr_schedule='cosine', eta_min=0.0, wsd_decay_frac=0.1,
-                show_progress=True, amp_device=None):
+                 warmup_steps=0, base_lr=0.0005, gradient_clip=1.0, scaler=None,
+                 use_amp=True, autocast_dtype=torch.float32, grad_accum_steps=1,
+                 lr_schedule='cosine', eta_min=0.0, wsd_decay_frac=0.1,
+                 show_progress=True, amp_device=None, enhancement_off_prob=0.0):
     """Train one epoch with warmup, gradient accumulation and mixed precision.
 
     - warmup_steps: 预热步数。若 <1 则按"占整个 epoch 有效步数的比例"解释（如 0.1=前 10% 步预热）。
@@ -143,6 +143,11 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
     for batch_idx, batch in enumerate(progress if progress is not None else dataloader):
         input_ids = batch['input_ids'].to(device)
         target_ids = batch['target_ids'].to(device)
+
+        # 交替增强训练：以 enhancement_off_prob 的概率跳过本批次的增强（QK-Norm/温度/门控恒等）。
+        # 关闭时增强参数本步不更新梯度；开启时正常训练。默认 0 = 始终开启。
+        if enhancement_off_prob > 0.0:
+            model.set_enhancements_active(random.random() >= enhancement_off_prob)
 
         # Forward pass (optionally under autocast for mixed precision)
         if use_amp and amp_device is not None:
@@ -199,6 +204,7 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
 def validate(model, dataloader, criterion, device):
     """Validate model"""
     model.eval()
+    model.set_enhancements_active(True)  # 验证用增强开启模式，反映训练所得“开”行为
     loss_meter = AverageMeter()
     
     with torch.no_grad():
@@ -298,7 +304,7 @@ def main(config_path='configs/pretrain.yaml'):
         if compile_ok:
             try:
                 torch._dynamo.config.suppress_errors = True  # 编译失败自动回退 eager
-                model.gradient_checkpointing = False
+                model.set_gradient_checkpointing(False)
                 model = torch.compile(model)
                 print("torch.compile 已启用（梯度检查点已关闭；编译失败会自动回退 eager）")
             except Exception as e:
@@ -406,7 +412,8 @@ def main(config_path='configs/pretrain.yaml'):
             lr_schedule=lr_schedule,
             eta_min=eta_min,
             wsd_decay_frac=wsd_decay_frac,
-            show_progress=config['training'].get('show_progress', True)
+            show_progress=config['training'].get('show_progress', True),
+            enhancement_off_prob=config['training'].get('enhancement_off_prob', 0.0)
         )
 
         history['train_loss'].append(train_loss)
