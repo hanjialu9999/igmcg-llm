@@ -1,0 +1,80 @@
+# 对比实验（全量 100MB / 39700 行）：SEL v2 8 段（1 全开 + 1 全关极端 + 6 局部）。
+# attn_temp 仅全关段关，平时恒开；qk_norm/residual_gate 在段间切换、除全关段外永不完全全关。
+model:
+  vocab_size: 12000
+  embedding_dim: 512
+  num_heads: 8
+  num_layers: 6
+  hidden_dim: 1024
+  max_seq_length: 64
+  dropout: 0
+  tie_weights: true
+  gradient_checkpointing: true
+  rope_base: 10000.0
+  rope_max_len: 4096
+  mask_fill_value: -1e9
+  layer_plan: null
+  ssm_d_state: 16
+  ssm_d_inner_factor: 1
+  ssm_dt_rank: null
+  ssm_conv_kernel: 3
+  ssm_dt_proj_bias_init: 0.1
+  ssm_a_log_init_range: [-1, 1]
+  ssm_D_init: 1.0
+  attn_window: 0
+  attn_rel_bias: false
+  qk_norm: true
+  attn_temp: true
+  residual_gate: true
+  hybrid_gate: true
+
+training:
+  batch_size: 32
+  epochs: 1
+  learning_rate: 3.0e-3
+  weight_decay: 0.0
+  gradient_clip: 1.0
+  warmup_steps: 0
+  early_stop_patience: 9999
+  label_smoothing: 0.0
+  cpu_threads: 4
+  precision: "fp32"
+  grad_accum_steps: 1
+  eta_min: 0.0
+  lr_schedule: "constant"
+  compile: false
+  show_progress: false
+  # 选择性增强调度 v2：保留 1 个全开（seg0）+ 新增 1 个全关（seg1，attn_temp 也关）+ 6 个局部段。
+  # attn_temp 仅全关段关，平时恒开；qk_norm/residual_gate 在段间切换、除全关段外永不完全全关。
+  # 暴露率：qk 4/8、rg 4/8、attn_temp 7/8（约 50%）。
+  enhancement_schedule:
+    - { qk_norm: true,  attn_temp: true,  residual_gate: true,  hybrid_gate: false }  # seg0 全开（唯一）
+    - { qk_norm: false, attn_temp: false, residual_gate: false, hybrid_gate: false }  # seg1 全关（极端）
+    - { qk_norm: true,  attn_temp: true,  residual_gate: false, hybrid_gate: false }
+    - { qk_norm: false, attn_temp: true,  residual_gate: true,  hybrid_gate: false }
+    - { qk_norm: true,  attn_temp: true,  residual_gate: false, hybrid_gate: false }
+    - { qk_norm: false, attn_temp: true,  residual_gate: true,  hybrid_gate: false }
+    - { qk_norm: true,  attn_temp: true,  residual_gate: false, hybrid_gate: false }
+    - { qk_norm: false, attn_temp: true,  residual_gate: true,  hybrid_gate: false }
+
+data:
+  train_file: "data/pretrain_corpus/merged.txt"
+  vocab_size: 12000
+  max_seq_length: 64
+  num_workers: 0
+  prefetch: 2
+  test_split: 0.1
+
+paths:
+  checkpoint_dir: "checkpoints_cmp_selv2_full"
+  log_dir: "logs_cmp_selv2_full"
+
+device: "auto"
+seed: 42
+
+generation:
+  temperature: 0.8
+  top_k: 50
+  repetition_penalty: 1.2
+  min_length: 3
+  eos_penalty: -5.0

@@ -46,6 +46,20 @@ training:
   lr_schedule: "wsd"          # cosine | constant | wsd(预热+稳定+末尾衰减)；wsd/constant 对小模型更稳
   wsd_decay_frac: 0.1         # wsd 模式下最后 10% step 衰减
   compile: true               # torch.compile 加速；CPU/CUDA 无编译器时自动关闭
+  # ---- 默认训练采用 SEL v2 选择性增强调度（2026-07-14 起）----
+  # 8 段：1 个全开（seg0）+ 1 个全关极端（seg1，attn_temp 也关）+ 6 个局部段
+  # （attn_temp 仅全关段关、平时恒开；qk_norm/residual_gate 段间切换、除全关段外永不完全全关）。
+  # 全量对比（merged.txt 39700 行）显示 SELv2 在极端采样温度(T=0.5/1.4)下 self-loss 最低、
+  # 分布外鲁棒性最好；Val 略高于常开 ENH，但泛化更优。详见 experiments/cmp_sel_full.txt。
+  enhancement_schedule:
+    - { qk_norm: true,  attn_temp: true,  residual_gate: true,  hybrid_gate: false }  # seg0 全开（唯一）
+    - { qk_norm: false, attn_temp: false, residual_gate: false, hybrid_gate: false }  # seg1 全关（极端）
+    - { qk_norm: true,  attn_temp: true,  residual_gate: false, hybrid_gate: false }
+    - { qk_norm: false, attn_temp: true,  residual_gate: true,  hybrid_gate: false }
+    - { qk_norm: true,  attn_temp: true,  residual_gate: false, hybrid_gate: false }
+    - { qk_norm: false, attn_temp: true,  residual_gate: true,  hybrid_gate: false }
+    - { qk_norm: true,  attn_temp: true,  residual_gate: false, hybrid_gate: false }
+    - { qk_norm: false, attn_temp: true,  residual_gate: true,  hybrid_gate: false }
 
 # 数据配置
 data:
