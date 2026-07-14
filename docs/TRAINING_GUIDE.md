@@ -29,6 +29,17 @@ training:
   warmup_steps: 0.1        # 占整个 epoch 有效步数的比例（前 10% 线性升温）
   early_stop_patience: 5
   label_smoothing: 0.1
+  # 默认训练采用 SEL v2 分段选择性增强调度（2026-07-14 起）
+  # 8 段：1 全开 + 1 全关极端 + 6 局部（attn_temp 仅全关段关，平时恒开）
+  enhancement_schedule:
+    - { qk_norm: true,  attn_temp: true,  residual_gate: true,  hybrid_gate: false }
+    - { qk_norm: false, attn_temp: false, residual_gate: false, hybrid_gate: false }
+    - { qk_norm: true,  attn_temp: true,  residual_gate: false, hybrid_gate: false }
+    - { qk_norm: false, attn_temp: true,  residual_gate: true,  hybrid_gate: false }
+    - { qk_norm: true,  attn_temp: true,  residual_gate: false, hybrid_gate: false }
+    - { qk_norm: false, attn_temp: true,  residual_gate: true,  hybrid_gate: false }
+    - { qk_norm: true,  attn_temp: true,  residual_gate: false, hybrid_gate: false }
+    - { qk_norm: false, attn_temp: true,  residual_gate: true,  hybrid_gate: false }
 
 data:
   train_file: "data/pretrain_corpus/merged.txt"
@@ -45,6 +56,7 @@ data:
 - **Label Smoothing**：当前**未启用**——`CrossEntropyLoss` 在同时使用 `label_smoothing` 与 `ignore_index`（padding 屏蔽）时不支持，训练脚本会忽略该配置并打印警告（见 `scripts/train.py`）。
 - **早停**：连续 `early_stop_patience` 个 epoch 无提升则停止。
 - **检查点清理**：仅保留最近若干 epoch 与最佳模型。
+- **SELv2 默认增强调度**：`pretrain.yaml` 默认带 `training.enhancement_schedule`（SELv2 8 段：1 全开 + 1 全关极端 + 6 局部，attn_temp 仅全关段关），即默认训练按分段选择性增强训练；`validate` 强制全开。受控对比可用 `config_cmp_{enh,sel,selv2}_full.yaml` + 根目录 `run_full_cmp.ps1` 一键三模型顺序训练。
 
 ## 监控训练
 
