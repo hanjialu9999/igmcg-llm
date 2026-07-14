@@ -9,6 +9,13 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
+## `42323fb`（已推送，基于 `5db434b`）
+
+- exp: 增强 vs 基线 受控对比扩展至 **全量 `merged.txt`（39700 行）**；SEL 改用 **SELv2 8 段掩码**（1 全开 + 1 全关极端 + 6 局部；attn_temp 仅全关段关、平时恒开）取代旧 8 段（无全关）与常开 ENH。同参数（1 epoch / batch32 / seq64 / lr3e-3 / seed42 / test_split0.1）DML fp32。`configs/config_cmp_{enh,sel,selv2}_full.yaml`，`experiments/_cmp_sel_full.py` 复现，`run_full_cmp.ps1` 一键三模型顺序训练。
+- 结果：**ENH Val 5.3762 / SEL旧 5.4492 / SELv2 5.4969**——Val 仍常开 ENH 最低、SELv2 最高（差距与 20k 同量级）。鲁棒性 self-loss：ENH 在温和设置（T=0.8 / K=30 / K=100）最优；**SELv2 在极端采样温度最优（T=0.5=2.70、T=1.4=4.14）**，SEL旧在 T=1.1/K=10 最优。结论：**数据量越大 SEL 越接近常开 ENH；且 SELv2（含全关极端）在分布外/极端采样下泛化最好**，印证"SEL 泛化更好"的直觉——20k 时信号太弱且噪声大（SELv2 处处最差），全量下才显形。原始数据见 `experiments/cmp_sel_full.txt`（生成原文亦在其中）。
+- feat: **默认训练方式改为 SELv2**——`configs/pretrain.yaml`（train.py 默认配置）与 `configs/config_dml_full.yaml` 新增 `training.enhancement_schedule`（SELv2 8 段）。今后 `python scripts/train.py`（无 `--config`）即按 SELv2 分段选择性增强训练；`validate` 仍强制全开。
+- chore: 清理 20k 对比产物——删除 `configs/config_cmp_enh_20k.yaml` / `config_cmp_sel_20k.yaml`、`experiments/cmp_20k.txt` / `_cmp_20k.py` 及相关 20k 权重（`checkpoints_cmp_enh_20k/` / `checkpoints_cmp_sel_20k/` / `checkpoints_cmp_sel_old20k/`）；`.gitignore` 仅保留全量对比权重目录（`checkpoints_cmp_{enh,sel,selv2}_full/`、`logs_cmp_*_full/`）。以全量对比产物取代旧 20k 产物。
+
 ## `2741989`（已推送，基于 `7df19b6`）
 
 - exp: 增强 vs 基线 受控对比扩展至 20000 行（`data/pretrain_corpus/merged_sample_20k_top.txt` = merged.txt 前 20000 行，确定性）。SEL 改用**新版 8 段掩码**（`enhancement_schedule`：attn_temp 恒开；qk_norm/residual_gate 段间切换、永不同时关、偏向全开 4/8），取代旧 4 段。`configs/config_cmp_enh_20k.yaml` / `config_cmp_sel_20k.yaml`，同参数（1 epoch / batch32 / seq64 / lr3e-3 / seed42 / test_split0.1）DML fp32。
