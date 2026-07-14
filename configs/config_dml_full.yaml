@@ -27,6 +27,17 @@ training:
   lr_schedule: "wsd"
   wsd_decay_frac: 0.1
   compile: false
+  # ---- 默认训练采用 SEL v2 选择性增强调度（2026-07-14 起，与 pretrain.yaml 一致）----
+  # 8 段：1 全开 + 1 全关极端 + 6 局部（attn_temp 仅全关段关，平时恒开）。
+  enhancement_schedule:
+    - { qk_norm: true,  attn_temp: true,  residual_gate: true,  hybrid_gate: false }
+    - { qk_norm: false, attn_temp: false, residual_gate: false, hybrid_gate: false }
+    - { qk_norm: true,  attn_temp: true,  residual_gate: false, hybrid_gate: false }
+    - { qk_norm: false, attn_temp: true,  residual_gate: true,  hybrid_gate: false }
+    - { qk_norm: true,  attn_temp: true,  residual_gate: false, hybrid_gate: false }
+    - { qk_norm: false, attn_temp: true,  residual_gate: true,  hybrid_gate: false }
+    - { qk_norm: true,  attn_temp: true,  residual_gate: false, hybrid_gate: false }
+    - { qk_norm: false, attn_temp: true,  residual_gate: true,  hybrid_gate: false }
 
 data:
   train_file: "data/pretrain_corpus/merged.txt"
