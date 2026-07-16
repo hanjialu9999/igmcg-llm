@@ -56,6 +56,9 @@ def build_model(config: Dict[str, Any], device: Optional[torch.device] = None) -
         attn_temp=mc.get('attn_temp', True),
         residual_gate=mc.get('residual_gate', True),
         hybrid_gate=mc.get('hybrid_gate', True),
+        char_merge=mc.get('char_merge', False),
+        char_merge_kernel=mc.get('char_merge_kernel', 3),
+        char_merge_dropout=mc.get('char_merge_dropout', 0.0),
     )
     if device is not None:
         model = model.to(device)
@@ -72,10 +75,13 @@ def load_vocab(vocab_path: str = 'checkpoints/vocab.json') -> Vocabulary:
     with open(path, 'r', encoding='utf-8') as f:
         vocab_data = json.load(f)
 
-    if vocab_data.get('bpe'):
-        # BPE 词表：用 BPETokenizer 重建并恢复合并规则
-        from models.data_utils import BPETokenizer
-        vocab = BPETokenizer()
+    if vocab_data.get('bpe') or vocab_data.get('char'):
+        # BPE / 字符级词表：用 BPETokenizer 或 CharTokenizer 重建
+        from models.data_utils import BPETokenizer, CharTokenizer
+        if vocab_data.get('char'):
+            vocab = CharTokenizer()
+        else:
+            vocab = BPETokenizer()
         vocab.word2idx = vocab_data['word2idx']
         vocab.idx2word = {int(k): v for k, v in vocab_data['idx2word'].items()}
         vocab.merges = [tuple(m) for m in vocab_data.get('merges', [])]

@@ -1,0 +1,65 @@
+# 字符级 + 学习型分词 + 滑动窗口上下文（DML / AMD 核显版）
+# 与 config_dml_full.yaml 区别：
+#   - vocab_size 改字符级(5000)：单字 + 256 byte，零 OOV
+#   - char_merge: true 启用 CharMergeLayer（模型自学习"合并字符成词"，受 LM loss 监督）
+#   - attn_window: 128 滑动窗口注意力：上下文保持 256 但计算从 O(T^2) 降到 O(T*w)，
+#     不增反降计算量；如需更长上下文可把 max_seq_length 提到 512/1024 而显存可控
+model:
+  vocab_size: 5000
+  embedding_dim: 512
+  num_heads: 8
+  num_layers: 6
+  hidden_dim: 1024
+  max_seq_length: 256
+  dropout: 0
+  tie_weights: true
+  gradient_checkpointing: true
+  attn_window: 128
+  rope_base: 10000.0
+  rope_max_len: 4096
+  char_merge: true
+  char_merge_kernel: 3
+  char_merge_dropout: 0.0
+
+training:
+  batch_size: 64
+  epochs: 1
+  learning_rate: 5.0e-4
+  weight_decay: 0.01
+  gradient_clip: 1.0
+  warmup_steps: 0.1
+  early_stop_patience: 5
+  label_smoothing: 0.1
+  cpu_threads: 4
+  precision: "fp32"
+  grad_accum_steps: 1
+  eta_min: 0.0
+  lr_schedule: "wsd"
+  wsd_decay_frac: 0.1
+  compile: false
+  show_progress: false
+  enhancement_schedule:
+    - { qk_norm: true,  attn_temp: true,  residual_gate: true,  hybrid_gate: false }
+    - { qk_norm: false, attn_temp: false, residual_gate: false, hybrid_gate: false }
+    - { qk_norm: true,  attn_temp: true,  residual_gate: false, hybrid_gate: false }
+    - { qk_norm: false, attn_temp: true,  residual_gate: true,  hybrid_gate: false }
+    - { qk_norm: true,  attn_temp: true,  residual_gate: false, hybrid_gate: false }
+    - { qk_norm: false, attn_temp: true,  residual_gate: true,  hybrid_gate: false }
+    - { qk_norm: true,  attn_temp: true,  residual_gate: false, hybrid_gate: false }
+    - { qk_norm: false, attn_temp: true,  residual_gate: true, hybrid_gate: false }
+
+data:
+  train_file: "data/pretrain_corpus/merged.txt"
+  vocab_size: 5000
+  max_seq_length: 256
+  num_workers: 0
+  prefetch: 2
+  test_split: 0.1
+
+paths:
+  checkpoint_dir: "checkpoints_dml"
+  log_dir: "logs_dml"
+
+device: "auto"
+
+seed: 42

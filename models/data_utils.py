@@ -323,15 +323,19 @@ class BPETokenizer:
         self._symbol_cap = self.vocab_size - len(self.word2idx)
 
     # ---------- 训练 ----------
-    def train(self, texts: List[str], min_freq: int = 2) -> None:
+    def train(self, texts: List[str], min_freq: int = 2, cjk_boost: float = 5.0) -> None:
         """对训练语料跑 BPE，生成子词词表。
 
         min_freq: 单字/子词进入词表的最低出现次数，过滤一次性噪声。
+        cjk_boost: 中文相邻字对的合并优先级加成（默认 5），让中文词组优先
+            合并为子词，避免有限的子词额度被英文/数字碎片抢光导致中文几乎
+            不合并（实测原版中文多字词为 0）。
         """
-        # 1) 预分词：CJK 逐字，非 CJK 按空格/标点切（与 Vocabulary 一致）
+        self._cjk_boost = cjk_boost
+        # 1) 预分词（BPE 专用：CJK 连续不拆散，使中文相邻字对可合并）
         counter: Counter = Counter()
         for text in texts:
-            for w in self._pre_tokenize(text):
+            for w in self._bpe_pre_tokenize(text):
                 counter[w] += 1
 
         # 2) 初始词表 = 高频单字（含 CJK 与非 CJK 字符），过滤低频噪声
@@ -347,15 +351,16 @@ class BPETokenizer:
         self.idx2word = {i: w for w, i in self.word2idx.items()}
 
         # 3) 字节对合并：统计相邻符号对频次，反复合并最高频对
-        # 语料以单字序列表示，逐步合并
+        # 语料以单字序列表示，逐步合并。预分词单元（连续中文串/英文词）拆成
+        # 字符后，仅保留已在词表中的字符参与统计（中文串的字符都是单字，故
+        # 中文相邻字对能正确进入 pair_freq 并被合并）。
         sym_freq: Counter = Counter()
         pair_freq: Counter = Counter()
-        # 用 token 字符串列表表示每个词，初始为单字
-        word_syms = {}  # word -> sym list（仅对词表内单字）
+        word_syms = {}  # word -> 词表内字符序列
         for word, cnt in counter.items():
-            if word not in self.word2idx:
+            syms = [c for c in word if c in self.word2idx]
+            if len(syms) < 2:
                 continue
-            syms = list(word)
             word_syms[word] = syms
             for _ in range(cnt):
                 for i in range(len(syms) - 1):
@@ -364,10 +369,11 @@ class BPETokenizer:
                     sym_freq[s] += 1
 
         while len(self.word2idx) < self.vocab_size and pair_freq:
-            # 取最高频对（频次相同时按字典序稳定）
-            best = max(pair_freq.items(), key=lambda kv: (kv[1], kv[0]))
+            # 取加权最高频对：中文相邻字对给予 cjk_boost 加成，使其优先合并
+            best = max(pair_freq.items(),
+                       key=lambda kv: (self._pair_score(kv[0]) * kv[1], kv[0]))
             pair, freq = best
-            if freq < min_freq:
+            if self._pair_score(pair) * freq < min_freq:
                 break
             a, b = pair
             new_sym = a + b
@@ -432,6 +438,19 @@ class BPETokenizer:
         self.word2idx = keep
 
     @staticmethod
+    def _is_cjk(ch: str) -> bool:
+        # symbol 可能已是合并出的子词（长度>1）；只要含 CJK 字符即视为中文侧
+        return any(0x3400 <= ord(c) <= 0x9fff or 0xf900 <= ord(c) <= 0xfaff
+                   or 0xff00 <= ord(c) <= 0xffef for c in ch)
+
+    def _pair_score(self, pair: Tuple[str, str]) -> float:
+        """合并优先级权重：中文相邻字对给予 cjk_boost 加成，其余为 1。"""
+        a, b = pair
+        if self._is_cjk(a) and self._is_cjk(b):
+            return getattr(self, '_cjk_boost', 5.0)
+        return 1.0
+
+    @staticmethod
     def _is_valid_char(ch: str) -> bool:
         """剔除无效/噪声字符：替换符、私用区、未定义码点、控制字符。"""
         if ch == '\ufffd':
@@ -461,6 +480,18 @@ class BPETokenizer:
                 out.append(w)
         return out
 
+    def _bpe_pre_tokenize(self, text: str) -> List[str]:
+        """BPE 专用预分词：CJK 字符保持连续（不逐字插空格），使中文相邻字对
+        能被 BPE 合并为词组子词；非 CJK 仍按空格/标点切分。过滤无效字符。"""
+        text = ' '.join(text.split()).lower()
+        # 标点单独成 token（与训练统计一致）
+        text = re.sub(r'([.!?,;:-])', r' \1 ', text)
+        out = []
+        for w in text.split():
+            if w and all(self._is_valid_char(c) for c in w):
+                out.append(w)
+        return out
+
     # ---------- 编码/解码 ----------
     def _merge_word(self, word: str) -> List[str]:
         """把单个预分词单元按 merges 规则贪心合并为子词序列。"""
@@ -481,7 +512,7 @@ class BPETokenizer:
 
     def tokenize(self, text: str) -> List[str]:
         out: List[str] = []
-        for w in self._pre_tokenize(text):
+        for w in self._bpe_pre_tokenize(text):
             out.extend(self._merge_word(w))
         return out
 
@@ -553,4 +584,49 @@ class BPETokenizer:
                 'merges': [list(m) for m in self.merges],
                 'special_tokens': self.special_tokens,
                 'bpe': True,
+            }, f, ensure_ascii=False, indent=2)
+
+
+class CharTokenizer(BPETokenizer):
+    """字符级分词器（学习型分词的词表基座）。
+
+    与 BPETokenizer 差异：不做 BPE 合并，词表 = 单字 + 256 byte token；
+    相邻字符的"合并成词"完全交给模型侧的 CharMergeLayer 学习（受 LM loss
+    监督），分词器本身只负责字符→索引的零 OOV 映射。导出标记 char:true。
+    """
+
+    def train(self, texts: List[str], min_freq: int = 1) -> None:
+        # 1) 统计字符频次（CJK 逐字 + 非 CJK 按空格切分后的字符/词字符）
+        counter: Counter = Counter()
+        for text in texts:
+            for w in self._bpe_pre_tokenize(text):
+                for ch in w:
+                    if self._is_valid_char(ch):
+                        counter[ch] += 1
+        # 2) 取最高频单字填满 symbol 额度（special + 256 byte 已占，其余给单字）
+        letters = [w for w, c in counter.most_common() if c >= min_freq]
+        for ch in letters:
+            if ch not in self.word2idx:
+                self.word2idx[ch] = len(self.word2idx)
+            if len(self.word2idx) >= self.vocab_size:
+                break
+        self.idx2word = {i: w for w, i in self.word2idx.items()}
+
+    def tokenize(self, text: str) -> List[str]:
+        # 字符级：每个合法字符单独成 token（未知字符走 byte fallback 由 encode 处理）
+        out = []
+        for w in self._bpe_pre_tokenize(text):
+            out.extend(list(w))
+        return out
+
+    def save(self, path: str) -> None:
+        import json
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump({
+                'word2idx': self.word2idx,
+                'idx2word': {str(k): v for k, v in self.idx2word.items()},
+                'merges': [],
+                'special_tokens': self.special_tokens,
+                'bpe': True,
+                'char': True,
             }, f, ensure_ascii=False, indent=2)
