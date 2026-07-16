@@ -220,7 +220,7 @@ def load_data(data_file: str, vocab_size: int = 5000, max_seq_length: int = 32, 
     """Load data from file with validation"""
     print(f"Loading data from {data_file}...")
     
-    with open(data_file, 'r', encoding='utf-8') as f:
+    with open(data_file, 'r', encoding='utf-8', errors='replace') as f:
         texts = [line.strip() for line in f if line.strip()]
     
     print(f"Loaded {len(texts)} lines")
