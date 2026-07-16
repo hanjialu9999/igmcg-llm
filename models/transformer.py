@@ -48,6 +48,70 @@ class CharMergeLayer(nn.Module):
         return self.drop(out)
 
 
+class MemoryBank(nn.Module):
+    """可学习压缩记忆（阶段2）。
+
+    维护固定大小记忆槽，存 token 表示的**压缩形式**（压缩矩阵可学），
+    并用可学门控选择"保留哪些信息"。记忆作为额外 KV 源供注意力检索，
+    全部参数受 LM loss 监督 —— 压缩方法与保留策略都由模型自己优化。
+
+    写入（soft write）：当前表示经可学压缩矩阵压成小向量，按门控 softmax
+    对 M 个槽做加权更新（可微，无需硬选择）；读取：记忆槽解压后投影为
+    K/V 拼接到注意力 KV 之后，作为全局可检索上下文。
+    """
+
+    def __init__(self, dim: int, num_slots: int = 64, comp_dim: int = 32,
+                 head_dim: Optional[int] = None, dropout: float = 0.0):
+        super().__init__()
+        self.dim = dim
+        self.num_slots = num_slots
+        self.comp_dim = comp_dim
+        self.head_dim = head_dim or dim
+        # 压缩 / 解压矩阵（可学）：把 D 维表示压到 comp_dim 再还原
+        self.compress = nn.Linear(dim, comp_dim, bias=False)
+        self.decompress = nn.Linear(comp_dim, dim, bias=False)
+        # 写入门控：对当前表示打分，决定写入各槽的权重
+        self.write_gate = nn.Linear(dim, num_slots, bias=True)
+        self.drop = nn.Dropout(dropout)
+        # 记忆槽的 K/V 投影（解压后表示 → 注意力各头 K/V 维度）
+        self.mem_k = nn.Linear(dim, self.head_dim, bias=False)
+        self.mem_v = nn.Linear(dim, self.head_dim, bias=False)
+        self._init_slots()
+
+    def _init_slots(self):
+        # 记忆槽以压缩空间零初始化（forward 首步由 reset 填充）
+        self.register_buffer('slots', torch.zeros(1, self.num_slots, self.comp_dim),
+                             persistent=False)
+
+    def reset(self, batch: int, device: torch.device, dtype: torch.dtype):
+        """新建 batch 大小的记忆（每个样本独立槽）。"""
+        self.slots = torch.zeros(batch, self.num_slots, self.comp_dim,
+                                 device=device, dtype=dtype)
+
+    def write(self, x: torch.Tensor) -> None:
+        """x: (B, T, D) 当前层表示，soft 写入记忆。"""
+        B, T, D = x.shape
+        if self.slots.shape[0] != B:
+            self.reset(B, x.device, x.dtype)
+        # 压缩当前表示
+        comp = self.compress(x)  # (B, T, comp_dim)
+        # 写入权重：对每步表示，softmax 分配到 M 个槽（可学门控）
+        gate = torch.softmax(self.write_gate(x), dim=-1)  # (B, T, M)
+        # 按 gate 把压缩表示累加到槽（加权求和，可微）
+        update = torch.einsum('btm,btc->bmc', gate, comp)  # (B, M, comp_dim)
+        # 移动平均式软写入（保留历史记忆，新信息按 gate 权重叠加）
+        self.slots = self.slots + update
+        # 归一化防止数值膨胀
+        self.slots = self.slots / (1e-6 + self.slots.norm(dim=-1, keepdim=True))
+
+    def get_kv(self) -> Tuple[torch.Tensor, torch.Tensor]:
+        """返回记忆的 K/V：(B, M, D) 各两份（每头共享，注意力内广播）。"""
+        decomp = self.decompress(self.slots)  # (B, M, D)
+        k = self.mem_k(decomp)
+        v = self.mem_v(decomp)
+        return k, v
+
+
 class RMSNorm(nn.Module):
     """Root Mean Square Layer Normalization（LLaMA 风格，比 LayerNorm 更省且更稳定）。"""
     def __init__(self, dim: int, eps: float = 1e-6):
@@ -198,9 +262,10 @@ class SlidingWindowCausalSelfAttention(nn.Module):
             self._rbias = self.rel_bias_table[:, idx]  # (H, T, T)
         self._cached_T = T
 
-    def forward(self, x: torch.Tensor, past_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None, use_cache: bool = False, start_pos: int = 0) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
+    def forward(self, x: torch.Tensor, past_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None, use_cache: bool = False, start_pos: int = 0,
+                memory_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         q, k, v = self.project_and_norm(x, start_pos)
-        return self.attend(q, k, v, past_kv, use_cache, start_pos)
+        return self.attend(q, k, v, past_kv, use_cache, start_pos, memory_kv)
 
     def set_enhancements_active(self, spec):
         """运行时开关（按开关粒度）：`spec=True/False` 全开/全关；`spec=dict` 仅更新存在的键。
@@ -236,10 +301,12 @@ class SlidingWindowCausalSelfAttention(nn.Module):
         return q, k, v
 
     def attend(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
-               past_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None, use_cache: bool = False,
-               start_pos: int = 0) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
+                past_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None, use_cache: bool = False,
+                start_pos: int = 0,
+                memory_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         """重算力部分（在梯度检查点重算区域内执行）：scores/softmax/proj。
-        大幅激活（scores 张量）不落盘、反向时重算，保留大模型显存收益。"""
+        大幅激活（scores 张量）不落盘、反向时重算，保留大模型显存收益。
+        memory_kv: 可学习压缩记忆的 (K, V)，拼接到窗口 KV 之后作为全局可检索上下文。"""
         B, _, Tq, _ = q.shape
         if use_cache:
             # 增量解码：拼接待拼接的 K/V 缓存，仅对当前 token 做注意力
@@ -247,6 +314,13 @@ class SlidingWindowCausalSelfAttention(nn.Module):
                 pk, pv = past_kv
                 k = torch.cat([pk, k], dim=2)
                 v = torch.cat([pv, v], dim=2)
+            if memory_kv is not None:
+                mk, mv = memory_kv
+                # (B,M,D) -> (B,H,M,D) 各头共享记忆 KV
+                mk = mk.unsqueeze(1).expand(-1, self.num_heads, -1, -1)
+                mv = mv.unsqueeze(1).expand(-1, self.num_heads, -1, -1)
+                k = torch.cat([mk, k], dim=2)
+                v = torch.cat([mv, v], dim=2)
             present = (k, v)
             Tkv = k.size(2)
             qpos = torch.arange(start_pos, start_pos + Tq, device=q.device).unsqueeze(1)
@@ -255,11 +329,11 @@ class SlidingWindowCausalSelfAttention(nn.Module):
             if self.window > 0:
                 causal_mask = causal_mask | (qpos - kpos > self.window)
             attn_mask = (causal_mask.float() * -1e9).unsqueeze(0)   # (1,1,T,Tkv)
+            # 记忆槽位置在窗口 KV 之前（seq 起点之前），永远不被因果遮蔽，
+            # 但也不参与"未来"泄露：记忆是历史压缩，视为已发生，不施加 causal 惩罚
             if self.rel_bias:
                 idx = (qpos - kpos + Tkv - 1).clamp(0, 2 * self.max_seq_length - 1)
                 attn_mask = attn_mask + self.rel_bias_table[:, idx].unsqueeze(0)
-            # 增量解码单 token 查询时，SDPA 在 CPU 上的 per-call 开销远大于一次显式 matmul，
-            # 故 CPU 也走手动注意力；CUDA 仍用 fused SDPA（显存带宽充足、kernel 更优）。
             if q.device.type == 'cuda':
                 out = scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
             else:
@@ -270,18 +344,43 @@ class SlidingWindowCausalSelfAttention(nn.Module):
         # —— 非缓存（训练 / 含 SSM 模型全量重算）路径 ——
         T = q.size(2)
         self._build_masks(T, q.device)
+        Tkv = k.size(2)
+        # 训练路径把记忆拼到 K/V 之前（记忆在前，窗口/全量在后）
+        if memory_kv is not None:
+            mk, mv = memory_kv
+            # (B,M,D) -> (B,H,M,D) 各头共享记忆 KV，拼到 K/V 序列维度之前
+            mk = mk.unsqueeze(1).expand(-1, self.num_heads, -1, -1)
+            mv = mv.unsqueeze(1).expand(-1, self.num_heads, -1, -1)
+            k = torch.cat([mk, k], dim=2)
+            v = torch.cat([mv, v], dim=2)
+            Tkv = k.size(2)
+        # 统一构造 (1,1,T,Tkv) 注意力掩码：记忆段全 0（全局可检索），
+        # 主序列段按 causal / window / rel_bias 遮蔽
+        attn_mask = torch.zeros(1, 1, T, Tkv, device=q.device)
+        if self.window > 0:
+            qpos = torch.arange(0, T, device=q.device).unsqueeze(1)
+            kpos = torch.arange(0, Tkv, device=q.device).unsqueeze(0)
+            m = (qpos - kpos > self.window).float() * -1e9  # (T, Tkv)
+            m = m.unsqueeze(0).unsqueeze(0)  # (1,1,T,Tkv)
+            if memory_kv is not None:
+                m[:, :, :, :memory_kv[0].size(1)] = 0.0  # 记忆段不受窗口限制
+            attn_mask = attn_mask + m
+        elif self.rel_bias:
+            attn_mask = attn_mask + (self._mask.float() * -1e9)
+        if self.rel_bias:
+            idx = (torch.arange(T, device=q.device).unsqueeze(1)
+                   - torch.arange(Tkv, device=q.device).unsqueeze(0)
+                   + Tkv - 1).clamp(0, 2 * self.max_seq_length - 1)
+            attn_mask = attn_mask + self.rel_bias_table[:, idx].unsqueeze(0)
         if q.device.type in ('cuda', 'cpu'):
-            if self.rel_bias or self.window > 0:
-                attn_mask = self._mask.float() * -1e9
-                if self.rel_bias:
-                    attn_mask = attn_mask + self._rbias.unsqueeze(0)
+            if attn_mask.abs().max() > 0 or self.rel_bias:
                 out = scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
             else:
                 out = scaled_dot_product_attention(q, k, v, is_causal=True)
         else:
-            extra = self._mask.float() * -1e9 if (self.rel_bias or self.window > 0) else None
-            if self.rel_bias and extra is not None:
-                extra = extra + self._rbias.unsqueeze(0)
+            extra = attn_mask if attn_mask.abs().max() > 0 else None
+            if self.rel_bias and extra is None:
+                extra = self._rbias.unsqueeze(0)
             out = self._manual_attention(q, k, v, extra)
         out = out.transpose(1, 2).reshape(B, T, self.num_heads * self.head_dim)
         return self.proj(out), None
@@ -526,7 +625,8 @@ class TransformerBlock(nn.Module):
             self.hybrid_attn_gate = nn.Parameter(torch.ones(1))
             self.hybrid_ssm_gate = nn.Parameter(torch.ones(1))
 
-    def forward(self, x: torch.Tensor, past_kv: Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]] = None, use_cache: bool = False, start_pos: int = 0, ssm_past_state: Optional[torch.Tensor] = None, ssm_past_conv_state: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]]]:
+    def forward(self, x: torch.Tensor, past_kv: Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]] = None, use_cache: bool = False, start_pos: int = 0, ssm_past_state: Optional[torch.Tensor] = None, ssm_past_conv_state: Optional[torch.Tensor] = None,
+                memory: Optional['MemoryBank'] = None) -> Tuple[torch.Tensor, Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]]]:
         present: Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]] = None
         ssm_present_state: Optional[torch.Tensor] = None
         ssm_present_conv_state: Optional[torch.Tensor] = None
@@ -534,6 +634,7 @@ class TransformerBlock(nn.Module):
         attn_past_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
         if past_kv is not None:
             attn_past_kv = past_kv[0]
+        mem_kv = memory.get_kv() if memory is not None else None
         ckpt = self.training and self.gradient_checkpointing
         gate1 = (self.sub1_gate if (self.residual_gate_enabled and self._rt["residual_gate"]) else None)
         gate2 = (self.ffn_gate if (self.residual_gate_enabled and self._rt["residual_gate"]) else None)
@@ -541,9 +642,9 @@ class TransformerBlock(nn.Module):
         if self.block_type == 'attn':
             if ckpt:
                 q, k, v = self.attn.project_and_norm(self.ln1(x), start_pos)
-                h, present = checkpoint(self.attn.attend, q, k, v, attn_past_kv, use_cache, start_pos, use_reentrant=False)
+                h, present = checkpoint(self.attn.attend, q, k, v, attn_past_kv, use_cache, start_pos, mem_kv, use_reentrant=False)
             else:
-                h, present = self.attn(self.ln1(x), attn_past_kv, use_cache, start_pos)
+                h, present = self.attn(self.ln1(x), attn_past_kv, use_cache, start_pos, memory_kv=mem_kv)
             x = x + self.drop(gate1 * h if gate1 is not None else h)
         elif self.block_type == 'ssm':
             if ckpt:
@@ -555,10 +656,10 @@ class TransformerBlock(nn.Module):
             xn = self.ln1(x)
             if ckpt:
                 q, k, v = self.attn.project_and_norm(xn, start_pos)
-                h, attn_present = checkpoint(self.attn.attend, q, k, v, attn_past_kv, use_cache, start_pos, use_reentrant=False)
+                h, attn_present = checkpoint(self.attn.attend, q, k, v, attn_past_kv, use_cache, start_pos, mem_kv, use_reentrant=False)
                 ssm_h, ssm_present_state, ssm_present_conv_state = checkpoint(self.ssm, xn, ssm_past_state, ssm_past_conv_state, use_cache, use_reentrant=False)
             else:
-                h, attn_present = self.attn(xn, attn_past_kv, use_cache, start_pos)
+                h, attn_present = self.attn(xn, attn_past_kv, use_cache, start_pos, memory_kv=mem_kv)
                 ssm_h, ssm_present_state, ssm_present_conv_state = self.ssm(xn, past_state=ssm_past_state, past_conv_state=ssm_past_conv_state, use_cache=use_cache)
             if self.hybrid_gate_enabled and self._rt["hybrid_gate"]:
                 # ⭐A 混合块：attn 与 ssm 两路各自可学习门控，让模型自决每层偏重
@@ -567,6 +668,9 @@ class TransformerBlock(nn.Module):
                 x = x + self.drop(h) + self.drop(ssm_h)
             if use_cache:
                 present = (attn_present, ssm_present_state, ssm_present_conv_state)
+        # 块输出后写入可学习压缩记忆（记忆存压缩表示，由 LM loss 监督）
+        if memory is not None:
+            memory.write(x)
         # FFN 子层：重算力部分（SwiGLU）放入检查点，轻量 ln2 与门控在区外
         if ckpt:
             f = checkpoint(self.ffn, self.ln2(x), use_reentrant=False)
@@ -640,7 +744,8 @@ class TransformerModel(nn.Module):
                   qk_norm: bool = True, attn_temp: bool = True,
                    residual_gate: bool = True, hybrid_gate: bool = True,
                    char_merge: bool = False, char_merge_kernel: int = 3,
-                   char_merge_dropout: float = 0.0):
+                   char_merge_dropout: float = 0.0,
+                   memory_size: int = 0, memory_comp_dim: int = 32):
         super(TransformerModel, self).__init__()
 
         self.vocab_size = vocab_size
@@ -651,6 +756,10 @@ class TransformerModel(nn.Module):
         self.rope_base = rope_base
         self.rope_max_len = rope_max_len
         self.mask_fill_value = mask_fill_value
+        # 阶段2：可学习压缩记忆（memory_size>0 时启用），存压缩表示 + 可学门控选槽
+        self.memory_enabled = memory_size > 0
+        self.memory_size = memory_size
+        self.memory_comp_dim = memory_comp_dim
 
         self.embedding = nn.Embedding(vocab_size, embedding_dim)
         self.drop = nn.Dropout(dropout)
@@ -684,6 +793,11 @@ class TransformerModel(nn.Module):
         self._tie_weights = tie_weights
         if tie_weights:
             self.output_head.weight = self.embedding.weight
+        # 可学习压缩记忆：固定槽，压缩矩阵 + 写入门控均参与 LM loss 监督
+        if self.memory_enabled:
+            self.memory_bank = MemoryBank(
+                embedding_dim, num_slots=memory_size, comp_dim=memory_comp_dim,
+                head_dim=embedding_dim // num_heads, dropout=dropout)
 
     def set_enhancements_active(self, spec):
         """运行时开关（按开关粒度）：`spec=True/False` 全开/全关；`spec=dict` 按键更新。
@@ -756,11 +870,17 @@ class TransformerModel(nn.Module):
             ssm_states = [None] * len(self.blocks)
             ssm_conv_states = [None] * len(self.blocks)
 
+        # 可学习压缩记忆：每个样本独立槽，前向首步重置（训练/推理皆按 batch 重建）
+        memory = None
+        if self.memory_enabled:
+            memory = self.memory_bank
+            memory.reset(x.size(0), x.device, x.dtype)
+
         for i, block in enumerate(self.blocks):
             ssm_past_state = ssm_states[i] if use_cache else None
             ssm_past_conv_state = ssm_conv_states[i] if use_cache else None
             # 检查点（仅重算力部分）已在 block 内部按 self.gradient_checkpointing 处理，此处直接调用
-            x, present = block(x, past_key_values[i], use_cache, start_pos, ssm_past_state, ssm_past_conv_state)
+            x, present = block(x, past_key_values[i], use_cache, start_pos, ssm_past_state, ssm_past_conv_state, memory)
             presents.append(present)
         x = self.ln_f(x)
         if use_cache:
