@@ -337,8 +337,10 @@ class SlidingWindowCausalSelfAttention(nn.Module):
             if meta.get('sparse_topk', 0) and meta['sparse_topk'] < mem_cols:
                 k_keep = meta['sparse_topk']
                 # 每查询保留 top-k 记忆槽，余下压到 -inf（可微稀疏，降低无关记忆干扰）
-                thr = torch.kthvalue(mlogits, mem_cols - k_keep + 1, dim=-1).values  # (B,H,Tq)
-                drop = mlogits < thr.unsqueeze(-1)
+                # 用 topk 计算阈值（DML 下 kthvalue 的 CPU fallback 会返回异常形状，topk 更稳）
+                kvals, _ = torch.topk(mlogits, k_keep, dim=-1)  # (B,H,Tq,k_keep)
+                thr = kvals[..., -1:]  # 第 k 大的值作为阈值 (B,H,Tq,1)
+                drop = mlogits < thr
                 mlogits = mlogits.masked_fill(drop, -1e9)
             mem_bias = mlogits  # (B,H,Tq,M)，作为 scores 的可加偏置
 
