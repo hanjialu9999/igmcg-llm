@@ -36,10 +36,11 @@ class CharMergeLayer(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: (B, T, D)
         B, T, D = x.shape
-        # 邻域聚合：转 (B, D, T) 卷积，因果左侧填充（零填充在前，输出取前 T 个位置）
-        x_t = x.transpose(1, 2)
-        agg = F.conv1d(x_t, self.conv.weight, None,
-                       padding=(self.pad, 0), groups=D)
+        # 邻域聚合：因果左侧填充（仅 pad 左边），卷积后取前 T 个位置
+        x_t = x.transpose(1, 2)  # (B, D, T)
+        # 左侧零填充 pad 个位置（因果：位置 t 只看 t-pad..t）
+        x_padded = F.pad(x_t, (self.pad, 0))  # (B, D, T+pad)
+        agg = F.conv1d(x_padded, self.conv.weight, None, groups=D)  # (B, D, T)
         agg = agg.transpose(1, 2)  # (B, T, D)
         # 门控：当前字符 vs 邻域聚合
         z = torch.sigmoid(self.gate(x))
