@@ -59,9 +59,11 @@ def build_model(config: Dict[str, Any], device: Optional[torch.device] = None) -
         char_merge=mc.get('char_merge', False),
         char_merge_kernel=mc.get('char_merge_kernel', 3),
         char_merge_dropout=mc.get('char_merge_dropout', 0.0),
-        # 阶段2 可学习压缩记忆
+        # 阶段2 可学习压缩记忆 + 阶段3 可学习检索/稀疏
         memory_size=mc.get('memory_size', 0),
         memory_comp_dim=mc.get('memory_comp_dim', 32),
+        memory_retrieval=mc.get('memory_retrieval', False),
+        memory_sparse_topk=mc.get('memory_sparse_topk', 0),
     )
     if device is not None:
         model = model.to(device)

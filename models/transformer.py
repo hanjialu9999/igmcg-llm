@@ -61,12 +61,15 @@ class MemoryBank(nn.Module):
     """
 
     def __init__(self, dim: int, num_slots: int = 64, comp_dim: int = 32,
-                 head_dim: Optional[int] = None, dropout: float = 0.0):
+                 head_dim: Optional[int] = None, dropout: float = 0.0,
+                 retrieval: bool = False, sparse_topk: int = 0):
         super().__init__()
         self.dim = dim
         self.num_slots = num_slots
         self.comp_dim = comp_dim
         self.head_dim = head_dim or dim
+        self.retrieval_enabled = retrieval
+        self.sparse_topk = sparse_topk
         # 压缩 / 解压矩阵（可学）：把 D 维表示压到 comp_dim 再还原
         self.compress = nn.Linear(dim, comp_dim, bias=False)
         self.decompress = nn.Linear(comp_dim, dim, bias=False)
@@ -76,6 +79,9 @@ class MemoryBank(nn.Module):
         # 记忆槽的 K/V 投影（解压后表示 → 注意力各头 K/V 维度）
         self.mem_k = nn.Linear(dim, self.head_dim, bias=False)
         self.mem_v = nn.Linear(dim, self.head_dim, bias=False)
+        # 阶段3 可学习检索门控：单个可学标量缩放记忆召回强度（sigmoid 软增强/抑制），受 LM loss 监督
+        if retrieval:
+            self.retrieval_gate = nn.Parameter(torch.zeros(1))
         self._init_slots()
 
     def _init_slots(self):
@@ -104,12 +110,19 @@ class MemoryBank(nn.Module):
         # 归一化防止数值膨胀
         self.slots = self.slots / (1e-6 + self.slots.norm(dim=-1, keepdim=True))
 
-    def get_kv(self) -> Tuple[torch.Tensor, torch.Tensor]:
-        """返回记忆的 K/V：(B, M, D) 各两份（每头共享，注意力内广播）。"""
+    def get_kv(self) -> Tuple[torch.Tensor, torch.Tensor, Optional[Dict[str, Any]]]:
+        """返回记忆的 K/V：(B, M, head_dim) 及检索元信息（门控/稀疏）。"""
         decomp = self.decompress(self.slots)  # (B, M, D)
         k = self.mem_k(decomp)
         v = self.mem_v(decomp)
-        return k, v
+        meta = None
+        if self.retrieval_enabled or self.sparse_topk > 0:
+            meta = {
+                'retrieval_gate': self.retrieval_gate if self.retrieval_enabled else None,
+                'sparse_topk': self.sparse_topk,
+                'num_slots': self.num_slots,
+            }
+        return k, v, meta
 
 
 class RMSNorm(nn.Module):
@@ -303,11 +316,32 @@ class SlidingWindowCausalSelfAttention(nn.Module):
     def attend(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
                 past_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None, use_cache: bool = False,
                 start_pos: int = 0,
-                memory_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
+                memory_kv: Optional[Tuple[torch.Tensor, torch.Tensor, Optional[Dict[str, Any]]]] = None) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         """重算力部分（在梯度检查点重算区域内执行）：scores/softmax/proj。
         大幅激活（scores 张量）不落盘、反向时重算，保留大模型显存收益。
-        memory_kv: 可学习压缩记忆的 (K, V)，拼接到窗口 KV 之后作为全局可检索上下文。"""
+        memory_kv: (mk, mv, meta) 可学习压缩记忆的 K/V + 检索元信息（门控/稀疏）。"""
         B, _, Tq, _ = q.shape
+        # 阶段3 可学习检索：先计算记忆段偏置（门控缩放 + top-k 稀疏），注入后续 attn_mask
+        mem_bias: Optional[torch.Tensor] = None
+        mem_cols = 0
+        if memory_kv is not None and memory_kv[2] is not None:
+            mk, mv, meta = memory_kv
+            mem_cols = mk.size(1)
+            # 记忆查询相似度（每槽点积）：(B,H,Tq,M)，廉价（M 小）
+            mlogits = torch.einsum('bhqd,bhmd->bhqm', q,
+                                   mk.unsqueeze(1).expand(-1, self.num_heads, -1, -1))
+            if meta.get('retrieval_gate') is not None:
+                # 可学门控：sigmoid → (0,1) 软增强/抑制记忆召回，受 LM loss 监督
+                gate = torch.sigmoid(meta['retrieval_gate']).view(1, 1, 1, 1)
+                mlogits = mlogits * gate
+            if meta.get('sparse_topk', 0) and meta['sparse_topk'] < mem_cols:
+                k_keep = meta['sparse_topk']
+                # 每查询保留 top-k 记忆槽，余下压到 -inf（可微稀疏，降低无关记忆干扰）
+                thr = torch.kthvalue(mlogits, mem_cols - k_keep + 1, dim=-1).values  # (B,H,Tq)
+                drop = mlogits < thr.unsqueeze(-1)
+                mlogits = mlogits.masked_fill(drop, -1e9)
+            mem_bias = mlogits  # (B,H,Tq,M)，作为 scores 的可加偏置
+
         if use_cache:
             # 增量解码：拼接待拼接的 K/V 缓存，仅对当前 token 做注意力
             if past_kv is not None:
@@ -315,7 +349,7 @@ class SlidingWindowCausalSelfAttention(nn.Module):
                 k = torch.cat([pk, k], dim=2)
                 v = torch.cat([pv, v], dim=2)
             if memory_kv is not None:
-                mk, mv = memory_kv
+                mk, mv = memory_kv[0], memory_kv[1]
                 # (B,M,D) -> (B,H,M,D) 各头共享记忆 KV
                 mk = mk.unsqueeze(1).expand(-1, self.num_heads, -1, -1)
                 mv = mv.unsqueeze(1).expand(-1, self.num_heads, -1, -1)
@@ -334,6 +368,11 @@ class SlidingWindowCausalSelfAttention(nn.Module):
             if self.rel_bias:
                 idx = (qpos - kpos + Tkv - 1).clamp(0, 2 * self.max_seq_length - 1)
                 attn_mask = attn_mask + self.rel_bias_table[:, idx].unsqueeze(0)
+            if mem_bias is not None:
+                # mem_bias 仅覆盖记忆段前 mem_cols 列，需扩到全宽 Tkv 再注入
+                full_bias = torch.zeros(B, self.num_heads, Tq, Tkv, device=q.device)
+                full_bias[..., :mem_cols] = mem_bias
+                attn_mask = attn_mask + full_bias  # 注入检索门控 + 稀疏
             if q.device.type == 'cuda':
                 out = scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
             else:
@@ -347,7 +386,7 @@ class SlidingWindowCausalSelfAttention(nn.Module):
         Tkv = k.size(2)
         # 训练路径把记忆拼到 K/V 之前（记忆在前，窗口/全量在后）
         if memory_kv is not None:
-            mk, mv = memory_kv
+            mk, mv = memory_kv[0], memory_kv[1]
             # (B,M,D) -> (B,H,M,D) 各头共享记忆 KV，拼到 K/V 序列维度之前
             mk = mk.unsqueeze(1).expand(-1, self.num_heads, -1, -1)
             mv = mv.unsqueeze(1).expand(-1, self.num_heads, -1, -1)
@@ -363,7 +402,7 @@ class SlidingWindowCausalSelfAttention(nn.Module):
             m = (qpos - kpos > self.window).float() * -1e9  # (T, Tkv)
             m = m.unsqueeze(0).unsqueeze(0)  # (1,1,T,Tkv)
             if memory_kv is not None:
-                m[:, :, :, :memory_kv[0].size(1)] = 0.0  # 记忆段不受窗口限制
+                m[:, :, :, :mem_cols] = 0.0  # 记忆段不受窗口限制
             attn_mask = attn_mask + m
         elif self.rel_bias:
             attn_mask = attn_mask + (self._mask.float() * -1e9)
@@ -372,6 +411,11 @@ class SlidingWindowCausalSelfAttention(nn.Module):
                    - torch.arange(Tkv, device=q.device).unsqueeze(0)
                    + Tkv - 1).clamp(0, 2 * self.max_seq_length - 1)
             attn_mask = attn_mask + self.rel_bias_table[:, idx].unsqueeze(0)
+        if mem_bias is not None:
+            # mem_bias 仅覆盖记忆段前 mem_cols 列，需扩到全宽 Tkv 再注入
+            full_bias = torch.zeros(B, self.num_heads, T, Tkv, device=q.device)
+            full_bias[..., :mem_cols] = mem_bias
+            attn_mask = attn_mask + full_bias  # 注入检索门控 + 稀疏（前 mem_cols 列）
         if q.device.type in ('cuda', 'cpu'):
             if attn_mask.abs().max() > 0 or self.rel_bias:
                 out = scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
@@ -745,7 +789,8 @@ class TransformerModel(nn.Module):
                    residual_gate: bool = True, hybrid_gate: bool = True,
                    char_merge: bool = False, char_merge_kernel: int = 3,
                    char_merge_dropout: float = 0.0,
-                   memory_size: int = 0, memory_comp_dim: int = 32):
+                   memory_size: int = 0, memory_comp_dim: int = 32,
+                   memory_retrieval: bool = False, memory_sparse_topk: int = 0):
         super(TransformerModel, self).__init__()
 
         self.vocab_size = vocab_size
@@ -760,6 +805,8 @@ class TransformerModel(nn.Module):
         self.memory_enabled = memory_size > 0
         self.memory_size = memory_size
         self.memory_comp_dim = memory_comp_dim
+        self.memory_retrieval = memory_retrieval
+        self.memory_sparse_topk = memory_sparse_topk
 
         self.embedding = nn.Embedding(vocab_size, embedding_dim)
         self.drop = nn.Dropout(dropout)
@@ -797,7 +844,8 @@ class TransformerModel(nn.Module):
         if self.memory_enabled:
             self.memory_bank = MemoryBank(
                 embedding_dim, num_slots=memory_size, comp_dim=memory_comp_dim,
-                head_dim=embedding_dim // num_heads, dropout=dropout)
+                head_dim=embedding_dim // num_heads, dropout=dropout,
+                retrieval=memory_retrieval, sparse_topk=memory_sparse_topk)
 
     def set_enhancements_active(self, spec):
         """运行时开关（按开关粒度）：`spec=True/False` 全开/全关；`spec=dict` 按键更新。

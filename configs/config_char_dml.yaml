@@ -23,6 +23,9 @@ model:
   # 阶段2 可学习压缩记忆：固定 64 槽，存压缩表示 + 可学门控选槽，作额外 KV 源
   memory_size: 64
   memory_comp_dim: 32
+  # 阶段3 可学习检索/稀疏：对记忆段施加可学召回门控 + top-k 稀疏（复用 attention 相似度）
+  memory_retrieval: true
+  memory_sparse_topk: 32
 
 training:
   batch_size: 64
