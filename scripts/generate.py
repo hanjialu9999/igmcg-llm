@@ -183,7 +183,8 @@ class NGramModel:
         self._logprob_cache_max = 8192
 
     def _build(self, corpus_file):
-        with open(corpus_file, 'r', encoding='utf-8') as f:
+        # errors='replace' 避免脏语料含非法 UTF-8 序列时直接抛 UnicodeDecodeError
+        with open(corpus_file, 'r', encoding='utf-8', errors='replace') as f:
             for line in f:
                 ids = self.vocab.encode(line, add_special_tokens=False)
                 ids = [self.vocab.pad_idx] * 2 + ids
