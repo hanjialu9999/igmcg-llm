@@ -5,6 +5,7 @@ import argparse
 import os
 from pathlib import Path
 import sys
+from typing import Dict
 from collections import defaultdict, Counter
 
 # Add project root to path
@@ -478,8 +479,8 @@ def generate_igmcg(model, vocab, prompt, intuition=None, num_candidates=4,
 
     ids = [vocab.bos_idx] + vocab.encode(prompt, add_special_tokens=False)
     pad_id = vocab.pad_idx
-    sep_id = getattr(vocab, 'sep_idx', 1)
-    eos_id = getattr(vocab, 'eos_idx', 2)
+    sep_id = getattr(vocab, 'sep_idx', 4)
+    eos_id = getattr(vocab, 'eos_idx', 3)
 
     temps = [base_temp * (0.75 + 0.6 * k / max(1, num_candidates - 1))
              for k in range(num_candidates)]

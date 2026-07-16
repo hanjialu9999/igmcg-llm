@@ -875,6 +875,8 @@ class TransformerModel(nn.Module):
                 embedding_dim, num_slots=memory_size, comp_dim=memory_comp_dim,
                 head_dim=embedding_dim // num_heads, dropout=dropout,
                 retrieval=memory_retrieval, sparse_topk=memory_sparse_topk)
+        # 权重初始化（_init_weights 遍历所有 Linear 用 N(0,0.02)，再对 SSM 调 proper_init 覆盖）
+        self._init_weights()
 
     def set_enhancements_active(self, spec):
         """运行时开关（按开关粒度）：`spec=True/False` 全开/全关；`spec=dict` 按键更新。
