@@ -1,167 +1,87 @@
-import os
-import sys
-import re
-import argparse
+import sys, os
 from pathlib import Path
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
+sys.path.insert(0, str(project_root / 'scripts'))
 
-# 复用 generate.py 的模型加载与生成逻辑
-from generate import load_model, generate_text, NGramModel
-from models.data_utils import Vocabulary
-from models.utils import cli_guard
+# 只重设 stdout 为 UTF-8（避免中文在 GBK 控制台打印时崩溃）。
+# stdin 保留控制台原生编码：用户在 GBK 或 UTF-8 终端直接打字都能正确解码，无需改。
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
 
-CJK = r'[\u3400-\u9fff\uf900-\ufaff]'
+import torch
+from scripts.generate import load_model
 
-def clean_text(s):
-    """去掉两个 CJK 字符之间的空格，让中文更自然；英文词之间保留空格。"""
-    return re.sub(r'(?<=' + CJK + r')\s+(?=' + CJK + r')', '', s)
+DEFAULT_MODEL = str(project_root / 'checkpoints_dml' / 'final_model.pt')
+DEFAULT_VOCAB = str(project_root / 'checkpoints_dml' / 'vocab.json')
 
-@cli_guard
+
+def de_space(s):
+    """去掉字符级模型输出里每字之间的空格，还原成正常中文（便于阅读）。"""
+    return s.replace(' ', '')
+
+
+def chat_generate(model, vocab, prompt, max_length, temperature, top_k, device):
+    tokens = vocab.encode(prompt)
+    if tokens and tokens[-1] == vocab.eos_idx:
+        tokens = tokens[:-1]
+    with torch.no_grad():
+        generated = model.generate(tokens, max_length=max_length,
+                                   temperature=temperature, top_k=top_k,
+                                   device=device, repetition_penalty=1.4,
+                                   min_length=8, eos_penalty=-5.0)
+    new_ids = generated[len(tokens):]
+    return vocab.decode(new_ids).strip()
+
+
 def main():
-    try:
-        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-    except Exception:
-        pass
+    import argparse
+    ap = argparse.ArgumentParser(description='与训练好的基础模型对话（字符级，64 上下文）')
+    ap.add_argument('--model', default=DEFAULT_MODEL)
+    ap.add_argument('--vocab', default=DEFAULT_VOCAB)
+    ap.add_argument('--device', default='cpu', help='cpu / cuda / dml')
+    ap.add_argument('--max-length', type=int, default=64, help='总计上下文长度（含输入）')
+    ap.add_argument('--temperature', type=float, default=0.7)
+    ap.add_argument('--top-k', type=int, default=40)
+    args = ap.parse_args()
 
-    parser = argparse.ArgumentParser(description='与训练好的模型对话（续写式）')
-    parser.add_argument('--model', default='checkpoints/final_model.pt')
-    parser.add_argument('--vocab', default='checkpoints/vocab.json')
-    parser.add_argument('--device', default='auto')
-    parser.add_argument('--cpu-threads', type=int, default=4,
-                        help='CPU 生成时使用的线程数（降功耗）')
-    parser.add_argument('--quantize', action='store_true',
-                        help='推理时启用 int8 动态量化（仅 CPU，降内存带宽/功耗，几乎无质量损失）')
-    parser.add_argument('--compile', action='store_true',
-                        help='推理时对模型做 torch.compile（需本机有 C++ 编译器；无则自动回退 eager）')
-    parser.add_argument('--dtype', choices=['fp32', 'bf16', 'auto'], default='auto',
-                        help='推理精度：auto=支持的 CPU/CUDA 用 bf16（约 1.5~1.8x 提速且质量基本无损），否则 fp32')
-    parser.add_argument('--max-length', type=int, default=60)
-    parser.add_argument('--temperature', type=float, default=0.7)
-    parser.add_argument('--top-k', type=int, default=30)
-    # 以下为参数扫描(粗扫+细扫+连贯性评估)得到的最优生成参数，已自动写入默认值
-    parser.add_argument('--repetition-penalty', type=float, default=1.7)
-    parser.add_argument('--ngram', action='store_true',
-                        help='解码期融合 Bigram/Trigram 统计先验（神经+统计双轨）')
-    parser.add_argument('--ngram-corpus', default='data/pretrain_corpus/merged.txt',
-                        help='构建 n-gram 统计所用的语料文件')
-    parser.add_argument('--ngram-weight', type=float, default=0.3,
-                        help='n-gram 先验叠加权重（0=关闭）')
-    parser.add_argument('--igmcg', action='store_true',
-                        help='启用 IGMCG 直觉引导解码；与 --ngram 同开即为 n-gram+IGMCG 联合解码')
-    parser.add_argument('--igmcg-candidates', type=int, default=5)
-    parser.add_argument('--intuition', type=str, default='0.5,0.5,0.5,0.5,0.5,0.5,0.5',
-                        help='IGMCG 7 维直觉向量(逗号分隔, 0~1)')
-    parser.add_argument('--history', default='logs/chat_history.txt')
-    parser.add_argument('--script', default=None,
-                        help='UTF-8 文件，每行一个 prompt，非交互式跑完一轮对话（便于测试/避免控制台编码问题）')
-    args = parser.parse_args()
+    device = str(args.device)
+    print('加载模型中…')
+    model, vocab = load_model(args.model, args.vocab, device=device)
+    model.eval()
+    print('模型已加载。在「你> 」后输入中文即可对话（输入 exit / quit 退出）。')
+    print('提示：这是基础语言模型（非聊天微调），它做的是「续写」而非真正理解；上下文仅 64 字。\n')
 
-    # CPU 生成时限制线程数以降功耗
-    import torch as _torch
-    if args.cpu_threads and args.cpu_threads > 0:
-        _torch.set_num_threads(max(1, args.cpu_threads))
-        _torch.set_num_interop_threads(max(1, args.cpu_threads // 2))
-
-    print("加载模型中...")
-    device = __import__('models.device', fromlist=['get_device']).get_device(args.device)
-    model, vocab = load_model(args.model, args.vocab, device=device, quantize=args.quantize, compile_model=args.compile)
-
-    # 推理精度：bf16 在支持的 CPU/CUDA 上约 1.5~1.8x 提速，且质量基本无损
-    dtype = args.dtype
-    if dtype == 'auto':
-        dtype = 'bf16' if device.type in ('cpu', 'cuda') else 'fp32'
-        if device.type == 'cpu':
-            try:
-                if 'BF16' not in str(_torch.cpu.get_cpu_capability()).upper():
-                    dtype = 'fp32'
-            except Exception:
-                dtype = 'fp32'
-    if dtype == 'bf16' and device.type in ('cpu', 'cuda'):
-        # 在对应后端启用 bf16 自动混合精度（原实现只开了 'cpu' autocast，CUDA 下 bf16 实际未生效）
-        _torch.set_autocast_enabled(device.type, True)
-        _torch.set_autocast_dtype(device.type, _torch.bfloat16)
-        print("推理精度: bf16（%s autocast，约 1.5~1.8x 提速）" % ("CPU" if device.type == 'cpu' else "CUDA"))
-    else:
-        print("推理精度: fp32")
-    ngram = None
-    if args.ngram:
-        print(f"构建 n-gram 模型（{args.ngram_corpus}）...")
-        ngram = NGramModel(vocab, args.ngram_corpus, max_order=3, smoothing=1.0)
-        print(f"n-gram 就绪（权重 {args.ngram_weight}）。")
-    print(f"模型加载完成。词表大小 {len(vocab)}。输入 'quit' 或 '退出' 结束。")
-
-    os.makedirs(os.path.dirname(args.history), exist_ok=True)
-    # open 放在独立 try 中：历史记录文件不可写时降级（不写历史），而不是让整个对话崩溃。
-    try:
-        hist_f = open(args.history, 'w', encoding='utf-8')
-    except Exception as e:
-        print(f"[WARN] 无法写入历史文件 {args.history}：{e}，本次对话不记录历史。")
-        hist_f = None
-
-    def reply(prompt):
-        ids = vocab.encode(prompt, add_special_tokens=False)
-        if args.igmcg:
-            gen, _ = generate_igmcg(model, vocab, prompt, max_length=args.max_length,
-                                    temperature=args.temperature, top_k=args.top_k,
-                                    device=device, num_candidates=args.igmcg_candidates,
-                                    intuition=[float(x) for x in args.intuition.split(',')],
-                                    ngram_fn=(ngram.logprob_vector if ngram else None),
-                                    ngram_weight=args.ngram_weight,
-                                    repetition_penalty=args.repetition_penalty)
-            new_ids = vocab.encode(prompt, add_special_tokens=False)
-            new_ids = vocab.encode(gen, add_special_tokens=False)[len(new_ids):]
-            text = vocab.decode(new_ids, skip_special=True)
-            return clean_text(text.strip())
-        gen = model.generate(ids, max_length=args.max_length,
-                             temperature=args.temperature, top_k=args.top_k,
-                             repetition_penalty=args.repetition_penalty, device=device,
-                             ngram_fn=(ngram.logprob_vector if ngram else None),
-                             ngram_weight=args.ngram_weight)
-        # 只取 prompt 之后新生成的部分作为"回复"
-        new_ids = gen[len(ids):]
-        text = vocab.decode(new_ids, skip_special=True)
-        return clean_text(text.strip())
-
-    # 非交互式：从 UTF-8 文件逐行对话
-    if args.script:
-        with open(args.script, 'r', encoding='utf-8-sig') as sf:
-            prompts = [ln.strip() for ln in sf if ln.strip()]
-        for prompt in prompts:
-            if prompt.lower() in ('quit', 'exit', '退出', 'q'):
-                print("再见！")
-                break
-            resp = reply(prompt)
-            print(f"你: {prompt}")
-            print(f"模型: {resp}")
-            if hist_f is not None:
-                hist_f.write(f"你: {prompt}\n模型: {resp}\n\n")
-                hist_f.flush()
-        if hist_f is not None:
-            hist_f.close()
-        print(f"\n对话已写入 {args.history}")
-        return
+    log_path = project_root / 'logs' / 'chat_log.txt'
+    log_path.parent.mkdir(exist_ok=True)
 
     try:
         while True:
             try:
-                prompt = input("你: ").strip()
+                user = input('你> ').strip()
             except EOFError:
                 break
-            if not prompt:
+            if not user:
                 continue
-            if prompt.lower() in ('quit', 'exit', '退出', 'q'):
-                print("再见！")
+            if user.lower() in ('exit', 'quit', 'q'):
+                print('再见！')
                 break
-            resp = reply(prompt)
-            print("模型:", resp)
-            if hist_f is not None:
-                hist_f.write(f"你: {prompt}\n模型: {resp}\n\n")
-                hist_f.flush()
-    finally:
-        if hist_f is not None:
-            hist_f.close()
+            if len(user) > 40:
+                user = user[:40]
+            prompt = f'用户：{user}\n助手：'
+            raw = chat_generate(model, vocab, prompt, args.max_length,
+                                args.temperature, args.top_k, device)
+            clean = de_space(raw)
+            print(f'模型> {clean}')
+            print(f'     (原文: {raw})\n')
+            with open(log_path, 'a', encoding='utf-8') as f:
+                f.write(f'你> {user}\n模型(原文)> {raw}\n模型(净)> {clean}\n\n')
+    except KeyboardInterrupt:
+        print('\n再见！')
+
 
 if __name__ == '__main__':
     main()

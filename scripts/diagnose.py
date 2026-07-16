@@ -10,9 +10,9 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from models.transformer import TransformerModel
 from models.data_utils import Vocabulary
 from models.device import get_device
+from scripts.generate import load_model
 
 # Load model and vocab
 parser = argparse.ArgumentParser(description='诊断模型输出')
@@ -36,43 +36,14 @@ vocab = Vocabulary()
 vocab.word2idx = vocab_data['word2idx']
 vocab.idx2word = {int(k): v for k, v in vocab_data['idx2word'].items()}
 
-# Load model
-import yaml
-
-checkpoint = torch.load(model_path, map_location='cpu', weights_only=True)
-# Load config from separate YAML file (for weights_only=True compatibility)
-model_path_obj = Path(model_path)
-config_path = model_path_obj.parent / f"{model_path_obj.stem}_config.yaml"
-if config_path.exists():
-    with open(config_path, 'r', encoding='utf-8') as f:
-        model_config = yaml.safe_load(f)
-else:
-    # Fallback for old checkpoints with config embedded
-    model_config = checkpoint.get('config', {
-        'vocab_size': checkpoint['vocab_size'],
-        'embedding_dim': 128,
-        'num_heads': 4,
-        'num_layers': 2,
-        'hidden_dim': 256,
-        'max_seq_length': 32,
-        'dropout': 0.1
-    })
-
-model = TransformerModel(
-    vocab_size=checkpoint['vocab_size'],
-    embedding_dim=model_config.get('embedding_dim', 128),
-    num_heads=model_config.get('num_heads', 4),
-    num_layers=model_config.get('num_layers', 2),
-    hidden_dim=model_config.get('hidden_dim', 256),
-    max_seq_length=model_config.get('max_seq_length', 32),
-    dropout=model_config.get('dropout', 0.1)
-).to(device)
-
-model.load_state_dict(checkpoint['model_state_dict'])
+# Load model（复用 generate.load_model：统一安全加载 weights_only=True +
+# 白名单全局放行，且自动从 *_config.yaml 透传 qk_norm/attn_temp/residual_gate/
+# hybrid_gate 增强开关，避免增强权重 state_dict 不匹配）
+model, _ = load_model(model_path, vocab_path, device=device, quantize=False, compile_model=False)
 model.eval()
 
 print("Model loaded successfully!")
-print(f"Model vocab size: {checkpoint['vocab_size']}")
+print(f"Model vocab size: {model.vocab_size}")
 print(f"Vocab size: {len(vocab)}")
 print()
 
