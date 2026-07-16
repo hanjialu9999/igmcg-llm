@@ -1,4 +1,4 @@
-# 混合架构（小参数版，CPU 训练）—— 为后续训练做准备，当前未启动
+﻿# 混合架构（小参数版，CPU 训练）—— 为后续训练做准备，当前未启动
 # 关键：epochs>1 时 train.py 每个 epoch 末保存 model_epoch_*.pt，
 # 即使中途中断也不会像之前(epochs=1)那样全部丢失。
 # 注意：DML 训练 SSM 会触发 iGPU 重置(GetDeviceRemovedReason)，故 device 固定 cpu。
@@ -26,7 +26,7 @@ training:
   gradient_clip: 1.0
   warmup_steps: 0.1
   early_stop_patience: 5
-  label_smoothing: 0.1
+  label_smoothing: 0.0  # 已废弃：train.py 会强制置 0 并警告
   cpu_threads: 4
   precision: "fp32"
   grad_accum_steps: 1
@@ -40,7 +40,6 @@ data:
   vocab_size: 12000
   max_seq_length: 64
   num_workers: 0
-  prefetch: 2
   test_split: 0.1
 
 paths:
@@ -50,3 +49,5 @@ paths:
 device: "cpu"
 
 seed: 42
+
+

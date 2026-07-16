@@ -1,4 +1,4 @@
-# 混合架构完整预训练配置（DML / AMD 核显，batch 32 稳定）
+﻿# 混合架构完整预训练配置（DML / AMD 核显，batch 32 稳定）
 # 在 configs/config_dml_full_b32.yaml 基础上加入 layer_plan 等混合选项，独立输出目录
 model:
   vocab_size: 12000
@@ -25,7 +25,7 @@ training:
   gradient_clip: 1.0
   warmup_steps: 0.1
   early_stop_patience: 5
-  label_smoothing: 0.1
+  label_smoothing: 0.0  # 已废弃：train.py 会强制置 0 并警告
   cpu_threads: 4
   precision: "fp32"
   grad_accum_steps: 1
@@ -39,7 +39,6 @@ data:
   vocab_size: 12000
   max_seq_length: 64
   num_workers: 0
-  prefetch: 2
   test_split: 0.1
 
 paths:
@@ -49,3 +48,5 @@ paths:
 device: "auto"
 
 seed: 42
+
+

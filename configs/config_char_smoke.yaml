@@ -1,4 +1,4 @@
-# 探流程用小型配置：8000 行数据 + 小模型，验证 SELv2 训练流程是否跑通
+﻿# 探流程用小型配置：8000 行数据 + 小模型，验证 SELv2 训练流程是否跑通
 # 架构与 config_char_dml.yaml 一致（char_merge + 滑动窗口 + 阶段2/3 记忆检索），
 # 但模型显著缩小、序列缩短、单 epoch，仅用于跑通流程。
 model:
@@ -32,7 +32,7 @@ training:
   gradient_clip: 1.0
   warmup_steps: 0.1
   early_stop_patience: 5
-  label_smoothing: 0.1
+  label_smoothing: 0.0  # 已废弃：train.py 会强制置 0 并警告
   cpu_threads: 4
   precision: "fp32"
   grad_accum_steps: 1
@@ -57,7 +57,6 @@ data:
   vocab_size: 5000
   max_seq_length: 64
   num_workers: 0
-  prefetch: 2
   test_split: 0.1
 
 paths:
@@ -67,3 +66,5 @@ paths:
 device: "auto"
 
 seed: 42
+
+

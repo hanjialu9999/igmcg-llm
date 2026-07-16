@@ -16,7 +16,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from models.transformer import TransformerModel
-from models.data_utils import Vocabulary
+from models.config_loader import load_vocab, build_model
 import yaml
 
 from models.device import get_device
@@ -64,25 +64,11 @@ def save_gen_config():
 # attempt to load any existing parameter overrides
 load_gen_config()
 
-# Load vocabulary
-with open('checkpoints/vocab.json', 'r', encoding='utf-8') as f:
-    vocab_data = json.load(f)
-
-vocab = Vocabulary()
-vocab.word2idx = vocab_data['word2idx']
-vocab.idx2word = vocab_data['idx2word']
+# Load vocabulary（复用 config_loader.load_vocab，正确处理 BPE/char 词表）
+vocab = load_vocab('checkpoints/vocab.json')
 
 # Initialize model
-model_config = config['model']
-model = TransformerModel(
-    vocab_size=len(vocab.word2idx),
-    embedding_dim=model_config['embedding_dim'],
-    num_heads=model_config['num_heads'],
-    num_layers=model_config['num_layers'],
-    hidden_dim=model_config['hidden_dim'],
-    max_seq_length=config['data']['max_seq_length'],
-    dropout=model_config['dropout']
-)
+model = build_model(config, device=device)
 
 # Load checkpoint
 try:

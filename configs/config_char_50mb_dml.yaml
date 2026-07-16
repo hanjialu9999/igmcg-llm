@@ -1,4 +1,4 @@
-# 50MB 同规模 DML 训练配置：架构与 config_char_dml.yaml 一致
+﻿# 50MB 同规模 DML 训练配置：架构与 config_char_dml.yaml 一致
 # （char_merge + 滑动窗口 + 阶段2/3 记忆检索），数据 50MB。
 # 注意：DML(核显共享显存) 在 batch=64×seq=256×6层 会掉卡，故 batch 降到 8 以适配 DML；
 # 数据量(50MB)与模型规模不变，"同规模"等价于同数据/同架构、仅 micro-batch 更小、step 更多。
@@ -34,7 +34,7 @@ training:
   gradient_clip: 1.0
   warmup_steps: 0.1
   early_stop_patience: 5
-  label_smoothing: 0.1
+  label_smoothing: 0.0  # 已废弃：train.py 会强制置 0 并警告
   cpu_threads: 4
   precision: "fp32"
   grad_accum_steps: 1
@@ -58,7 +58,6 @@ data:
   vocab_size: 5000
   max_seq_length: 128
   num_workers: 0
-  prefetch: 2
   test_split: 0.1
 
 paths:
@@ -68,3 +67,5 @@ paths:
 device: "auto"
 
 seed: 42
+
+

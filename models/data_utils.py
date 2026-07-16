@@ -115,8 +115,8 @@ class Vocabulary:
         words: List[str] = []
         for token_id in token_ids:
             if skip_special:
-                # Skip special tokens: pad(0), bos(2), eos(3), and sep(4)
-                if token_id in [0, 2, 3, 4]:
+                # Skip special tokens: pad, bos, eos, sep（用类属性而非硬编码）
+                if token_id in {self.pad_idx, self.bos_idx, self.eos_idx, self.sep_idx}:
                     continue
             
             # idx2word 以 int 为键；直接按 int 查找（兼容 vocab.json 中字符串键的情况）
@@ -559,7 +559,7 @@ class BPETokenizer:
                 byte_buf.clear()
 
         for tid in token_ids:
-            if skip_special and tid in (0, 2, 3, 4):
+            if skip_special and tid in {self.pad_idx, self.bos_idx, self.eos_idx, self.sep_idx}:
                 continue
             w = self.idx2word.get(tid, self.idx2word.get(str(tid), '<?>'))
             if isinstance(w, str) and w.startswith(prefix):

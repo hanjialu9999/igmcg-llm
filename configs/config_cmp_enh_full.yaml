@@ -1,4 +1,4 @@
-# 对比实验（全量 100MB / 39700 行）：增强【全部开启】= ENH。与 sel/selv2 仅增强训练调度不同，其余完全一致。
+﻿# 对比实验（全量 100MB / 39700 行）：增强【全部开启】= ENH。与 sel/selv2 仅增强训练调度不同，其余完全一致。
 model:
   vocab_size: 12000
   embedding_dim: 512
@@ -49,7 +49,6 @@ data:
   vocab_size: 12000
   max_seq_length: 64
   num_workers: 0
-  prefetch: 2
   test_split: 0.1
 
 paths:
@@ -65,3 +64,4 @@ generation:
   repetition_penalty: 1.2
   min_length: 3
   eos_penalty: -5.0
+

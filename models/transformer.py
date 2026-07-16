@@ -691,7 +691,9 @@ class TransformerBlock(nn.Module):
         self.ffn = SwiGLU(dim, hidden_dim)
         # ②/⑥ 每层可学习残差门控：x = x + gate * f(x)（init 1.0，默认行为不变）
         if residual_gate:
-            self.sub1_gate = nn.Parameter(torch.ones(1))   # 第一子层残差（attn 或 ssm）
+            # hybrid 块的第一子层用 hybrid_attn_gate/hybrid_ssm_gate，sub1_gate 无用，跳过分配
+            if block_type != 'hybrid':
+                self.sub1_gate = nn.Parameter(torch.ones(1))   # 第一子层残差（attn 或 ssm）
             self.ffn_gate = nn.Parameter(torch.ones(1))    # FFN 子层残差
         # ⭐A 混合块内 attn/ssm 两路可学习门控（init 1.0）
         if hybrid_gate and block_type == 'hybrid':
@@ -709,7 +711,7 @@ class TransformerBlock(nn.Module):
             attn_past_kv = past_kv[0]
         mem_kv = memory.get_kv() if memory is not None else None
         ckpt = self.training and self.gradient_checkpointing
-        gate1 = (self.sub1_gate if (self.residual_gate_enabled and self._rt["residual_gate"]) else None)
+        gate1 = (getattr(self, 'sub1_gate', None) if (self.residual_gate_enabled and self._rt["residual_gate"]) else None)
         gate2 = (self.ffn_gate if (self.residual_gate_enabled and self._rt["residual_gate"]) else None)
 
         if self.block_type == 'attn':
@@ -829,7 +831,6 @@ class TransformerModel(nn.Module):
         self.layer_plan = _parse_layer_plan(layer_plan, num_layers)
         self.rope_base = rope_base
         self.rope_max_len = rope_max_len
-        self.mask_fill_value = mask_fill_value
         # 阶段2：可学习压缩记忆（memory_size>0 时启用），存压缩表示 + 可学门控选槽
         self.memory_enabled = memory_size > 0
         self.memory_size = memory_size

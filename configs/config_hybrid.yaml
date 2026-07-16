@@ -1,4 +1,4 @@
-# 混合架构配置（中度融合：attn / ssm 交替 + 可选滑动窗口/相对偏置）
+﻿# 混合架构配置（中度融合：attn / ssm 交替 + 可选滑动窗口/相对偏置）
 # 与 configs/config_test.yaml 同尺寸，仅加入 layer_plan 与 SSM/注意力增强选项
 model:
   vocab_size: 12000
@@ -24,7 +24,7 @@ training:
   gradient_clip: 1.0
   warmup_steps: 5
   early_stop_patience: 3
-  label_smoothing: 0.1
+  label_smoothing: 0.0  # 已废弃：train.py 会强制置 0 并警告
   cpu_threads: 4
   precision: "fp32"
   grad_accum_steps: 1
@@ -35,7 +35,6 @@ data:
   vocab_size: 12000
   max_seq_length: 64
   num_workers: 0
-  prefetch: 2
   test_split: 0.1
 
 paths:
@@ -45,3 +44,5 @@ paths:
 device: "auto"
 
 seed: 42
+
+

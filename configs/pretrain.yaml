@@ -1,4 +1,4 @@
-# 正式预训练配置：中+英混合语料 (merged.txt) 训练基础模型
+﻿# 正式预训练配置：中+英混合语料 (merged.txt) 训练基础模型
 # 训练前会自动把 checkpoints/ 备份到 archive_unused/checkpoints_backup/
 model:
   vocab_size: 8000            # 当前生效值；注释提及的 12000 词覆盖更全但 DML 下显存更紧张，20000 易触发 backward 设备移除
@@ -37,7 +37,7 @@ training:
   gradient_clip: 1.0
   warmup_steps: 0.1           # 预热占比（按总 step 的 10%）
   early_stop_patience: 5      # 防过拟合早停（基础模型一般触发不到）
-  label_smoothing: 0.1
+  label_smoothing: 0.0  # 已废弃：train.py 会强制置 0 并警告
   cpu_threads: 4
   # ---- 训练精度 / 调度选项 ----
   precision: "fp32"           # fp32 | fp16 | bf16；AMD DirectML 不支持 AMP，自动退回 fp32
@@ -67,7 +67,6 @@ data:
   vocab_size: 8000
   max_seq_length: 64
   num_workers: 0
-  prefetch: 2
   test_split: 0.1
 
 # 路径
@@ -92,3 +91,5 @@ generation:
   igmcg_candidates: 5
   igmcg_intuition: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
   igmcg_weights: [1.5, 0.15, 0.15, 2.5]  # coh, flu, style, rep
+
+

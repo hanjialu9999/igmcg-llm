@@ -1,4 +1,4 @@
-# 混合架构完整预训练配置（CPU，因 DML 不支持 SSM 反向）
+﻿# 混合架构完整预训练配置（CPU，因 DML 不支持 SSM 反向）
 # 与 configs/config_hybrid_full_dml.yaml 同架构，仅改 device=batch 以匹配纯 attn CPU 训练做对比
 model:
   vocab_size: 12000
@@ -24,7 +24,7 @@ training:
   gradient_clip: 1.0
   warmup_steps: 0.1
   early_stop_patience: 5
-  label_smoothing: 0.1
+  label_smoothing: 0.0  # 已废弃：train.py 会强制置 0 并警告
   cpu_threads: 4
   precision: "fp32"
   grad_accum_steps: 1
@@ -38,7 +38,6 @@ data:
   vocab_size: 12000
   max_seq_length: 64
   num_workers: 0
-  prefetch: 2
   test_split: 0.1
 
 paths:
@@ -48,3 +47,5 @@ paths:
 device: "cpu"
 
 seed: 42
+
+
