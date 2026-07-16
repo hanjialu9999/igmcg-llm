@@ -1,6 +1,6 @@
 ﻿# 50MB 同规模 DML 训练配置：架构与 config_char_dml.yaml 一致
 # （char_merge + 滑动窗口 + 阶段2/3 记忆检索），数据 50MB。
-# 注意：DML(核显共享显存) 在 batch=64×seq=256×6层 会掉卡，故 batch 降到 8 以适配 DML；
+# DML(核显共享显存)下 hidden_dim=768/seq=128/window=64/batch=24，以适配显存限制。
 # 数据量(50MB)与模型规模不变，"同规模"等价于同数据/同架构、仅 micro-batch 更小、step 更多。
 model:
   vocab_size: 5000

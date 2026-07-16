@@ -87,7 +87,7 @@ python scripts/tuning/tune_topk.py --model checkpoints/final_model.pt --vocab ch
 
 ## 训练
 
-- 配置集中在 `configs/`（详见 `configs/README.md`）。`pretrain.yaml` 为规范默认：词表 12000、6 层、emb512、单轮遍历。**自 2026-07-14 起 `pretrain.yaml` 与 `config_dml_full.yaml` 默认带 SELv2 分段选择性增强调度（`training.enhancement_schedule`），即默认训练即按 SELv2 训练。**
+- 配置集中在 `configs/`（详见 `configs/README.md`）。`pretrain.yaml` 为规范默认：词表 8000、6 层、emb512、单轮遍历。**自 2026-07-14 起 `pretrain.yaml` 与 `config_dml_full.yaml` 默认带 SELv2 分段选择性增强调度（`training.enhancement_schedule`），即默认训练即按 SELv2 训练。**
 - 数据：`data/pretrain_corpus/merged.txt` 为默认训练语料（本地，不入库）；小样本调试可用 `merged_sample.txt`。词表在训练时自动构建，存于 `checkpoints/vocab.json`。
 - **混合精度**：`precision: bf16` 在 **CPU / CUDA** 开启（约 2~2.5× 提速、loss 基本无损）；`fp16` 仅 CUDA（启用 GradScaler）；AMD DirectML 暂不支持 AMP，自动回退 fp32。
 - **DML 训练**：SSM/hybrid 的选择性扫描已向量化，可在 DML 上正常训练（旧版逐时间步 for 循环会因 kernel 风暴触发 iGPU 设备重置）。
@@ -102,7 +102,7 @@ python scripts/tuning/tune_topk.py --model checkpoints/final_model.pt --vocab ch
 | `--max-length` | 生成最大长度 | 30 |
 | `--temperature` | 采样温度（0=贪心） | 0.8 |
 | `--top-k` | Top-K 截断 | 50 |
-| `--repetition-penalty` | 重复惩罚 | 1.7 |
+| `--repetition-penalty` | 重复惩罚（>1 抑制重复，1.0=关闭） | 1.4 |
 | `--device` | `cpu` / `cuda` / `dml` / `auto` | `auto` |
 | `--dtype` | `fp32` / `bf16` / `auto` | `auto` |
 | `--quantize` | 启用 int8 动态量化（纯 CPU） | 关 |
