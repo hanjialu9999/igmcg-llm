@@ -20,6 +20,9 @@ model:
   char_merge: true
   char_merge_kernel: 3
   char_merge_dropout: 0.0
+  # 阶段2 可学习压缩记忆：固定 64 槽，存压缩表示 + 可学门控选槽，作额外 KV 源
+  memory_size: 64
+  memory_comp_dim: 32
 
 training:
   batch_size: 64
