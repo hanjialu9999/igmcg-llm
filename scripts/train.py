@@ -195,15 +195,13 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
         if accumulated % grad_accum_steps == 0:
             step_optimizer()
 
-        # 累加损失（用 Python float，避免张量创建开销与潜在计算图残留）
-        # 注意：这里累加的是未缩放的原始 loss（backward 内部已用 /grad_accum_steps 缩放梯度），
-        # 不要乘以 grad_accum_steps，否则在累积步数>1 时上报值被错误地放大约 grad_accum_steps 倍。
-        loss_sum += loss.detach().item()
+        # 累加损失：始终用 GPU 张量累加，仅在打印时才 .item() 同步
+        loss_sum = loss_sum + loss.detach()
         loss_count += 1
         tokens_total += int(input_ids.numel())
 
         if (batch_idx + 1) % 10 == 0:
-            avg = loss_sum / loss_count
+            avg = (loss_sum / loss_count).item()  # 仅此处同步 DML→CPU
             elapsed = time.time() - t_start
             tps = tokens_total / elapsed if elapsed > 0 else 0.0
             if progress is not None:
@@ -222,7 +220,7 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
     if accumulated % grad_accum_steps != 0:
         step_optimizer()
 
-    return (loss_sum / loss_count) if loss_count else 0.0
+    return (loss_sum / loss_count).item() if loss_count else 0.0
 
 
 def validate(model, dataloader, criterion, device):

@@ -226,8 +226,11 @@ class RotaryEmbedding(nn.Module):
     def _rope_apply(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
         d = x.size(-1) // 2
         x1, x2 = x[..., :d], x[..., d:]
-        rot = torch.cat((-x2, x1), dim=-1)
-        return x * cos.to(x.dtype) + rot * sin.to(x.dtype)
+        # 标准旋转公式：x1*cos - x2*sin, x1*sin + x2*cos（无 cat、无 neg 临时张量）
+        return torch.cat([
+            x1 * cos[..., :d] - x2 * sin[..., :d],
+            x1 * sin[..., :d] + x2 * cos[..., d:]
+        ], dim=-1)
 
     def clear_cache(self):
         """清空实例缓存（长时间运行时可调用防止内存泄漏）。"""
@@ -390,10 +393,9 @@ class SlidingWindowCausalSelfAttention(nn.Module):
                 idx = (qpos - kpos + Tkv - 1).clamp(0, 2 * self.max_seq_length - 1)
                 attn_mask = attn_mask + self.rel_bias_table[:, idx].unsqueeze(0)
             if mem_bias is not None:
-                # mem_bias 仅覆盖记忆段前 mem_cols 列，需扩到全宽 Tkv 再注入
-                full_bias = torch.zeros(B, self.num_heads, Tq, Tkv, device=q.device)
-                full_bias[..., :mem_cols] = mem_bias
-                attn_mask = attn_mask + full_bias  # 注入检索门控 + 稀疏
+                # 避免分配全零 full_bias：直接 clone 并 in-place 注入 mem_bias
+                attn_mask = attn_mask.clone()
+                attn_mask[..., :mem_cols] += mem_bias
             if q.device.type == 'cuda':
                 out = scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
             else:
@@ -443,10 +445,9 @@ class SlidingWindowCausalSelfAttention(nn.Module):
             self._bias_cache = base
         attn_mask = self._bias_cache
         if mem_bias is not None:
-            # mem_bias 仅覆盖记忆段前 mem_cols 列，需扩到全宽 Tkv 再注入
-            full_bias = torch.zeros(B, self.num_heads, T, Tkv, device=dev)
-            full_bias[..., :mem_cols] = mem_bias
-            attn_mask = attn_mask + full_bias  # 注入检索门控 + 稀疏（前 mem_cols 列）
+            # 避免分配全零 full_bias：直接 clone 已有 attn_mask 并 in-place 注入 mem_bias
+            attn_mask = attn_mask.clone()
+            attn_mask[..., :mem_cols] += mem_bias
         if q.device.type in ('cuda', 'cpu'):
             if attn_mask.abs().max() > 0 or self.rel_bias:
                 out = scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
@@ -454,8 +455,11 @@ class SlidingWindowCausalSelfAttention(nn.Module):
                 out = scaled_dot_product_attention(q, k, v, is_causal=True)
         else:
             extra = attn_mask if attn_mask.abs().max() > 0 else None
-            if self.rel_bias and extra is None:
+            if extra is None and self.rel_bias:
                 extra = self._rbias.unsqueeze(0)
+            elif extra is None and self._mask is not None:
+                # 纯因果模式：复用 _build_masks 已缓存的 _mask，避免每层重建 triu
+                extra = self._mask.float() * -1e9
             out = self._manual_attention(q, k, v, extra)
         out = out.transpose(1, 2).reshape(B, T, self.num_heads * self.head_dim)
         return self.proj(out), None
@@ -629,19 +633,11 @@ class MambaSSM(nn.Module):
             A, B = A_new, B_new
             offset <<= 1
         
-        # If we have past_state, we need to incorporate it
+        # If we have past_state, incorporate it: A is already the prefix product
         if past_state is not None:
-            # Compute prefix products of original a: prefix_A[t] = a_t * a_{t-1} * ... * a_0
-            prefix_A = a.clone()
-            offset = 1
-            while offset < L:
-                # 左移 offset：位置 i 取 i-offset（越界填单位元 A=1）
-                prev = torch.cat([torch.ones_like(prefix_A[:, :offset]), prefix_A[:, :-offset]], dim=1)
-                prefix_A = prefix_A * prev
-                offset <<= 1
-            # prefix_A[:, t] = a_t * a_{t-1} * ... * a_0
+            # A[:, t] = a_t * a_{t-1} * ... * a_0（标准扫描已得出，无需重算）
             past_expanded = past_state.unsqueeze(1).expand(-1, L, -1, -1)
-            B = B + prefix_A * past_expanded
+            B = B + A * past_expanded
         
         return B
 
@@ -1001,15 +997,19 @@ class TransformerModel(nn.Module):
 
         def sample_step(logits_t: torch.Tensor) -> Optional[int]:
             next_token_logits = logits_t / temperature
-            for prev_token in set(generated):
-                if 0 <= prev_token < next_token_logits.shape[0]:
-                    # 符号感知的重复惩罚：正值除、负值乘（与 HF 一致），
-                    # 避免负 logit 被“除”后反而更可能被采样
-                    lt = next_token_logits[prev_token]
-                    if lt > 0:
-                        next_token_logits[prev_token] = lt / repetition_penalty
-                    else:
-                        next_token_logits[prev_token] = lt * repetition_penalty
+            # 向量化重复惩罚：一次性处理所有已生成 token，消除 Python 循环
+            vocab_size = next_token_logits.shape[0]
+            prev_tokens = torch.tensor(
+                [t for t in set(generated) if 0 <= t < vocab_size],
+                dtype=torch.long, device=device
+            )
+            if prev_tokens.numel() > 0:
+                lt = next_token_logits[prev_tokens]
+                pos_mask = lt > 0
+                neg_mask = ~pos_mask
+                lt = torch.where(pos_mask, lt / repetition_penalty, lt)
+                lt = torch.where(neg_mask, lt * repetition_penalty, lt)
+                next_token_logits[prev_tokens] = lt
             if ngram_fn is not None and ngram_weight != 0.0:
                 next_token_logits = next_token_logits + ngram_weight * ngram_fn(generated, device)
             next_token_logits[pad_token_id] = float('-inf')
