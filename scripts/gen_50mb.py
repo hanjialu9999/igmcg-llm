@@ -34,8 +34,8 @@ def main() -> None:
     model.eval()
     vocab = load_vocab(args.vocab)
 
-    ids = vocab.encode(args.prompt, add_special_tokens=False)
-    if not ids:
+    ids = [vocab.bos_idx] + vocab.encode(args.prompt, add_special_tokens=False)
+    if len(ids) <= 1:
         ids = [vocab.bos_idx]
     out = model.generate(ids, max_length=args.max, temperature=args.temp,
                          top_k=args.topk, device=device.type,

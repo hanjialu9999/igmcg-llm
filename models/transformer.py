@@ -26,8 +26,8 @@ class CharMergeLayer(nn.Module):
     def __init__(self, dim: int, kernel_size: int = 3, dropout: float = 0.0):
         super().__init__()
         self.dim = dim
-        # 因果卷积：左侧+自身（保持自回归，不窥未来）
-        self.pad = kernel_size // 2
+        # 因果卷积：仅左侧填充（kernel-1 个零），位置 t 只看 t-(k-1)..t，不窥未来
+        self.pad = kernel_size - 1
         self.conv = nn.Conv1d(dim, dim, kernel_size, groups=dim, bias=False)
         self.gate = nn.Linear(dim, dim, bias=True)
         self.norm = RMSNorm(dim)
@@ -36,10 +36,10 @@ class CharMergeLayer(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: (B, T, D)
         B, T, D = x.shape
-        # 邻域聚合：转 (B, D, T) 卷积，因果左侧填充
+        # 邻域聚合：转 (B, D, T) 卷积，因果左侧填充（零填充在前，输出取前 T 个位置）
         x_t = x.transpose(1, 2)
         agg = F.conv1d(x_t, self.conv.weight, None,
-                       padding=self.pad, groups=D)
+                       padding=(self.pad, 0), groups=D)
         agg = agg.transpose(1, 2)  # (B, T, D)
         # 门控：当前字符 vs 邻域聚合
         z = torch.sigmoid(self.gate(x))
@@ -636,8 +636,7 @@ class MambaSSM(nn.Module):
         # h_t = a_t * ... * a_0 * past_state + (scan result)
         if past_state is not None:
             # Compute prefix products of original a: prefix_A[t] = a_t * a_{t-1} * ... * a_0
-            # Need to use original a, not the modified A from scan
-            orig_A = a.clone()
+            # Need to use original a, not the modified A from scan (cloned once at function top)
             prefix_A = orig_A.clone()
             offset = 1
             while offset < L:
