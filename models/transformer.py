@@ -426,10 +426,11 @@ class SlidingWindowCausalSelfAttention(nn.Module):
             if self.window > 0:
                 qpos = torch.arange(0, T, device=dev).unsqueeze(1)
                 kpos = torch.arange(0, Tkv, device=dev).unsqueeze(0)
-                m = (qpos - kpos > self.window).float() * -1e9  # (T, Tkv)
+                # 滑动窗口因果掩码：遮蔽过远的过去 AND 遮蔽未来（与 cache 路径 line 383-386 一致）
+                m = ((qpos - kpos > self.window) | (kpos > qpos + mem_cols)).float() * -1e9
                 m = m.unsqueeze(0).unsqueeze(0)  # (1,1,T,Tkv)
                 if memory_kv is not None:
-                    m[:, :, :, :mem_cols] = 0.0  # 记忆段不受窗口限制
+                    m[:, :, :, :mem_cols] = 0.0  # 记忆段不受窗口/因果限制
                 base = base + m
             elif self.rel_bias:
                 base = base + (self._mask.float() * -1e9)
