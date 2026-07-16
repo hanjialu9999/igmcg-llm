@@ -1,7 +1,7 @@
 # 正式预训练配置：中+英混合语料 (merged.txt) 训练基础模型
 # 训练前会自动把 checkpoints/ 备份到 archive_unused/checkpoints_backup/
 model:
-  vocab_size: 12000            # DML 下 20000 易触发 backward 设备移除，12000 更稳定且词覆盖 ~98.9% token
+  vocab_size: 8000            # DML 下 20000 易触发 backward 设备移除，12000 更稳定且词覆盖 ~98.9% token
   embedding_dim: 512
   num_heads: 8
   num_layers: 6
@@ -64,7 +64,7 @@ training:
 # 数据配置
 data:
   train_file: "data/pretrain_corpus/merged.txt"
-  vocab_size: 12000
+  vocab_size: 8000
   max_seq_length: 64
   num_workers: 0
   prefetch: 2
