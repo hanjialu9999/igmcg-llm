@@ -394,9 +394,9 @@ class SlidingWindowCausalSelfAttention(nn.Module):
                 idx = (qpos - kpos + Tkv - 1).clamp(0, 2 * self.max_seq_length - 1)
                 attn_mask = attn_mask + self.rel_bias_table[:, idx].unsqueeze(0)
             if mem_bias is not None:
-                # 避免分配全零 full_bias：直接 clone 并 in-place 注入 mem_bias
-                attn_mask = attn_mask.clone()
-                attn_mask[..., :mem_cols] += mem_bias
+                # mem_bias: (B,H,Tq,mem_cols)，右侧补零到 Tkv 再与 attn_mask 广播相加
+                padded = torch.nn.functional.pad(mem_bias, (0, Tkv - mem_cols))
+                attn_mask = attn_mask + padded
             if q.device.type == 'cuda':
                 out = scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
             else:
@@ -446,9 +446,9 @@ class SlidingWindowCausalSelfAttention(nn.Module):
             self._bias_cache = base
         attn_mask = self._bias_cache
         if mem_bias is not None:
-            # 避免分配全零 full_bias：直接 clone 已有 attn_mask 并 in-place 注入 mem_bias
-            attn_mask = attn_mask.clone()
-            attn_mask[..., :mem_cols] += mem_bias
+            # mem_bias: (B,H,T,mem_cols)，右侧补零到 Tkv 再与 attn_mask 广播相加
+            padded = torch.nn.functional.pad(mem_bias, (0, Tkv - mem_cols))  # (B,H,T,Tkv)
+            attn_mask = attn_mask + padded
         if q.device.type in ('cuda', 'cpu'):
             # 静态条件：无自定义掩码时用 fused is_causal（避免运行时 abs().max() sync）
             _use_causal = (not self.rel_bias) and (memory_kv is None) and (self.window == 0)
