@@ -20,19 +20,26 @@
 
 ---
 
-## 方法一：ModelScope 网页下载 (国内最快，推荐)
+## 方法零（推荐，自动化）：`fetch_ms_corpus.py`
 
-用浏览器打开以下链接，可以直接下载预处理好的 `.jsonl` 文件：
+在**已装 modelscope 的虚拟环境**（如 `F:\Projects\.my_venv`，无需代理，直连魔搭）运行：
 
-| 数据集 | 链接 | 文件大小 | 说明 |
-|--------|------|----------|------|
-| MiniMind 高质量预训练语料 | https://www.modelscope.cn/datasets/gongjy/minimind_dataset/files | ~1.6GB | 中文为主，来自匠数科技，适合小模型 |
-| MiniMind 精简SFT数据 | (同上) 下载 `sft_mini_512.jsonl` | ~1.2GB | 中文问答对 |
-| 匠数大模型SFT数据 | https://www.modelscope.cn/datasets/deepctrl/deepctrl-sft-data/files | 4B tokens | 10M中文+2M英文 |
+```powershell
+F:\Projects\.my_venv\Scripts\python.exe scripts/data/fetch_ms_corpus.py
+```
 
-**推荐**: 下载 `gongjy/minimind_dataset` 中的 `pretrain_hq.jsonl`（取前10万条即可）
+脚本会：① 从魔搭下载多领域语料到 `data/pretrain_corpus/raw/`；② 调 `download_pretrain_data.py --prepare` 转成训练 txt；
+③ 以「原始 merged.txt 基底 + 本次新增文件」重建 `merged.txt`（**不会重复**已含于基底的语料）。
 
-下载后放入: `data/pretrain_corpus/raw/`
+默认目标 ≈ 600MB 训练数据，多领域混合：
+- `gongjy/minimind_dataset`：`agent_rl`(工具调用)、`agent_rl_math`(数学)、`lora_exam`(考试)、
+  `lora_medical`(医疗)、`rlaif`(RLHF 对话) —— 注意该仓库**已无 `pretrain_hq.jsonl`**，请勿再引用。
+- `AI-ModelScope/wikipedia-cn-20230720-filtered`：中文维基百科（截断到 400MB jsonl ≈ 390MB 文本）。
+
+实测下载速度（2026-07-14，直连）：小型文件 ~10MB/s，维基百科 ~9–11MB/s。
+`dpo.jsonl` 为偏好数据（chosen/rejected 格式），`download_pretrain_data.py` 暂无法抽取文本 → 0 行，可忽略。
+
+下载后放入: `data/pretrain_corpus/raw/`（若手动下载）
 
 ---
 
