@@ -14,6 +14,7 @@ except Exception:
 
 import torch
 from scripts.generate import load_model
+from models.device import get_device
 
 DEFAULT_MODEL = str(project_root / 'checkpoints_dml' / 'final_model.pt')
 DEFAULT_VOCAB = str(project_root / 'checkpoints_dml' / 'vocab.json')
@@ -47,8 +48,10 @@ def main():
     ap.add_argument('--temperature', type=float, default=0.7)
     ap.add_argument('--top-k', type=int, default=40)
     args = ap.parse_args()
-
-    device = str(args.device)
+    
+    # 用 get_device 把 'cpu'/'cuda'/'dml'/'auto' 解析为 torch.device 对象
+    # （load_model 的 .to(device) 不认原始 'dml' 字符串，必须经 get_device 转换）
+    device = get_device(args.device)
     print('加载模型中…')
     model, vocab = load_model(args.model, args.vocab, device=device)
     model.eval()
