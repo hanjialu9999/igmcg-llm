@@ -121,7 +121,7 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
     - lr_schedule: cosine | constant | wsd（见 compute_lr）。
     """
     model.train()
-    loss_sum = 0.0  # 用 Python float 累加，避免张量创建开销与潜在计算图残留
+    loss_sum = 0.0  # 初始 float，首次 += loss.detach() 后自动提升为 GPU 张量，仅打印时 .item() 同步
     loss_count = 0
     t_start = time.time()
     tokens_total = 0

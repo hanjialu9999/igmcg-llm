@@ -1,5 +1,5 @@
-﻿# 50MB 同规模速度对比配置（CPU 版）：架构与 config_char_dml.yaml 完全一致
-# （char_merge + 滑动窗口 + 阶段2/3 记忆检索），仅替换 50MB 数据文件与 checkpoint 目录，设备改 CPU。
+﻿# 50MB 同规模速度对比配置（CPU 版）：架构与 config_char_dml.yaml 不同
+# （char_merge + 滑动窗口 + 阶段2/3 记忆检索），CPU 下 hidden_dim=1024/seq=256/window=128/batch=64。
 model:
   vocab_size: 5000
   embedding_dim: 512

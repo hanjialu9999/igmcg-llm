@@ -12,6 +12,7 @@ sys.path.insert(0, '.')
 
 from models.config_loader import build_model, load_config, load_vocab
 from models.device import get_device
+from scripts.generate import _safe_torch_load
 
 
 def main() -> None:
@@ -29,7 +30,7 @@ def main() -> None:
     cfg = load_config(args.config)
     device = get_device('auto')
     model = build_model(cfg, device=device)
-    sd = __import__('torch').load(args.ckpt, map_location='cpu', weights_only=True)
+    sd = _safe_torch_load(args.ckpt)
     model.load_state_dict(sd['model_state_dict'])
     model.eval()
     vocab = load_vocab(args.vocab)

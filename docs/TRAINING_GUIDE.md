@@ -10,7 +10,7 @@
 
 ```yaml
 model:
-  vocab_size: 12000          # 覆盖 ~98.9% token；DML 在更大词表下 backward 会触发设备错误
+  vocab_size: 8000            # 覆盖 ~98.9% token；DML 在更大词表下 backward 会触发设备错误
   embedding_dim: 512
   num_heads: 8
   num_layers: 6
@@ -28,7 +28,7 @@ training:
   gradient_clip: 1.0
   warmup_steps: 0.1        # 占整个 epoch 有效步数的比例（前 10% 线性升温）
   early_stop_patience: 5
-  label_smoothing: 0.1
+  label_smoothing: 0.0     # 已废弃：train.py 会强制置 0 并警告
   # 默认训练采用 SEL v2 分段选择性增强调度（2026-07-14 起）
   # 8 段：1 全开 + 1 全关极端 + 6 局部（attn_temp 仅全关段关，平时恒开）
   enhancement_schedule:
@@ -43,7 +43,7 @@ training:
 
 data:
   train_file: "data/pretrain_corpus/merged.txt"
-  vocab_size: 12000
+  vocab_size: 8000
   max_seq_length: 64
   num_workers: 0           # Windows 必须为 0
   test_split: 0.1
@@ -68,7 +68,7 @@ python tools/monitor/monitor_live.py
 
 ## 检查点与恢复
 
-- 训练脚本每次运行都从配置**重新构建模型并从头训练**（当前未实现自动断点续训）。
+- 训练脚本支持 `--resume` 从 `checkpoint_dir` 中最新的 checkpoint 续训（恢复模型/优化器状态/best_loss/epoch）。
 - 当 `epochs > 1` 时，每个 epoch 结束会保存 `model_epoch_*.pt` 与最佳模型备份，主要用作容错备份（非自动续训）。
 - 单 epoch 配置（`epochs=1`）不保存逐 epoch 检查点，仅输出 `final_model.pt` + `vocab.json`。
 - 若需从已有权重继续，可手动加载 `final_model.pt` 的 `model_state_dict` 后再训练（或作为微调底座）。

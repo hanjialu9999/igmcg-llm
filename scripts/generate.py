@@ -128,14 +128,14 @@ def load_model(model_path, vocab_path, device='cpu', quantize=False, compile_mod
 
 def generate_text(model, vocab, prompt, max_length=30, temperature=0.8,
                    top_k=50, device='cpu', ngram=None, ngram_weight=0.0,
-                   min_length=3, eos_penalty=-5.0):
+                   min_length=3, eos_penalty=-5.0, repetition_penalty=1.4):
     """Generate text from prompt（可选融合 n-gram 统计先验做解码期双轨）"""
     tokens = vocab.encode(prompt)
     if tokens[-1] == vocab.eos_idx:
         tokens = tokens[:-1]
     generated = model.generate(tokens, max_length=max_length,
                               temperature=temperature, top_k=top_k,
-                              device=device, repetition_penalty=1.4,
+                              device=device, repetition_penalty=repetition_penalty,
                               ngram_fn=(ngram.logprob_vector if ngram else None),
                               ngram_weight=ngram_weight,
                               min_length=min_length,
@@ -518,6 +518,8 @@ def main():
                         help='Sampling temperature (0.5-1.5)')
     parser.add_argument('--top-k', type=int, default=50,
                         help='Top-k sampling')
+    parser.add_argument('--repetition-penalty', type=float, default=1.4,
+                        help='重复惩罚值（>1 抑制重复，1.0=关闭）')
     parser.add_argument('--device', type=str, default='auto',
                         help='Device to use: auto (detect) / cuda / cpu / dml')
     parser.add_argument('--cpu-threads', type=int, default=4,
@@ -636,7 +638,8 @@ def main():
                                        device=device,
                                        ngram=ngram, ngram_weight=args.ngram_weight,
                                        min_length=3,
-                                       eos_penalty=-5.0)
+                                       eos_penalty=-5.0,
+                                       repetition_penalty=args.repetition_penalty)
             gen_info = ""
         # 同时写 UTF-8 结果文件，方便中文查看（控制台可能是 GBK）
         out_path = os.path.join('logs', 'generation_output.txt')
