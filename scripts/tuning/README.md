@@ -19,7 +19,7 @@ python scripts/tuning/tune_topk.py
 # 指定权重/词表与设备（如 DML 推理）
 python scripts/tuning/tune_topk.py \
     --model archive_unused/checkpoints_backup/_stab_ckpt/final_model.pt \
-    --vocab checkpoints_dml_test/vocab.json \
+    --vocab checkpoints_dml/vocab.json \
     --device dml
 ```
 

@@ -17,7 +17,7 @@ pip install torch-directml
 
 ## 2. 准备数据
 
-主训练语料默认是 `data/pretrain_corpus/merged.txt`（本地语料，**不纳入仓库**；小样本调试可用 `merged_sample.txt` 或 `merged_sample_8k.txt`）。
+小样本调试可用 `merged_sample.txt`（由 `merge_data.py` 自动生成）。
 原始 QA 数据在 `data/datasets/`（同样仅本地保留，未上传 git）。如需从 `data/datasets/` 重新构建语料：
 
 ```bash

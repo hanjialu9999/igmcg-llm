@@ -24,18 +24,18 @@ scripts/         入口与数据处理
                    train.py        训练主程序 (--config)
                    train_finetune.py  微调训练（QA 两阶段：预训练底座 → 微调）
                    generate.py     生成 API: generate_text / generate_igmcg / NGramModel
-                   chat.py         对话式 CLI (--ngram / --igmcg / --intuition)
+                   chat.py         对话式 CLI (--model / --vocab / --device / --max-length / --temperature / --top-k)
                    chat_zh.bat     中文 Windows 一键对话启动器
                     merge_data.py, process_data.py, convert_dialogue_to_qa.py, convert_statements_to_qa.py, data_manager.py ...
                    data/download_pretrain_data.py, tuning/  (参数扫描)
-configs/         所有 YAML 配置 (pretrain.yaml 为规范默认；dml_* / hybrid_* / test_* 为变体)
+configs/         所有 YAML 配置 (pretrain.yaml 为规范默认；dml_* / hybrid_* 为变体)
 experiments/     实验 / 诊断 / 一次性脚本 (原根目录 _*.py，可独立运行，自带路径修正)
 tools/           检查与监控工具 (view_model / compare_epochs / dialogue / dialogue_interactive / monitor/ ...)
 tests/           正式 pytest 单元测试（已纳入 git 跟踪）：test_config_loader.py / test_transformer.py / test_generation_pipeline.py（当前 27 passed）
 test/            本地自测沙箱（gitignore，仅本机运行，不入库）
 data/            语料 (pretrain_corpus/) 与数据集 (datasets/)
 logs/            运行日志
-checkpoints/     训练产出 (checkpoints_dml_b32 等子目录维持原样，未迁移)
+checkpoints/     训练产出（含 final_model.pt / vocab.json；chat / diagnose / tune 使用）
  archive_unused/  历史归档 (未动)
 ```
 
@@ -57,7 +57,7 @@ python scripts/train.py --config configs/pretrain.yaml
 python scripts/generate.py --prompt "今天天气怎么样" --ngram --igmcg --ngram-weight 0.3
 
 # 对话
-python scripts/chat.py --ngram --igmcg --intuition 0.3,0.8,0.5,0.2,0.6,0.4,0.5
+python scripts/chat.py
 ```
 
 更多示例：
@@ -66,7 +66,7 @@ python scripts/chat.py --ngram --igmcg --intuition 0.3,0.8,0.5,0.2,0.6,0.4,0.5
 # 指定权重 / 词表 / 设备（例如 AMD DML 推理）
 python scripts/generate.py \
     --model archive_unused/checkpoints_backup/_stab_ckpt/final_model.pt \
-    --vocab checkpoints_dml_test/vocab.json \
+    --vocab checkpoints_dml/vocab.json \
     --device dml --dtype fp32 \
     --prompt "中国的首都是" --ngram --igmcg --max-length 60
 
