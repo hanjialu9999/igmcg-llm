@@ -11,7 +11,7 @@ def test_load_config():
     config = load_config('configs/pretrain.yaml')
     assert 'model' in config
     assert 'training' in config
-    assert config['model']['vocab_size'] == 12000
+    assert config['model']['vocab_size'] == 8000
     # layer_plan is optional, defaults to None (all attn)
     layer_plan = config['model'].get('layer_plan')
     assert layer_plan is None or layer_plan == 'attn,ssm,attn,ssm,attn,ssm'

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections import Counter
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -291,6 +292,8 @@ class BPETokenizer:
     - encode/decode 走 BPE 合并规则，导出格式兼容 load_vocab（含 merges 键）。
     """
 
+    BYTE_PREFIX = 'bytes:'  # 字节级 token 前缀，如 bytes:0 ~ bytes:255
+
     def __init__(self, vocab_size: int = 8000, special_tokens: Optional[List[str]] = None):
         if special_tokens is None:
             special_tokens = ['<pad>', '<???>', '<bos>', '<eos>', '[SEP]']
@@ -304,9 +307,20 @@ class BPETokenizer:
         self.word2idx: Dict[str, int] = {}
         self.idx2word: Dict[int, str] = {}
         self.merges: List[Tuple[str, str]] = []
+        # 1) 特殊 token
         for idx, tok in enumerate(self.special_tokens):
             self.word2idx[tok] = idx
             self.idx2word[idx] = tok
+        # 2) 256 个字节级 token（最底层 fallback）：任何字符都能用 UTF-8 字节表示，
+        #    彻底避免未登录字变 <???>（OOV 永久为 0）。
+        self.byte_tokens: List[str] = []
+        for b in range(256):
+            tok = f'{self.BYTE_PREFIX}{b}'
+            self.byte_tokens.append(tok)
+            self.word2idx[tok] = len(self.word2idx)
+            self.idx2word[len(self.word2idx) - 1] = tok
+        # 单字/子词可用的额度 = 总词表 - 已占用（special + 256 byte）
+        self._symbol_cap = self.vocab_size - len(self.word2idx)
 
     # ---------- 训练 ----------
     def train(self, texts: List[str], min_freq: int = 2) -> None:
@@ -321,10 +335,10 @@ class BPETokenizer:
                 counter[w] += 1
 
         # 2) 初始词表 = 高频单字（含 CJK 与非 CJK 字符），过滤低频噪声
-        #    只取前 80% 额度，预留 20% 给后续 BPE 合并出的子词，否则单字直接填满
-        #    vocab_size 会导致合并循环无空间执行（退化为纯单字截断词表）。
+        #    仅用 symbol_cap 的 80% 作为单字额度，预留 20% 给 BPE 合并出的子词，
+        #    剩余额度已被 special(5) + 256 byte token 占去。
         letters = [w for w, c in counter.items() if c >= min_freq]
-        letter_cap = int(self.vocab_size * 0.8)
+        letter_cap = self._symbol_cap - int(self._symbol_cap * 0.2)
         for ch in letters:
             if ch not in self.word2idx:
                 self.word2idx[ch] = len(self.word2idx)
@@ -417,12 +431,35 @@ class BPETokenizer:
         keep = dict(list(self.word2idx.items())[:self.vocab_size])
         self.word2idx = keep
 
+    @staticmethod
+    def _is_valid_char(ch: str) -> bool:
+        """剔除无效/噪声字符：替换符、私用区、未定义码点、控制字符。"""
+        if ch == '\ufffd':
+            return False
+        o = ord(ch)
+        if o < 0x20 or 0x7f <= o < 0xa0:
+            return False  # 控制字符 / DEL / C1
+        if 0xe000 <= o <= 0xf8ff:
+            return False  # 私用区
+        if 0xf0000 <= o <= 0xfffff or 0x100000 <= o <= 0x10ffff:
+            return False  # 增补私用区
+        try:
+            unicodedata.name(ch)
+        except ValueError:
+            return False  # 未定义码点（如 U+2EC9）
+        return True
+
     def _pre_tokenize(self, text: str) -> List[str]:
-        """与 Vocabulary.tokenize 一致的预分词：CJK 逐字，其余按空格/标点。"""
+        """与 Vocabulary.tokenize 一致的预分词：CJK 逐字，其余按空格/标点；
+        并过滤含无效字符的预分词单元（乱码/替换符/私用区）。"""
         text = ' '.join(text.split()).lower()
         text = re.sub(r'([\u3400-\u9fff\uf900-\ufaff\uff00-\uffef])', r' \1 ', text)
         text = re.sub(r'([.!?,;:-])', r' \1 ', text)
-        return [w for w in text.split() if w]
+        out = []
+        for w in text.split():
+            if w and all(self._is_valid_char(c) for c in w):
+                out.append(w)
+        return out
 
     # ---------- 编码/解码 ----------
     def _merge_word(self, word: str) -> List[str]:
@@ -448,22 +485,58 @@ class BPETokenizer:
             out.extend(self._merge_word(w))
         return out
 
+    def _sym_to_id(self, sym: str) -> int:
+        """符号查表；查不到则回退到 UTF-8 字节级 token，确保任何字符都能编码（OOV=0）。"""
+        if sym in self.word2idx:
+            return self.word2idx[sym]
+        # fallback：拆成 UTF-8 字节，用 bytes:N token 表示
+        try:
+            bs = sym.encode('utf-8')
+        except UnicodeEncodeError:
+            bs = sym.encode('utf-8', errors='replace')
+        ids = []
+        for b in bs:
+            tok = f'{self.BYTE_PREFIX}{b}'
+            ids.append(self.word2idx.get(tok, self.unk_idx))
+        return ids
+
     def encode(self, text: str, add_special_tokens: bool = True) -> List[int]:
         tokens: List[int] = []
         if add_special_tokens:
             tokens.append(self.bos_idx)
         for sym in self.tokenize(text):
-            tokens.append(self.word2idx.get(sym, self.unk_idx))
+            r = self._sym_to_id(sym)
+            if isinstance(r, list):
+                tokens.extend(r)
+            else:
+                tokens.append(r)
         if add_special_tokens:
             tokens.append(self.eos_idx)
         return tokens
 
     def decode(self, token_ids: List[int], skip_special: bool = True) -> str:
         words: List[str] = []
+        byte_buf: List[int] = []  # 收集连续的字节级 token，整段还原为字符
+        prefix = self.BYTE_PREFIX
+
+        def flush() -> None:
+            if byte_buf:
+                try:
+                    words.append(bytes(byte_buf).decode('utf-8', errors='replace'))
+                except Exception:
+                    words.append(''.join(chr(b) for b in byte_buf))
+                byte_buf.clear()
+
         for tid in token_ids:
             if skip_special and tid in (0, 2, 3, 4):
                 continue
-            words.append(self.idx2word.get(tid, self.idx2word.get(str(tid), '<?>')))
+            w = self.idx2word.get(tid, self.idx2word.get(str(tid), '<?>'))
+            if isinstance(w, str) and w.startswith(prefix):
+                byte_buf.append(int(w[len(prefix):]))
+            else:
+                flush()
+                words.append(w)
+        flush()
         text = ''.join(words)  # BPE 子词直接拼接，无需空格
         text = text.replace('[SEP]', '').replace('[sep]', '')
         return text
