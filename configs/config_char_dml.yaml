@@ -1,4 +1,4 @@
-# 字符级 + 学习型分词 + 滑动窗口上下文（DML / AMD 核显版）
+﻿# 字符级 + 学习型分词 + 滑动窗口上下文（DML / AMD 核显版）
 # 与 config_dml_full.yaml 区别：
 #   - vocab_size 改字符级(5000)：单字 + 256 byte，零 OOV
 #   - char_merge: true 启用 CharMergeLayer（模型自学习"合并字符成词"，受 LM loss 监督）
@@ -35,7 +35,7 @@ training:
   gradient_clip: 1.0
   warmup_steps: 0.1
   early_stop_patience: 5
-  label_smoothing: 0.1
+  label_smoothing: 0.0  # 已废弃：train.py 会强制置 0 并警告
   cpu_threads: 4
   precision: "fp32"
   grad_accum_steps: 1
@@ -59,7 +59,6 @@ data:
   vocab_size: 5000
   max_seq_length: 256
   num_workers: 0
-  prefetch: 2
   test_split: 0.1
 
 paths:
@@ -69,3 +68,5 @@ paths:
 device: "auto"
 
 seed: 42
+
+

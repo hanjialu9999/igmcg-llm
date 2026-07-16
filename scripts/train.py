@@ -30,8 +30,25 @@ from models.data_utils import load_data, create_dataloader, split_dataset
 from models.config_loader import build_model
 from models.device import get_device, apply_cpu_threads
 from models.utils import (save_checkpoint, cleanup_old_checkpoints,
-                             backup_existing_checkpoints, save_final_model, cli_guard,
-                             _cpu_offload)
+                              backup_existing_checkpoints, save_final_model, cli_guard,
+                              _cpu_offload)
+
+def find_latest_checkpoint(checkpoint_dir: str):
+    """在 checkpoint_dir 中找最新的 model_epoch_*.pt，返回 (epoch, path) 或 (0, None)。"""
+    import glob as _glob
+    pattern = os.path.join(checkpoint_dir, 'model_epoch_*.pt')
+    files = _glob.glob(pattern)
+    if not files:
+        return 0, None
+    # 按 epoch 编号排序取最大
+    def _epoch_num(fp):
+        try:
+            return int(os.path.basename(fp).replace('model_epoch_', '').replace('.pt', ''))
+        except ValueError:
+            return 0
+    files.sort(key=_epoch_num)
+    latest = files[-1]
+    return _epoch_num(latest), latest
 
 class AverageMeter:
     def __init__(self):
@@ -237,7 +254,7 @@ def validate(model, dataloader, criterion, device):
 
 
 @cli_guard
-def main(config_path='configs/pretrain.yaml'):
+def main(config_path='configs/pretrain.yaml', resume=False):
     # Load configuration
     config = load_config(config_path)
     
@@ -378,6 +395,21 @@ def main(config_path='configs/pretrain.yaml'):
     opt_base_lr = (float(config['training'].get('sgd_learning_rate', config['training']['learning_rate']))
                    if opt_name == 'sgd' else float(config['training']['learning_rate']))
 
+    # ---- 续训（resume）：加载最新 checkpoint 恢复训练 ----
+    start_epoch = 1
+    if resume:
+        resume_epoch, resume_path = find_latest_checkpoint(checkpoint_dir)
+        if resume_path is not None:
+            print(f"\n[Resume] 从 {resume_path} (epoch {resume_epoch}) 续训")
+            ckpt = torch.load(resume_path, map_location='cpu', weights_only=True)
+            model.load_state_dict(ckpt['model_state_dict'])
+            optimizer.load_state_dict(ckpt['optimizer_state_dict'])
+            best_loss = ckpt.get('best_loss', float('inf'))
+            start_epoch = resume_epoch + 1
+            print(f"[Resume] best_loss={best_loss:.4f}, 从 epoch {start_epoch} 继续")
+        else:
+            print("[Resume] 未找到 checkpoint，从头开始训练")
+
     # ---- 精度 / 梯度累积 / 余弦退火 配置 ----
     precision = str(config['training'].get('precision', 'fp32')).lower()
     grad_accum_steps = int(config['training'].get('grad_accum_steps', 1))
@@ -448,7 +480,7 @@ def main(config_path='configs/pretrain.yaml'):
     no_improve_epochs = 0
     patience = config['training'].get('early_stop_patience', 5)
     
-    for epoch in range(1, config['training']['epochs'] + 1):
+    for epoch in range(start_epoch, config['training']['epochs'] + 1):
         train_loss = train_epoch(
             model, dataloader, optimizer, criterion, device, epoch,
             warmup_steps=config['training'].get('warmup_steps', 0),
@@ -535,6 +567,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', type=str, default='configs/pretrain.yaml',
                         help='Path to config file (default: 基座模型预训练配置)')
+    parser.add_argument('--resume', action='store_true',
+                        help='从 checkpoint_dir 中最新的 checkpoint 续训（恢复模型/优化器/best_loss/epoch）')
     args = parser.parse_args()
     
-    main(args.config)
+    main(args.config, resume=args.resume)

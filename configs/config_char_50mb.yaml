@@ -1,4 +1,4 @@
-# 50MB 同规模速度对比配置：架构与 config_char_dml.yaml 完全一致
+﻿# 50MB 同规模速度对比配置：架构与 config_char_dml.yaml 完全一致
 # （char_merge + 滑动窗口 + 阶段2/3 记忆检索），仅替换 50MB 数据文件与 checkpoint 目录。
 model:
   vocab_size: 5000
@@ -29,7 +29,7 @@ training:
   gradient_clip: 1.0
   warmup_steps: 0.1
   early_stop_patience: 5
-  label_smoothing: 0.1
+  label_smoothing: 0.0  # 已废弃：train.py 会强制置 0 并警告
   cpu_threads: 4
   precision: "fp32"
   grad_accum_steps: 1
@@ -53,7 +53,6 @@ data:
   vocab_size: 5000
   max_seq_length: 256
   num_workers: 0
-  prefetch: 2
   test_split: 0.1
 
 paths:
@@ -63,3 +62,5 @@ paths:
 device: "auto"
 
 seed: 42
+
+

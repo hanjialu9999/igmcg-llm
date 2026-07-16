@@ -157,12 +157,9 @@ def train():
 
     print("\n🎉 微调任务圆满成功！")
 
+@cli_guard
+def main():
+    train()
+
 if __name__ == "__main__":
-    try:
-        train()
-    except (FileNotFoundError, KeyError, ValueError, RuntimeError) as e:
-        print(f"[ERROR] {type(e).__name__}: {e}", file=sys.stderr)
-        sys.exit(1)
-    except Exception as e:
-        print(f"[FATAL] {type(e).__name__}: {e}", file=sys.stderr)
-        sys.exit(1)
+    main()

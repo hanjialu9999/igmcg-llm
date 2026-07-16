@@ -1,4 +1,4 @@
-# 正式预训练配置（DML / AMD 核显版）：应用 Plan B 手动注意力，规避 DML fused SDPA 崩溃
+﻿# 正式预训练配置（DML / AMD 核显版）：应用 Plan B 手动注意力，规避 DML fused SDPA 崩溃
 # 与 configs/pretrain.yaml 完全一致，仅改设备探测 + 独立输出目录，避免覆盖 CPU 训练产物
 model:
   vocab_size: 8000
@@ -19,7 +19,7 @@ training:
   gradient_clip: 1.0
   warmup_steps: 0.1
   early_stop_patience: 5
-  label_smoothing: 0.1
+  label_smoothing: 0.0  # 已废弃：train.py 会强制置 0 并警告
   cpu_threads: 4
   precision: "fp32"
   grad_accum_steps: 1
@@ -45,7 +45,6 @@ data:
   vocab_size: 8000
   max_seq_length: 256
   num_workers: 0
-  prefetch: 2
   test_split: 0.1
 
 paths:
@@ -55,3 +54,5 @@ paths:
 device: "auto"
 
 seed: 42
+
+
