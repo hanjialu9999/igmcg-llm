@@ -9,6 +9,20 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
+## `7000f7f`（本地，基于 `3ec3107`）
+
+- feat: **架构增强 2.0 在 50MB 数据上落地 + DML 训练大幅提速**。阶段1 学习型分词(char_merge) + 阶段2 可学习压缩记忆(MemoryBank, 64 槽) + 阶段3 可学习检索门控/稀疏注意力 已接入 `models/transformer.py`（bead576/be6f91f/3ec3107，此前未推送），本次补齐 50MB 探流程配置与提速优化并统一提交。
+- perf: DML(iGPU) 训练提速约 **3x**（50MB 由 ~30 分 → ~11 分）。关键优化：
+  1. `gradient_checkpointing` 关（小模型反向重算纯浪费，+47%）；
+  2. `attn_window` 128→64、训练 `max_seq_length` 256→128——记忆做全局、短窗口做局部，且更低复杂度（seq128 时注意力计算约 4x 下降）；
+  3. `SlidingWindowCausalSelfAttention.attend` 训练路径**静态偏置掩码加 `_bias_cache` 缓存**（窗口/因果掩码不再每步每头重建 arange/zeros/cat），并以权重设备为权威统一 DML 设备别名(`privateuseone` vs `:0`)，消除每步 `.to()` 拷贝与 `_build_masks` 失效重建；
+  4. `MemoryBank.reset/get_kv/write` 热路径移除 `.to(dev)` 拷贝；
+  5. **FFN `hidden_dim` 1024→768**（+47% tok/s，仅少 13% 参数，FFN 4x 扩张对字符级小模型过度配置）；
+  6. `batch_size` 8→24（tok/s 在 bs16 后持平、bs32 OOM，24 为甜点；DML 实际可用显存远小于 8GB 标称，超则 TDR 设备重置）；
+  7. **新增 SGD 优化器支持**（`scripts/train.py` 优化器工厂读 `training.optimizer` ∈ {adamw/sgd/adam}），去 AdamW 每步 ~96ms 的 CPU `lerp` 回退税（DML 缺该 kernel）——SGD 更新留在 GPU。修复 SGD 调度基准 lr 被 `learning_rate`(5e-4) 覆盖回 AdamW 量级的 bug（`opt_base_lr` 跟随优化器实际初始 lr）。
+- config: 新增/调整 `configs/config_char_50mb_dml.yaml`（seq128/window64/ckpt OFF/hid768/bs24/SGD lr0.1/memory 64+稀疏32）、`configs/config_char_50mb.yaml`、`configs/config_char_50mb_cpu.yaml`；新增 `scripts/gen_50mb.py`（UTF-8 生成验证，绕开 GBK 终端显 `?`）。`pytest tests/` 27 passed。
+- 验证：50MB DML 训练 `Speed: 3925 tok/s`、`Loss 325→73`（batch 60→150 平滑下降）；重复惩罚 1.7 将生成重复从 50+ 次压到 9 次。注：上下文训练 256(位置)+窗口64+记忆64；RoPE 支持长度外推（生成 300 token 不崩）。**全部提交未推送**（代理 `192.168.1.13:8080` 不稳定，需有效系统代理才能 push）。
+
 ## `42323fb`（已推送，基于 `5db434b`）
 
 - exp: 增强 vs 基线 受控对比扩展至 **全量 `merged.txt`（39700 行）**；SEL 改用 **SELv2 8 段掩码**（1 全开 + 1 全关极端 + 6 局部；attn_temp 仅全关段关、平时恒开）取代旧 8 段（无全关）与常开 ENH。同参数（1 epoch / batch32 / seq64 / lr3e-3 / seed42 / test_split0.1）DML fp32。`configs/config_cmp_{enh,sel,selv2}_full.yaml`，`experiments/_cmp_sel_full.py` 复现，`run_full_cmp.ps1` 一键三模型顺序训练。
