@@ -614,8 +614,6 @@ class MambaSSM(nn.Module):
         如果提供 past_state (B, d_inner, d_state)，将其作为 h_{-1} 用于计算 h_0 = a_0 * past_state + b_0。
         """
         L = a.shape[1]
-        # Use original a for prefix product calculation
-        orig_A = a.clone()
         A = a.clone()
         B = b.clone()
         
@@ -631,13 +629,9 @@ class MambaSSM(nn.Module):
             offset <<= 1
         
         # If we have past_state, we need to incorporate it
-        # The scan result B assumes h_0 = b_0 (since h_{-1}=0)
-        # With past_state: h_0 = a_0 * past_state + b_0
-        # h_t = a_t * ... * a_0 * past_state + (scan result)
         if past_state is not None:
             # Compute prefix products of original a: prefix_A[t] = a_t * a_{t-1} * ... * a_0
-            # Need to use original a, not the modified A from scan (cloned once at function top)
-            prefix_A = orig_A.clone()
+            prefix_A = a.clone()
             offset = 1
             while offset < L:
                 # 左移 offset：位置 i 取 i-offset（越界填单位元 A=1）

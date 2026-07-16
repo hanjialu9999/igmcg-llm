@@ -397,6 +397,7 @@ def main(config_path='configs/pretrain.yaml', resume=False):
 
     # ---- 续训（resume）：加载最新 checkpoint 恢复训练 ----
     start_epoch = 1
+    best_loss = float('inf')
     if resume:
         resume_epoch, resume_path = find_latest_checkpoint(checkpoint_dir)
         if resume_path is not None:
@@ -475,7 +476,6 @@ def main(config_path='configs/pretrain.yaml', resume=False):
 
     # Training loop
     print("\n[Training] Starting training...")
-    best_loss = float('inf')
     history = {'train_loss': [], 'best_epoch': 0}
     no_improve_epochs = 0
     patience = config['training'].get('early_stop_patience', 5)
