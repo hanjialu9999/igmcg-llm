@@ -162,7 +162,8 @@ def test_gradient_accumulation():
     g2 = grad_of(x2)
 
     opt.zero_grad()
-    model(x1)
+    out1 = model(x1)
+    F.cross_entropy(out1.view(-1, V), x1.view(-1)).backward()
     out2 = model(x2)
     F.cross_entropy(out2.view(-1, V), x2.view(-1)).backward()
     g_acc = [p.grad.detach().clone() for p in params]
