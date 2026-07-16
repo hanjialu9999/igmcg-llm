@@ -47,6 +47,15 @@ experiments/smoke_8k_gen.txt
 # 运行期生成的对话参数（由 scripts/tuning/showcase_optimal_params.py 回写）
 chat_config.json
 
+# 一次性调试/临时产物（本地排查用，不入库）
+_dump_vocab.py
+_trace.txt
+_train_err.txt
+_vocab_dump.txt
+_50mb_*.log
+run_train_selv2.ps1
+scripts/data/_scan_enc.py
+
 # 增强 vs 基线 对比实验产物（全量 merged.txt 受控对比）
 # 对比结果文本 + 训练日志入库（可对比）；权重较大（~107MB/份）且不入库，可由 config + data 复现
 checkpoints_cmp_enh_full/
