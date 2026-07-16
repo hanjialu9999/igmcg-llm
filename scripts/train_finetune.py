@@ -29,7 +29,7 @@ def load_vocab_from_json(vocab_path):
         vocab_data = json.load(f)
     
     word2idx = vocab_data['word2idx']
-    idx2word = {v: k for k, v in word2idx.items()}
+    idx2word = {int(k): v for k, v in word2idx.items()}
     
     # 实例化 Vocabulary，再手动注入已有映射（避免重新 build_vocab）
     vocab = Vocabulary(vocab_size=len(word2idx))

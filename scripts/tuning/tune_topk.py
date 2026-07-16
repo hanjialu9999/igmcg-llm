@@ -13,8 +13,9 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 import torch
 import json
 import argparse
-from models.config_loader import load_config, build_model, load_vocab
+from models.config_loader import load_vocab
 from models.device import get_device
+from scripts.generate import load_model
 
 parser = argparse.ArgumentParser(description='Top-K 调参')
 parser.add_argument('--model', default='checkpoints/final_model.pt')
@@ -26,9 +27,9 @@ vocab = load_vocab(args.vocab)
 
 device = get_device(args.device)
 
-model = build_model(load_config(), device=device)
-cp = torch.load(args.model, map_location='cpu', weights_only=True)
-model.load_state_dict(cp['model_state_dict'])
+# 复用 generate.load_model：统一安全加载并从 *_config.yaml 透传增强开关，
+# 避免增强权重 state_dict 不匹配（且比 build_model(load_config()) 更贴合实际权重）
+model, _ = load_model(args.model, args.vocab, device=device, quantize=False, compile_model=False)
 model.eval()
 
 test_questions = [
