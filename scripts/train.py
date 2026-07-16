@@ -341,13 +341,42 @@ def main(config_path='configs/pretrain.yaml'):
         ignore_index=vocab.pad_idx,
         # label_smoothing=config['training'].get('label_smoothing', 0.1)  # 已移除：与 ignore_index 不兼容
     )
-    optimizer = optim.AdamW(
-        model.parameters(),
-        lr=config['training']['learning_rate'],
-        weight_decay=config['training']['weight_decay'],
-        betas=(0.9, 0.999),
-        eps=1e-8
-    )
+    # 优化器工厂：支持 DML 友好的 SGD（避免 AdamW 的 CPU lerp 回退税）
+    # 配置键：training.optimizer ∈ {adamw(默认), sgd, adam}；sgd 另读 training.momentum(默认0.9)
+    opt_name = str(config['training'].get('optimizer', 'adamw')).lower()
+    if opt_name == 'sgd':
+        # SGD 学习率量级远大于 AdamW，未显式配置时给一个合理的字符级 LM 默认值
+        sgd_lr = float(config['training'].get('sgd_learning_rate', config['training']['learning_rate']))
+        momentum = float(config['training'].get('momentum', 0.9))
+        optimizer = optim.SGD(
+            model.parameters(),
+            lr=sgd_lr,
+            momentum=momentum,
+            weight_decay=config['training']['weight_decay'],
+        )
+        print(f"Optimizer: SGD(lr={sgd_lr}, momentum={momentum})  [DML GPU-native, 无 CPU lerp 税]")
+    elif opt_name == 'adam':
+        optimizer = optim.Adam(
+            model.parameters(),
+            lr=config['training']['learning_rate'],
+            weight_decay=config['training']['weight_decay'],
+            betas=(0.9, 0.999),
+            eps=1e-8,
+        )
+        print(f"Optimizer: Adam(lr={config['training']['learning_rate']})")
+    else:
+        optimizer = optim.AdamW(
+            model.parameters(),
+            lr=config['training']['learning_rate'],
+            weight_decay=config['training']['weight_decay'],
+            betas=(0.9, 0.999),
+            eps=1e-8,
+        )
+        print(f"Optimizer: AdamW(lr={config['training']['learning_rate']})")
+
+    # 调度基准 lr 须与优化器实际初始 lr 一致：SGD 用 sgd_learning_rate，否则用 learning_rate
+    opt_base_lr = (float(config['training'].get('sgd_learning_rate', config['training']['learning_rate']))
+                   if opt_name == 'sgd' else float(config['training']['learning_rate']))
 
     # ---- 精度 / 梯度累积 / 余弦退火 配置 ----
     precision = str(config['training'].get('precision', 'fp32')).lower()
@@ -423,7 +452,7 @@ def main(config_path='configs/pretrain.yaml'):
         train_loss = train_epoch(
             model, dataloader, optimizer, criterion, device, epoch,
             warmup_steps=config['training'].get('warmup_steps', 0),
-            base_lr=config['training']['learning_rate'],
+            base_lr=opt_base_lr,
             gradient_clip=config['training']['gradient_clip'],
             scaler=scaler,
             use_amp=use_amp,

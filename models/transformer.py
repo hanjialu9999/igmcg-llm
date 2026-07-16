@@ -90,15 +90,24 @@ class MemoryBank(nn.Module):
                              persistent=False)
 
     def reset(self, batch: int, device: torch.device, dtype: torch.dtype):
-        """新建 batch 大小的记忆（每个样本独立槽）。"""
+        """新建 batch 大小的记忆（每个样本独立槽）。
+
+        统一对齐到本模块权重所在设备（DML 的 privateuseone vs privateuseone:0
+        别名不一致会导致后续 .to() 每步产生大量设备拷贝，故在此一次对齐到位，
+        get_kv/write 热路径不再做 .to，消除拷贝开销。
+        """
+        dev = self.compress.weight.device
         self.slots = torch.zeros(batch, self.num_slots, self.comp_dim,
-                                 device=device, dtype=dtype)
+                                 device=dev, dtype=dtype)
 
     def write(self, x: torch.Tensor) -> None:
         """x: (B, T, D) 当前层表示，soft 写入记忆。"""
         B, T, D = x.shape
-        if self.slots.shape[0] != B:
-            self.reset(B, x.device, x.dtype)
+        # 仅在 batch 变化或设备确实不一致时重建（正常训练每步同设备，不触发拷贝）
+        if self.slots.shape[0] != B or self.slots.device != x.device:
+            if self.slots.device != x.device:
+                x = x.to(self.slots.device)
+            self.reset(B, self.slots.device, x.dtype)
         # 压缩当前表示
         comp = self.compress(x)  # (B, T, comp_dim)
         # 写入权重：对每步表示，softmax 分配到 M 个槽（可学门控）
@@ -111,7 +120,10 @@ class MemoryBank(nn.Module):
         self.slots = self.slots / (1e-6 + self.slots.norm(dim=-1, keepdim=True))
 
     def get_kv(self) -> Tuple[torch.Tensor, torch.Tensor, Optional[Dict[str, Any]]]:
-        """返回记忆的 K/V：(B, M, head_dim) 及检索元信息（门控/稀疏）。"""
+        """返回记忆的 K/V：(B, M, head_dim) 及检索元信息（门控/稀疏）。
+
+        直接复用已对齐设备的 slots，不在热路径做 .to（避免 DML 设备别名导致的每步拷贝）。
+        """
         decomp = self.decompress(self.slots)  # (B, M, D)
         k = self.mem_k(decomp)
         v = self.mem_v(decomp)
@@ -255,6 +267,10 @@ class SlidingWindowCausalSelfAttention(nn.Module):
         self._cached_T = -1
         self._mask: Optional[torch.Tensor] = None
         self._rbias: Optional[torch.Tensor] = None
+        # 训练路径静态偏置掩码缓存（仅依赖 T/Tkv/mem_cols，逐层逐步重建代价高）：
+        # 避免每步每头重复 arange/torch.zeros/cat 造成的海量分配与 DML 拷贝开销
+        self._bias_key: Optional[tuple] = None
+        self._bias_cache: Optional[torch.Tensor] = None
 
     def _build_masks(self, T: int, device: torch.device):
         # Check if we need to rebuild: length changed OR device changed
@@ -321,6 +337,9 @@ class SlidingWindowCausalSelfAttention(nn.Module):
         大幅激活（scores 张量）不落盘、反向时重算，保留大模型显存收益。
         memory_kv: (mk, mv, meta) 可学习压缩记忆的 K/V + 检索元信息（门控/稀疏）。"""
         B, _, Tq, _ = q.shape
+        # DML 设备别名不一致（privateuseone vs privateuseone:0）：以本模块权重所在设备为权威，
+        # 所有掩码/缓存构建都用它，避免 q.device 被剥索引导致 _build_masks/_bias_cache 每步重建
+        dev = self.qkv.weight.device
         # 阶段3 可学习检索：先计算记忆段偏置（门控缩放 + top-k 稀疏），注入后续 attn_mask
         mem_bias: Optional[torch.Tensor] = None
         mem_cols = 0
@@ -332,7 +351,7 @@ class SlidingWindowCausalSelfAttention(nn.Module):
                                    mk.unsqueeze(1).expand(-1, self.num_heads, -1, -1))
             if meta.get('retrieval_gate') is not None:
                 # 可学门控：sigmoid → (0,1) 软增强/抑制记忆召回，受 LM loss 监督
-                gate = torch.sigmoid(meta['retrieval_gate']).view(1, 1, 1, 1)
+                gate = torch.sigmoid(meta['retrieval_gate']).view(1, 1, 1, 1).to(mlogits.device)
                 mlogits = mlogits * gate
             if meta.get('sparse_topk', 0) and meta['sparse_topk'] < mem_cols:
                 k_keep = meta['sparse_topk']
@@ -340,7 +359,7 @@ class SlidingWindowCausalSelfAttention(nn.Module):
                 # 用 topk 计算阈值（DML 下 kthvalue 的 CPU fallback 会返回异常形状，topk 更稳）
                 kvals, _ = torch.topk(mlogits, k_keep, dim=-1)  # (B,H,Tq,k_keep)
                 thr = kvals[..., -1:]  # 第 k 大的值作为阈值 (B,H,Tq,1)
-                drop = mlogits < thr
+                drop = (mlogits < thr).to(mlogits.device)
                 mlogits = mlogits.masked_fill(drop, -1e9)
             mem_bias = mlogits  # (B,H,Tq,M)，作为 scores 的可加偏置
 
@@ -384,7 +403,7 @@ class SlidingWindowCausalSelfAttention(nn.Module):
 
         # —— 非缓存（训练 / 含 SSM 模型全量重算）路径 ——
         T = q.size(2)
-        self._build_masks(T, q.device)
+        self._build_masks(T, dev)
         Tkv = k.size(2)
         # 训练路径把记忆拼到 K/V 之前（记忆在前，窗口/全量在后）
         if memory_kv is not None:
@@ -397,25 +416,34 @@ class SlidingWindowCausalSelfAttention(nn.Module):
             Tkv = k.size(2)
         # 统一构造 (1,1,T,Tkv) 注意力掩码：记忆段全 0（全局可检索），
         # 主序列段按 causal / window / rel_bias 遮蔽
-        attn_mask = torch.zeros(1, 1, T, Tkv, device=q.device)
-        if self.window > 0:
-            qpos = torch.arange(0, T, device=q.device).unsqueeze(1)
-            kpos = torch.arange(0, Tkv, device=q.device).unsqueeze(0)
-            m = (qpos - kpos > self.window).float() * -1e9  # (T, Tkv)
-            m = m.unsqueeze(0).unsqueeze(0)  # (1,1,T,Tkv)
-            if memory_kv is not None:
-                m[:, :, :, :mem_cols] = 0.0  # 记忆段不受窗口限制
-            attn_mask = attn_mask + m
-        elif self.rel_bias:
-            attn_mask = attn_mask + (self._mask.float() * -1e9)
-        if self.rel_bias:
-            idx = (torch.arange(T, device=q.device).unsqueeze(1)
-                   - torch.arange(Tkv, device=q.device).unsqueeze(0)
-                   + Tkv - 1).clamp(0, 2 * self.max_seq_length - 1)
-            attn_mask = attn_mask + self.rel_bias_table[:, idx].unsqueeze(0)
+        # 静态部分（窗口/因果掩码）仅依赖 (T, Tkv, mem_cols)，缓存复用避免每步每头重建
+        if memory_kv is not None:
+            cache_key = (T, Tkv, mem_cols)
+        else:
+            cache_key = (T, Tkv, 0)
+        if self._bias_key != cache_key or self._bias_cache is None or self._bias_cache.device != dev:
+            base = torch.zeros(1, 1, T, Tkv, device=dev)
+            if self.window > 0:
+                qpos = torch.arange(0, T, device=dev).unsqueeze(1)
+                kpos = torch.arange(0, Tkv, device=dev).unsqueeze(0)
+                m = (qpos - kpos > self.window).float() * -1e9  # (T, Tkv)
+                m = m.unsqueeze(0).unsqueeze(0)  # (1,1,T,Tkv)
+                if memory_kv is not None:
+                    m[:, :, :, :mem_cols] = 0.0  # 记忆段不受窗口限制
+                base = base + m
+            elif self.rel_bias:
+                base = base + (self._mask.float() * -1e9)
+            if self.rel_bias:
+                idx = (torch.arange(T, device=dev).unsqueeze(1)
+                       - torch.arange(Tkv, device=dev).unsqueeze(0)
+                       + Tkv - 1).clamp(0, 2 * self.max_seq_length - 1)
+                base = base + self.rel_bias_table[:, idx].unsqueeze(0)
+            self._bias_key = cache_key
+            self._bias_cache = base
+        attn_mask = self._bias_cache
         if mem_bias is not None:
             # mem_bias 仅覆盖记忆段前 mem_cols 列，需扩到全宽 Tkv 再注入
-            full_bias = torch.zeros(B, self.num_heads, T, Tkv, device=q.device)
+            full_bias = torch.zeros(B, self.num_heads, T, Tkv, device=dev)
             full_bias[..., :mem_cols] = mem_bias
             attn_mask = attn_mask + full_bias  # 注入检索门控 + 稀疏（前 mem_cols 列）
         if q.device.type in ('cuda', 'cpu'):
