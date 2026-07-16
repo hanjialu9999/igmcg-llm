@@ -947,11 +947,17 @@ class TransformerModel(nn.Module):
             ssm_states = [None] * len(self.blocks)
             ssm_conv_states = [None] * len(self.blocks)
 
-        # 可学习压缩记忆：每个样本独立槽，前向首步重置（训练/推理皆按 batch 重建）
+        # 可学习压缩记忆：每个样本独立槽。重置时机：
+        #  - 训练/全量前向（use_cache=False）：每 batch 独立，首步重建；
+        #  - 增量解码首步（use_cache=True 且 past_key_values 为空）：新序列起点，重建；
+        #  - 增量解码后续步（use_cache=True 且已有 past）：保留记忆并持续累积，
+        #    否则生成期每步 reset 会让记忆只剩当前 token，与训练行为（整条序列累积）脱节。
         memory = None
         if self.memory_enabled:
             memory = self.memory_bank
-            memory.reset(x.size(0), x.device, x.dtype)
+            is_first_step = (not use_cache) or (past_key_values is None)
+            if is_first_step:
+                memory.reset(x.size(0), x.device, x.dtype)
 
         for i, block in enumerate(self.blocks):
             ssm_past_state = ssm_states[i] if use_cache else None
