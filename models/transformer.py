@@ -450,18 +450,16 @@ class SlidingWindowCausalSelfAttention(nn.Module):
             attn_mask = attn_mask.clone()
             attn_mask[..., :mem_cols] += mem_bias
         if q.device.type in ('cuda', 'cpu'):
-            if attn_mask.abs().max() > 0 or self.rel_bias:
-                out = scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
-            else:
+            # 静态条件：无自定义掩码时用 fused is_causal（避免运行时 abs().max() sync）
+            _use_causal = (not self.rel_bias) and (memory_kv is None) and (self.window == 0)
+            if _use_causal:
                 out = scaled_dot_product_attention(q, k, v, is_causal=True)
+            else:
+                out = scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
         else:
-            extra = attn_mask if attn_mask.abs().max() > 0 else None
-            if extra is None and self.rel_bias:
-                extra = self._rbias.unsqueeze(0)
-            elif extra is None and self._mask is not None:
-                # 纯因果模式：复用 _build_masks 已缓存的 _mask，避免每层重建 triu
-                extra = self._mask.float() * -1e9
-            out = self._manual_attention(q, k, v, extra)
+            # DML/其他：直接传 mask（all-zeros 时 scores+zeros 是 no-op）
+            # 消除 6 次/步的 host-device sync（abs().max() → __bool__() → .item()）
+            out = self._manual_attention(q, k, v, attn_mask)
         out = out.transpose(1, 2).reshape(B, T, self.num_heads * self.head_dim)
         return self.proj(out), None
 
