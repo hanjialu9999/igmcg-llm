@@ -159,7 +159,6 @@ class SlidingWindowCausalSelfAttention(nn.Module):
             idx = (idx + T - 1).clamp(0, 2 * self.max_seq_length - 1)
             self._rbias = self.rel_bias_table[:, idx]  # (H, T, T)
         self._cached_T = T
-        self._cached_T = T
 
     def forward(self, x: torch.Tensor, past_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None, use_cache: bool = False, start_pos: int = 0) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         q, k, v = self.project_and_norm(x, start_pos)
