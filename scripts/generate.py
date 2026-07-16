@@ -13,6 +13,7 @@ sys.path.insert(0, str(project_root))
 
 from models.transformer import TransformerModel
 from models.data_utils import Vocabulary
+from models.config_loader import load_vocab
 from models.device import get_device
 from models.utils import cli_guard
 
@@ -69,13 +70,9 @@ def load_model(model_path, vocab_path, device='cpu', quantize=False, compile_mod
     from torch import nn
     import yaml
 
-    # Load vocabulary
-    with open(vocab_path, 'r', encoding='utf-8') as f:
-        vocab_data = json.load(f)
-
-    vocab = Vocabulary()
-    vocab.word2idx = vocab_data['word2idx']
-    vocab.idx2word = {int(k): v for k, v in vocab_data['idx2word'].items()}
+    # Load vocabulary（复用 config_loader.load_vocab，正确处理 BPE/char 词表的 merges 等字段，
+    # 与训练期保存逻辑对称；避免手写 Vocabulary() 重建丢失 bpe/char 信息导致分布错位）
+    vocab = load_vocab(vocab_path)
 
     # Load model（map_location 用 'cpu'，加载后再由下方 .to(device) 搬运到目标设备）。
     # 注意：DML 设备下若直接用 torch.device('privateuseone:0') 作 map_location，
@@ -479,7 +476,7 @@ def generate_igmcg(model, vocab, prompt, intuition=None, num_candidates=4,
     # 把 0~1 映射为方向权重 (-1~1)
     w = [(v - 0.5) * 2.0 for v in intuition]
 
-    ids = vocab.encode(prompt, add_special_tokens=False)
+    ids = [vocab.bos_idx] + vocab.encode(prompt, add_special_tokens=False)
     pad_id = vocab.pad_idx
     sep_id = getattr(vocab, 'sep_idx', 1)
     eos_id = getattr(vocab, 'eos_idx', 2)
