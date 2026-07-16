@@ -22,6 +22,7 @@
   7. **新增 SGD 优化器支持**（`scripts/train.py` 优化器工厂读 `training.optimizer` ∈ {adamw/sgd/adam}），去 AdamW 每步 ~96ms 的 CPU `lerp` 回退税（DML 缺该 kernel）——SGD 更新留在 GPU。修复 SGD 调度基准 lr 被 `learning_rate`(5e-4) 覆盖回 AdamW 量级的 bug（`opt_base_lr` 跟随优化器实际初始 lr）。
 - config: 新增/调整 `configs/config_char_50mb_dml.yaml`（seq128/window64/ckpt OFF/hid768/bs24/SGD lr0.1/memory 64+稀疏32）、`configs/config_char_50mb.yaml`、`configs/config_char_50mb_cpu.yaml`；新增 `scripts/gen_50mb.py`（UTF-8 生成验证，绕开 GBK 终端显 `?`）。`pytest tests/` 27 passed。
 - 验证：50MB DML 训练 `Speed: 3925 tok/s`、`Loss 325→73`（batch 60→150 平滑下降）；重复惩罚 1.7 将生成重复从 50+ 次压到 9 次。注：上下文训练 256(位置)+窗口64+记忆64；RoPE 支持长度外推（生成 300 token 不崩）。**全部提交未推送**（代理 `192.168.1.13:8080` 不稳定，需有效系统代理才能 push）。
+  > ⚠️ **Loss 数字需重训**：该训练结果在 CharMerge 非因果泄露 + 滑动窗口因果泄露 + 记忆每步 reset 三重 bug 叠加下产出，loss 数字有水分。吞吐数字（tok/s）仍有效。需在 `74454a8`/`66159e8`/`9b76cce` 修复后重训才能获得可信 loss。
 
 ## `42323fb`（已推送，基于 `5db434b`）
 
