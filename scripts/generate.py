@@ -102,29 +102,12 @@ def load_model(model_path, vocab_path, device='cpu', quantize=False, compile_mod
             'dropout': 0.1
         })
 
-    model = TransformerModel(
-        vocab_size=checkpoint['vocab_size'],
-        embedding_dim=model_config.get('embedding_dim', 128),
-        num_heads=model_config.get('num_heads', 4),
-        num_layers=model_config.get('num_layers', 2),
-        hidden_dim=model_config.get('hidden_dim', 256),
-        max_seq_length=model_config.get('max_seq_length', 32),
-        dropout=model_config.get('dropout', 0.0),
-        tie_weights=model_config.get('tie_weights', True),
-        layer_plan=model_config.get('layer_plan', None),
-        ssm_d_state=model_config.get('ssm_d_state', 16),
-        ssm_d_inner_factor=model_config.get('ssm_d_inner_factor', 1),
-        ssm_dt_rank=model_config.get('ssm_dt_rank', None),
-        attn_window=model_config.get('attn_window', 0),
-        attn_rel_bias=model_config.get('attn_rel_bias', False),
-        # 可配置架构增强：从本 checkpoint 的 *_config.yaml 读取；旧权重（无该键）默认关，保持向后兼容
-        qk_norm=model_config.get('qk_norm', False),
-        attn_temp=model_config.get('attn_temp', False),
-        residual_gate=model_config.get('residual_gate', False),
-        hybrid_gate=model_config.get('hybrid_gate', False),
-    ).to(device)
+    # 复用 build_model（正确传递所有参数：char_merge/memory/ssm/rope 等），避免手动列参数遗漏。
+    # strict=False 兼容旧权重（旧 checkpoint 可能缺少 qk_norm/attn_temp/residual_gate 等新增参数）。
+    from models.config_loader import build_model
+    model = build_model({'model': model_config}, device=device)
 
-    model.load_state_dict(checkpoint['model_state_dict'])
+    model.load_state_dict(checkpoint['model_state_dict'], strict=False)
     model.eval()
 
     if quantize and getattr(device, 'type', None) != 'dml':
