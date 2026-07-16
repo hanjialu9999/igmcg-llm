@@ -3,8 +3,12 @@ pyyaml==6.0
 numpy==1.24.3
 tqdm>=4.65.0
 
-# ===== 可选：AMD / Intel 核显或独显（Windows）=====
-# 安装 torch-directml 后，程序会自动通过 DirectML 后端使用核显/独显，
-# 无需改任何代码（device 设为 "auto" 即可）。
-# 注意：torch-directml 需要兼容的 Python(3.10/3.11) 与 torch(>=2.0,<2.2) 版本。
+# ===== 可选：AMD / Intel 核显加速（Windows）=====
+# 安装 torch-directml 后，程序会自动通过 DirectML 使用核显/独显；
+# 无需任何代码改动（device 设为 "auto" 即可），但需注意：
+# 注意：torch-directml 需要较旧的 Python(3.10/3.11) 与 torch(>=2.0,<2.2) 版本
 #   pip install torch-directml
+
+# ===== 可选：数据准备脚本依赖（scripts/data/*）=====
+# 拉取 ModelScope 语料 / 读取 parquet 等时才需要，主训练/推理无需安装：
+#   pip install modelscope pandas pyarrow

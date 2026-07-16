@@ -1,4 +1,4 @@
-"""临时基准测试：对比本次优化的效果（RoPE 缓存命中、int8 动态量化速度与质量）。
+﻿"""临时基准测试：对比本次优化的效果（RoPE 缓存命中、int8 动态量化速度与质量）。
 
 不改动项目默认代码，仅 import 现有 API。  运行（在项目根目录，使用含 torch 的虚拟环境）：python experiments/_bench_speed.py
 """
@@ -39,32 +39,32 @@ def timed_generate(model, vocab, quantize_label, seed=42):
 
 def count_rope_hits():
     hits = {"h": 0, "m": 0}
-    orig = T._rope_cos_sin
+    orig = T.RotaryEmbedding._get_cos_sin
 
-    def wrapper(inv_freq, start_pos, seq_len, device, dtype, max_len=2048):
-        key = (str(device), inv_freq.shape[0])
+    def wrapper(self, start_pos, seq_len, device, dtype, max_len=2048):
+        key = (str(device), str(dtype), self.inv_freq.shape[0])
         need = start_pos + seq_len
-        c = T._ROPE_CACHE.get(key)
+        c = T.RotaryEmbedding._shared_cache.get(key)
         if c is not None and c[0].size(2) >= need:
             hits["h"] += 1
         else:
             hits["m"] += 1
-        return orig(inv_freq, start_pos, seq_len, device, dtype, max_len=max_len)
+        return orig(self, start_pos, seq_len, device, dtype, max_len=max_len)
 
-    T._rope_cos_sin = wrapper
+    T.RotaryEmbedding._get_cos_sin = wrapper
     return hits
 
 
 def no_cache_rope():
-    def wrapper(inv_freq, start_pos, seq_len, device, dtype, max_len=2048):
+    def wrapper(self, start_pos, seq_len, device, dtype, max_len=2048):
         # 模拟旧实现：每次都重算且不缓存（按 start_pos 单段），等价旧行为
-        t = torch.arange(start_pos, start_pos + seq_len, device=device).type_as(inv_freq)
-        freqs = torch.outer(t, inv_freq)
+        t = torch.arange(start_pos, start_pos + seq_len, device=device).type_as(self.inv_freq)
+        freqs = torch.outer(t, self.inv_freq)
         emb = torch.cat((freqs, freqs), dim=-1)
         cos = emb.cos()[None, None, :, :].to(dtype)
         sin = emb.sin()[None, None, :, :].to(dtype)
         return cos, sin
-    T._rope_cos_sin = wrapper
+    T.RotaryEmbedding._get_cos_sin = wrapper
 
 
 def perplexity(model, vocab, text):
@@ -85,11 +85,14 @@ print("=" * 60)
 print(f"PyTorch {torch.__version__} | device={DEVICE}")
 print("=" * 60)
 
-NATIVE_ROPE = T._rope_cos_sin  # 原生实现引用，便于后续恢复
+NATIVE_ROPE = T.RotaryEmbedding._get_cos_sin  # 原生实现引用，便于后续恢复
+
+# 启用类级共享缓存（RoPE 命中率统计依赖它；benchmark 结束会自动恢复原生实现）
+T.RotaryEmbedding.enable_shared_cache(True)
 
 # 1) RoPE 缓存命中率（新实现）
 print("\n[1] RoPE 缓存命中率（新实现，逐 token KV 缓存生成）")
-T._ROPE_CACHE.clear()
+T.RotaryEmbedding._shared_cache.clear()
 hits = count_rope_hits()
 model_b, vocab = load_model(MODEL, VOCAB, device=DEVICE, quantize=False)
 base_text, base_spd = timed_generate(model_b, vocab, "baseline-fp32")
@@ -99,23 +102,23 @@ p_base = perplexity(model_b, vocab, REF_TEXT)
 
 # 2) 旧实现（无缓存，每步重算）对比速度
 print("\n[2] 旧实现（无 RoPE 缓存）同条件生成速度")
-T._ROPE_CACHE.clear()
+T.RotaryEmbedding._shared_cache.clear()
 no_cache_rope()
 old_text, old_spd = timed_generate(model_b, vocab, "old-nocache")
 print(f"    新实现更快约 { (old_spd/base_spd - 1)*100:.1f}% （或无差异，因单步表很小）")
 
 # 3) int8 动态量化：速度 + 质量
 print("\n[3] int8 动态量化（--quantize）")
-T._ROPE_CACHE.clear()
-T._rope_cos_sin = NATIVE_ROPE  # 恢复原生 RoPE 实现
+T.RotaryEmbedding._shared_cache.clear()
+T.RotaryEmbedding._get_cos_sin = NATIVE_ROPE  # 恢复原生 RoPE 实现
 model_q, _ = load_model(MODEL, VOCAB, device=DEVICE, quantize=True)
 q_text, q_spd = timed_generate(model_q, vocab, "quantized-int8")
 print(f"    量化相对 fp32 提速约 { (q_spd/base_spd - 1)*100:.1f}%")
 
 # 3b) torch.compile：稳定态速度（先 warmup 触发编译，再计时）
 print("\n[3b] torch.compile（--compile）稳定态速度")
-T._ROPE_CACHE.clear()
-T._rope_cos_sin = NATIVE_ROPE
+T.RotaryEmbedding._shared_cache.clear()
+T.RotaryEmbedding._get_cos_sin = NATIVE_ROPE
 model_c, _ = load_model(MODEL, VOCAB, device=DEVICE, compile_model=True)
 torch.manual_seed(0)
 _ = model_c.generate(vocab.encode(PROMPT, add_special_tokens=False),
@@ -126,8 +129,8 @@ print(f"    编译相对 fp32 eager 提速约 { (c_spd/base_spd - 1)*100:.1f}%")
 
 # 5) bf16 精度（默认 auto 启用）：速度 + 质量
 print("\n[5] bf16 精度（默认 auto 会启用）稳定态速度 + 质量")
-T._ROPE_CACHE.clear()
-T._rope_cos_sin = NATIVE_ROPE
+T.RotaryEmbedding._shared_cache.clear()
+T.RotaryEmbedding._get_cos_sin = NATIVE_ROPE
 try:
     torch.set_autocast_enabled('cpu', True)
     torch.set_autocast_dtype('cpu', torch.bfloat16)

@@ -14,36 +14,14 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from models.transformer import TransformerModel
-from models.config_loader import load_config, build_model
+from models.config_loader import load_config, build_model, load_vocab
 from models.device import get_device, apply_cpu_threads
-from models.data_utils import Vocabulary
 from models.utils import save_checkpoint, cli_guard
 
 
 def load_vocab_from_json(vocab_path):
-    """从 vocab.json 加载词表并构建 Vocabulary 对象。
-    
-    使用项目自带的 Vocabulary 类（支持 CJK 逐字切分），替代原 SimpleTokenizer 的按空格分词。
-    """
-    with open(vocab_path, 'r', encoding='utf-8') as f:
-        vocab_data = json.load(f)
-    
-    word2idx = vocab_data['word2idx']
-    idx2word = {int(k): v for k, v in word2idx.items()}
-    
-    # 实例化 Vocabulary，再手动注入已有映射（避免重新 build_vocab）
-    vocab = Vocabulary(vocab_size=len(word2idx))
-    vocab.word2idx = word2idx
-    vocab.idx2word = idx2word
-    
-    # 特殊 token 索引对齐（Vocabulary 默认顺序：pad=0, unk=1, bos=2, eos=3, sep=4）
-    vocab.pad_idx = word2idx.get('<pad>', 0)
-    vocab.unk_idx = word2idx.get('<unk>', 1)
-    vocab.bos_idx = word2idx.get('<bos>', 2)
-    vocab.eos_idx = word2idx.get('<eos>', 3)
-    vocab.sep_idx = word2idx.get('[SEP]', 4)
-    
-    return vocab
+    """从 vocab.json 加载词表（复用 config_loader.load_vocab，正确处理 BPE/char 词表的 merges 等字段）。"""
+    return load_vocab(vocab_path)
 
 # ===== 2. 处理问答数据 (强制对齐长度) =====
 class QADataset(Dataset):
@@ -77,8 +55,9 @@ class QADataset(Dataset):
         # 拼成单条序列 [BOS] 问题 [SEP] 答案 [EOS]，做标准 next-token 语言模型训练：
         # 原实现 input=问题 / target=答案 在因果 LM 下位置错位（output[t] 预测的是问题[t+1] 而非答案[t]），
         # 这里用整条序列错位一位得到输入/目标，与 data_utils.TextDataset 的构造方式一致
-        seq = ([self.vocab.bos_idx] + self.vocab.encode(question) + [self.vocab.sep_idx]
-               + self.vocab.encode(answer) + [self.vocab.eos_idx])
+        seq = ([self.vocab.bos_idx] + self.vocab.encode(question, add_special_tokens=False)
+               + [self.vocab.sep_idx]
+               + self.vocab.encode(answer, add_special_tokens=False) + [self.vocab.eos_idx])
         # 截断到 max_length+1，再拆成输入/目标（错位一位）
         if len(seq) > self.max_length + 1:
             seq = seq[:self.max_length + 1]
