@@ -9,6 +9,13 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
+## 结构清理（本地）
+
+- refactor: 实验脚本 `experiments/` 下 26 个临时/一次性脚本移入 `archive_unused/experiments_legacy/`（保留 `_bench_enh` / `_bench_speed` / `_cmp_sel_full` / `_smoke_gen_compare` / `_smoke_8k_gen` / `_run_train` / `_run_train_cpu` 共 7 个常用脚本）。`_bench_speed.py` 改为通过环境变量 `BENCH_MODEL` / `BENCH_VOCAB` 指定权重，去掉对已删除权重的硬编码路径。
+- docs: `QUICK_START.md` 内容并入 `README.md`「完整快速开始」章节后删除。
+- refactor: 数据脚本统一单入口 `scripts/data_manager.py`（子命令 `merge` / `stats` / `vocab` / `sample` / `to-jsonl`）；`scripts/merge_data.py` 与 `scripts/process_data.py` 改为其兼容薄包装，更新 README / scripts/README / docs/DATA_USAGE / data/README 引用。
+- feat: 新增架构增强机制（默认关闭、向后兼容旧权重）：可学习遗忘 MemoryBank(memory_forget)、可学 RoPE+ALiBi(rope_learnable/alibi)、全上下文检索(memory_retrieval_full/topk)、可学滑动窗口(learn_window/window_base)、选择性跳过层(layer_skip)、线性注意力 mixer(mixer=attn/linear/hybrid)、计算复杂度奖励(training.complexity_lambda)、统一记忆预算(memory_budget)。修复：MemoryBank 首步设备对齐、mask_fill_value 透传、generate.py bf16 检测、window==0 主序列因果泄漏；`train_finetune.py` 读取 config`training` 的优化器/学习率/轮数；`requirements.txt` torch 上界 `<2.5`→`<2.2`；新增 `tests/test_new_mechanisms.py`（53 passed）。
+
 ## `7000f7f`（本地，基于 `3ec3107`）
 
 - feat: **架构增强 2.0 在 50MB 数据上落地 + DML 训练大幅提速**。阶段1 学习型分词(char_merge) + 阶段2 可学习压缩记忆(MemoryBank, 64 槽) + 阶段3 可学习检索门控/稀疏注意力 已接入 `models/transformer.py`（bead576/be6f91f/3ec3107，此前未推送），本次补齐 50MB 探流程配置与提速优化并统一提交。

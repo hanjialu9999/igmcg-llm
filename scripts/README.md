@@ -12,7 +12,9 @@
 
 ## 数据处理
 
-`merge_data.py`（合并 `data/datasets/` 为单一语料）· `improve_data.py` · `reformat_data.py` · `data_manager.py` · `convert_dialogue_to_qa.py` · `convert_statements_to_qa.py` · `diagnose.py` · `analyze_datasets.py` · `process_data.py`（可选转 jsonl）。
+`data_manager.py`（统一入口：`merge` / `stats` / `vocab` / `sample` / `to-jsonl`）· `improve_data.py` · `reformat_data.py` · `convert_dialogue_to_qa.py` · `convert_statements_to_qa.py` · `diagnose.py` · `analyze_datasets.py`。
+
+> `merge_data.py` 与 `process_data.py` 现为 `data_manager.py` 的兼容薄包装。
 
 ## 子目录
 
