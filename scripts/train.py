@@ -115,7 +115,8 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
                  show_progress=True, amp_device=None, enhancement_off_prob=0.0,
                  enhancement_schedule=None, complexity_lambda=0.0,
                  complexity_budget=None,                  curriculum_anneal=None,
-                 global_step=0, curriculum_total_steps=1):
+                 global_step=0, curriculum_total_steps=1,
+                 igmcg_sel_prob=0.0):
     """Train one epoch with warmup, gradient accumulation and mixed precision.
 
     - warmup_steps: 预热步数。若 <1 则按"占整个 epoch 有效步数的比例"解释（如 0.1=前 10% 步预热）。
@@ -196,13 +197,16 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
                 else:
                     model.set_enhancements_active(True)
 
+        # 阶段8.7 IGMCG-SEL：训练期以 igmcg_sel_prob 概率整批强制关闭 IGMCG 引导（igate 归零），
+        # 让模型学会"何时依赖 IGMCG、何时靠自身"——否则 use 门控恒开、无自决意义。
+        _igmcg_off = igmcg_sel_prob > 0.0 and random.random() < igmcg_sel_prob
         # Forward pass (optionally under autocast for mixed precision)
         if use_amp and amp_device is not None:
             with torch_autocast(amp_device, dtype=autocast_dtype):
-                logits = model(input_ids).view(-1, model.vocab_size)
+                logits = model(input_ids, igmcg_force_off=_igmcg_off).view(-1, model.vocab_size)
                 loss = criterion(logits, target_ids.view(-1))
         else:
-            logits = model(input_ids).view(-1, model.vocab_size)
+            logits = model(input_ids, igmcg_force_off=_igmcg_off).view(-1, model.vocab_size)
             loss = criterion(logits, target_ids.view(-1))
         # 阶段8.2：复杂度约束（正则项）——把"小模型/提速"从弱乘奖励升级为预算硬约束。
         #  - 旧式弱乘：complexity_lambda>0 且未设 budget → loss += λ·comp（λ=1e-4，量级可忽略）。
@@ -562,6 +566,7 @@ def main(config_path='configs/pretrain.yaml', resume=False):
             complexity_lambda=float(config['training'].get('complexity_lambda', 0.0)),
             complexity_budget=config['training'].get('complexity_budget', None),
             curriculum_anneal=curriculum_anneal,
+            igmcg_sel_prob=float(config['training'].get('igmcg_sel_prob', 0.0)),
             global_step=global_step,
             curriculum_total_steps=total_steps_all,
         )

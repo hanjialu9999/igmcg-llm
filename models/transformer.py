@@ -1129,7 +1129,7 @@ class TransformerModel(nn.Module):
                    layer_skip: bool = False, learn_window: bool = False, window_base: int = 64,
                    mixer: str = 'attn',
                    ngram_fusion: bool = False, ngram_model=None,
-                   ngram_gate_scale: float = 1.0):
+                   ngram_gate_scale: float = 1.0, igmcg: bool = False):
         super(TransformerModel, self).__init__()
 
         self.vocab_size = vocab_size
@@ -1145,8 +1145,21 @@ class TransformerModel(nn.Module):
         self.ngram_fusion_enabled = bool(ngram_fusion) and (ngram_model is not None)
         self.ngram_model = ngram_model if self.ngram_fusion_enabled else None
         self.ngram_gate_scale = ngram_gate_scale
+        # 阶段8.7 IGMCG 2.0：IGMCG（直觉引导）与 n-gram 融合训练，且由模型自决：
+        #  - 是否使用 IGMCG（igmcg_use_gate 逐位置 sigmoid，可归零 → 模型自选"用不用"）；
+        #  - 各阶 n-gram 占比（ngram_order_logits 可学 softmax → 模型自选"用几个/哪种 n"）。
+        # 二者均仅在 ngram_fusion 开启时构建（IGMCG 依赖 n-gram 统计缓冲）。
+        # 默认关、向后兼容、旧权重无这些参数（strict=False 安全）。
+        self.igmcg_enabled = bool(igmcg) and self.ngram_fusion_enabled
         if self.ngram_fusion_enabled:
             self.ngram_gate = nn.Linear(embedding_dim, 1)
+            # 可学 n-gram 阶混合权重（替代固定 l1/l2/l3）：softmax 后逐阶加权混合 logprob。
+            _K = getattr(self.ngram_model, 'max_order', 3) if self.ngram_model is not None else 3
+            self.ngram_order_logits = nn.Parameter(torch.zeros(_K))
+            if self.igmcg_enabled:
+                # 逐位置"是否启用 IGMCG 引导"门控 + 直觉条件投影（7 维直觉→标量偏置，按序列）。
+                self.igmcg_use_gate = nn.Linear(embedding_dim, 1)
+                self.intuition_proj = nn.Linear(7, 1)
         # 增量解码 n-gram 上下文滚动缓冲（末 2 token），由 forward 维护；全量/训练时为 None。
         self._ngram_last_ids = None
         # 阶段8.2：推理期静态剪枝标记（prune_layers 填充；默认空=不剪）
@@ -1333,8 +1346,10 @@ class TransformerModel(nn.Module):
             self.output_head.weight = self.embedding.weight
         return module
 
-    def forward(self, src: torch.Tensor, src_mask: Optional[torch.Tensor] = None, past_key_values: Optional[List[Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]]]] = None, use_cache: bool = False) -> Tuple[torch.Tensor, Optional[List[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]]]]:
+    def forward(self, src: torch.Tensor, src_mask: Optional[torch.Tensor] = None, past_key_values: Optional[List[Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]]]] = None, use_cache: bool = False, intuition: Optional[torch.Tensor] = None, igmcg_force_off: bool = False) -> Tuple[torch.Tensor, Optional[List[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]]]]:
         # src: (batch, seq_len)；RoPE 在注意力内部按位置旋转，无需外部 PE
+        # 阶段8.7 IGMCG 2.0：intuition 为 (B,7) 连续直觉向量（训练期可作为条件输入，推理期可选）；
+        # igmcg_force_off 用于训练期 IGMCG-SEL（随机整批关闭 IGMCG 引导，让模型学"何时用"）。
         x = self.embedding(src) * math.sqrt(self.embedding_dim)
         x = self.drop(x)
         # 学习型分词：字符级序列融合为词表示（门控卷积，受 LM loss 监督）
@@ -1422,13 +1437,26 @@ class TransformerModel(nn.Module):
                         if hasattr(self.ngram_model.vocab, 'pad_idx') else 0
                     self._ngram_last_ids = src.new_full((src.shape[0], 2), pad)
                 ctx = torch.cat([self._ngram_last_ids, src], dim=1)        # (B, 2+T) 含完整上下文
-                ngram_vec = self.ngram_model.logprob_matrix(ctx, x.device).detach()  # (B,2+T,V)
-                ngram_vec = ngram_vec[:, -src.shape[1]:]                    # 仅取新 token 位置 (B,T,V)
+                ngram_ord = self.ngram_model.logprob_orders_matrix(ctx, x.device).detach()  # (B,2+T,V,K)
+                ngram_ord = ngram_ord[:, -src.shape[1]:]                    # 仅取新 token 位置 (B,T,V,K)
                 # 更新滚动缓冲（保留末 2 token），供下一步增量解码
                 self._ngram_last_ids = torch.cat([self._ngram_last_ids, src], dim=1)[:, -2:]
             else:
-                ngram_vec = self.ngram_model.logprob_matrix(src, x.device).detach()  # (B,T,V)
-            gate = torch.sigmoid(self.ngram_gate(x)) * self.ngram_gate_scale    # (B,T,1)
+                ngram_ord = self.ngram_model.logprob_orders_matrix(src, x.device).detach()  # (B,T,V,K)
+            # 阶段8.7：可学阶混合——softmax(order_logits) 对 K 阶 logprob 加权混合（模型自选各阶占比）。
+            _ow = torch.softmax(self.ngram_order_logits, dim=0)             # (K,)
+            ngram_vec = (ngram_ord * _ow.view(1, 1, 1, -1)).sum(-1)         # (B,T,V)
+            # 阶段8.7：IGMCG 自使用门控——模型逐位置自决"是否启用 IGMCG 引导"（可归零）。
+            g_base = torch.sigmoid(self.ngram_gate(x))                     # (B,T,1) 基础 n-gram 门控
+            if self.igmcg_enabled and not igmcg_force_off:
+                _shift = 0.0
+                if intuition is not None:
+                    # 7 维直觉向量投影为 (B,1) 序列级偏置，广播到 (B,T,1) 影响 use 门控（融合训练直觉）。
+                    _shift = self.intuition_proj(intuition).unsqueeze(1)   # (B,1,1)
+                p_use = torch.sigmoid(self.igmcg_use_gate(x) + _shift)     # (B,T,1)
+                gate = p_use * g_base * self.ngram_gate_scale
+            else:
+                gate = g_base * self.ngram_gate_scale
             z = self.output_head(x)                                            # (B,T,V) 主干 logits
             fused = z + gate * ngram_vec
             if use_cache:

@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 import sys
 from pathlib import Path
 
@@ -763,17 +764,23 @@ def test_curriculum_anneal_warmup_all_on():
 
 
 def test_curriculum_anneal_late_turns_off():
-    """后期（frac>warmup）课程退火按进度随机关闭指定增强，且出现过 off。"""
-    torch.manual_seed(0)
+    """后期（frac>warmup）课程退火按进度随机关闭指定增强，且只关指定 keys。
+    用确定性随机源（random.random→0.0 保证 p_off>0 时必 off）验证逻辑，避免概率偶发。"""
+    import random
     m = _small()
     m.train()
     calls = []
     orig = m.set_enhancements_active
     m.set_enhancements_active = lambda spec: calls.append(spec)
-    for _ in range(4):
-        _run_epoch(m, total_steps=24,
-                   curriculum_anneal={'warmup_frac': 0.0, 'off_prob_max': 0.8,
-                                      'keys': ['attn_temp', 'residual_gate']})
+    _real_random = random.random
+    random.random = lambda: 0.0   # 强制 p_off>0 时必触发 off，使测试确定性
+    try:
+        for _ in range(4):
+            _run_epoch(m, total_steps=24,
+                       curriculum_anneal={'warmup_frac': 0.0, 'off_prob_max': 0.8,
+                                          'keys': ['attn_temp', 'residual_gate']})
+    finally:
+        random.random = _real_random
     off_calls = [c for c in calls if c is not True]
     assert off_calls, "后期课程退火应出现过关闭增强"
     for c in off_calls:
@@ -789,3 +796,93 @@ def test_curriculum_anneal_not_crash():
     loss = _run_epoch(m, total_steps=72,
                       curriculum_anneal={'warmup_frac': 0.3, 'off_prob_max': 0.5})
     assert float(loss) == float(loss) and float(loss) > 0, "课程退火训练 loss 异常"
+
+
+# ---------------------------------------------------------------------------
+# 阶段 8.7：IGMCG 2.0（与 n-gram 融合训练 + 模型自选"用不用/用几个 n" + 更聪明打分）
+# ---------------------------------------------------------------------------
+
+def _small_igmcg(**over):
+    v, ng = _small_ngram()
+    V = len(v)
+    kw = dict(vocab_size=V, embedding_dim=64, num_heads=4, num_layers=2,
+              hidden_dim=128, max_seq_length=32, ngram_fusion=True, ngram_model=ng,
+              igmcg=True)
+    kw.update(over)
+    return TransformerModel(**kw), ng
+
+
+def test_igmcg_order_weights_learnable_blend():
+    """IGMCG 2.0：ngram_order_logits 可学，softmax 后逐阶混合 n-gram（模型自选各阶占比）。"""
+    m, ng = _small_igmcg()
+    V = len(ng.vocab)
+    m.train()
+    x = torch.randint(0, V, (2, 8))
+    opt = torch.optim.AdamW(m.parameters(), lr=1e-2)
+    before = m.ngram_order_logits.detach().clone()
+    for _ in range(3):
+        opt.zero_grad()
+        out = m(x)
+        loss = F.cross_entropy(out.reshape(-1, V), torch.randint(0, V, (16,)))
+        loss.backward(); opt.step()
+    # order 权重应被 CE 梯度推动（不再全零）
+    assert not torch.allclose(before, m.ngram_order_logits), "ngram_order_logits 未受梯度更新"
+    # 输出应含 n-gram 融合贡献（与关闭不同）
+    m.eval()
+    with torch.no_grad():
+        on = m(x)
+        m.set_ngram_fusion_active(False)
+        off = m(x)
+    assert not torch.allclose(on, off), "IGMCG 融合未改变输出"
+
+
+def test_igmcg_self_use_gate_selectable():
+    """IGMCG 2.0：igmcg_use_gate 可逐位置自决"是否用 IGMCG"（可归零）；force_off 整批关闭。"""
+    m, ng = _small_igmcg()
+    V = len(ng.vocab)
+    m.eval()
+    x = torch.randint(0, V, (2, 8))
+    with torch.no_grad():
+        out_on = m(x, igmcg_force_off=False)
+        out_off = m(x, igmcg_force_off=True)   # 强制关闭 IGMCG 引导
+    # 二者应不同（use 门控确实在调节融合量）
+    assert not torch.allclose(out_on, out_off), "igmcg_force_off 未影响输出（use 门控无效）"
+    # use 门控收到梯度
+    m.train()
+    out = m(x)
+    loss = F.cross_entropy(out.reshape(-1, V), torch.randint(0, V, (16,)))
+    loss.backward()
+    assert m.igmcg_use_gate.weight.grad is not None, "igmcg_use_gate 无梯度（模型无法学'用不用'）"
+
+
+def test_igmcg_intuition_conditions_use_gate():
+    """IGMCG 2.0：intuition 向量（7 维）作为条件投影偏置影响 use 门控输出。"""
+    m, ng = _small_igmcg()
+    V = len(ng.vocab)
+    m.eval()
+    x = torch.randint(0, V, (2, 8))
+    intu_a = torch.zeros(2, 7)
+    intu_b = torch.ones(2, 7) * 0.9
+    with torch.no_grad():
+        out_a = m(x, intuition=intu_a)
+        out_b = m(x, intuition=intu_b)
+    assert not torch.allclose(out_a, out_b), "intuition 条件未影响 IGMCG 融合输出"
+
+
+def test_igmcg_build_model_ignores_when_fusion_off():
+    """igmcg 仅在 ngram_fusion 开启时构建；关融合时 igmcg 头不应存在（向后兼容旧权重）。"""
+    m_off = _small(vocab_size=200)  # 无 ngram_fusion
+    assert not getattr(m_off, 'igmcg_enabled', False), "未开 ngram_fusion 时 igmcg 不应启用"
+    assert not hasattr(m_off, 'igmcg_use_gate'), "未开 ngram_fusion 时不应有 igmcg_use_gate"
+
+
+def test_igmcg_smarter_scorer_picks_coherent():
+    """IGMCG 2.0 更聪明打分器：在连贯候选中优先选贴合直觉方向的，且跨候选 z-score 稳定。"""
+    from scripts.generate import _zscore, _repetition
+    # _zscore 单候选退化为 0
+    assert _zscore([0.5]) == [0.0]
+    # _repetition 用 distinct-2：全重复串 ≈0，全异串 =1
+    assert _repetition('ababab') < _repetition('abcdef'), "distinct-2 多样性判定反了"
+    z = _zscore([1.0, 2.0, 3.0, 100.0])
+    assert abs(z[0] + 0.5) < 0.2, "z-score 标准化异常"  # 1.0 应约 -0.5σ 量级
+    assert z[-1] > z[0], "z-score 未保持大小序"
