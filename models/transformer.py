@@ -23,13 +23,17 @@ class CharMergeLayer(nn.Module):
     - 残差连接保证字符信息不丢。
     """
 
-    def __init__(self, dim: int, kernel_size: int = 3, dropout: float = 0.0):
+    def __init__(self, dim: int, kernel_size: int = 3, dropout: float = 0.0,
+                 gate_bias_init: float = -1.0):
         super().__init__()
         self.dim = dim
         # 因果卷积：仅左侧填充（kernel-1 个零），位置 t 只看 t-(k-1)..t，不窥未来
         self.pad = kernel_size - 1
         self.conv = nn.Conv1d(dim, dim, kernel_size, groups=dim, bias=False)
         self.gate = nn.Linear(dim, dim, bias=True)
+        # 门控偏置初始化：bias=-1 → sigmoid(-1)≈0.27，初期偏向字符表示（少融合），
+        # 避免早期训练方差过大；随训练推进 gate 自适应调整融合比例。
+        nn.init.constant_(self.gate.bias, gate_bias_init)
         self.norm = RMSNorm(dim)
         self.drop = nn.Dropout(dropout)
 
@@ -83,10 +87,11 @@ class MemoryBank(nn.Module):
         self.decompress = nn.Linear(comp_dim, dim, bias=False)
         # 写入门控：对当前表示打分，决定写入各槽的权重
         self.write_gate = nn.Linear(dim, num_slots, bias=True)
-        # 可学习遗忘门控（阶段4）：每步先按 forget_gate 衰减旧记忆再写入新信息，
-        # forget_gate≈1 保留历史记忆、≈0 完全遗忘当前记忆 —— 模型自决"记忆保留多久"。
+        # 阶段8.9：可学习遗忘门控升级为 per-slot——每个槽独立衰减率，
+        # 模型自决"哪些槽保留历史、哪些槽快速更新"（如高频槽快忘、关键槽长存）。
+        # 原标量 forget_gate 无法区分槽间差异，所有槽统一衰减。
         if forget:
-            self.forget_gate = nn.Parameter(torch.zeros(1))
+            self.forget_gate = nn.Parameter(torch.zeros(num_slots))  # (M,)
         self.drop = nn.Dropout(dropout)
         # 记忆槽的 K/V 投影（解压后表示 → 注意力各头 K/V 维度）
         self.mem_k = nn.Linear(dim, self.head_dim, bias=False)
@@ -120,7 +125,7 @@ class MemoryBank(nn.Module):
             if self.slots.device != x.device:
                 x = x.to(self.slots.device)
             self.reset(B, self.slots.device, x.dtype)
-        # 可学习遗忘：先按 forget_gate（sigmoid→(0,1)）衰减旧记忆，再叠加新信息。
+        # 可学习遗忘（per-slot）：先按 forget_gate sigmoid→(0,1)^M 衰减各槽旧记忆，再叠加新信息。
         # 运行时开关 _forget_active=False 时跳过（恒等保留，向后兼容）。
         if self.forget_enabled and getattr(self, '_forget_active', True):
             f = torch.sigmoid(self.forget_gate)
@@ -707,26 +712,28 @@ class LinearAttention(nn.Module):
                 memory_kv=None):
         # 简化实现：全量因果线性注意力（增量解码复用 past_kv 累积状态 S）。
         # past_kv 可来自 attn_kv 元组第 3 位（混合 mixer 时）：(k, v, linear_S)。
+        # 阶段8.9 向量化：用 cumsum 替代 for-t 循环，消除 O(T) Python 步。
         q, k, v = self.project_and_norm(x, start_pos)
         B, H, T, D = q.shape
         qf = self._feat(q)  # (B,H,T,D)
         kf = self._feat(k)  # (B,H,T,D)
-        out = torch.zeros_like(q)
-        S = None
+        # 外积: (B,H,T,D,D)
+        kv_all = torch.einsum('bhtd,bhte->bhtde', kf, v)
+        # 累积状态: S_t = Σ_{i=0}^{t} kv_i —— cumsum 沿 T 维
+        S_all = torch.cumsum(kv_all, dim=2)  # (B,H,T,D,D)
+        # 若有历史状态，偏移累积和
+        S_prev = None
         if past_kv is not None and len(past_kv) >= 3 and past_kv[2] is not None:
-            S = past_kv[2]  # 线性注意力累积状态 (B,H,D,D)
-        for t in range(T):
-            kt = kf[:, :, t, :]          # (B,H,D)
-            vt = v[:, :, t, :]           # (B,H,D)
-            kv = torch.einsum('bhd,bhe->bhde', kt, vt)  # (B,H,D,D)
-            S = kv if S is None else S + kv
-            num = torch.einsum('bhd,bhde->bhe', qf[:, :, t, :], S)  # (B,H,D)
-            den = torch.einsum('bhd,bhd->bh', qf[:, :, t, :], kt)  # (B,H)
-            den = den.unsqueeze(-1).clamp_min(1e-6)
-            out[:, :, t, :] = num / den
-        out = out.transpose(1, 2).reshape(B, T, H * D)
-        # 返回 (k, v, S) 元组，供混合 mixer 拼回 attn_kv 第 3 位
-        present = (k, v, S) if use_cache else None
+            S_prev = past_kv[2]  # (B,H,D,D)
+            S_all = S_all + S_prev.unsqueeze(2)  # 广播加到每个位置
+        # 分子: q·S（每个位置查对应累积状态）
+        num = torch.einsum('bhtd,bhtde->bhte', qf, S_all)  # (B,H,T,D)
+        # 分母: q·k（每个位置仅自身特征，不依赖历史）
+        den = torch.einsum('bhtd,bhtd->bht', qf, kf).unsqueeze(-1).clamp_min(1e-6)  # (B,H,T,1)
+        out = (num / den).transpose(1, 2).reshape(B, T, H * D)
+        # present: 末尾累积状态供增量解码
+        S_final = S_all[:, :, -1, :, :] if S_prev is None else S_all[:, :, -1, :, :]
+        present = (k, v, S_final) if use_cache else None
         return self.proj(out), present
 
 
@@ -1205,7 +1212,7 @@ class TransformerModel(nn.Module):
                            learn_window=learn_window, window_base=window_base)
         self.blocks = nn.ModuleList([
             TransformerBlock(embedding_dim, num_heads, hidden_dim, block_type=bt,
-                             dropout=dropout, max_seq_length=max_seq_length,
+                             dropout=dropout, max_seq_length=rope_max_len,
                              ssm_kwargs=ssm_kwargs, attn_kwargs=attn_kwargs,
                              residual_gate=residual_gate, hybrid_gate=hybrid_gate,
                              hybrid_single_gate=hybrid_single_gate,
@@ -1351,7 +1358,7 @@ class TransformerModel(nn.Module):
             self.output_head.weight = self.embedding.weight
         return module
 
-    def forward(self, src: torch.Tensor, src_mask: Optional[torch.Tensor] = None, past_key_values: Optional[List[Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]]]] = None, use_cache: bool = False, intuition: Optional[torch.Tensor] = None, igmcg_force_off: bool = False) -> Tuple[torch.Tensor, Optional[List[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]]]]:
+    def forward(self, src: torch.Tensor, past_key_values: Optional[List[Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]]]] = None, use_cache: bool = False, intuition: Optional[torch.Tensor] = None, igmcg_force_off: bool = False) -> Tuple[torch.Tensor, Optional[List[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]]]]:
         # src: (batch, seq_len)；RoPE 在注意力内部按位置旋转，无需外部 PE
         # 阶段8.7 IGMCG 2.0：intuition 为 (B,7) 连续直觉向量（训练期可作为条件输入，推理期可选）；
         # igmcg_force_off 用于训练期 IGMCG-SEL（随机整批关闭 IGMCG 引导，让模型学"何时用"）。
@@ -1433,20 +1440,20 @@ class TransformerModel(nn.Module):
             # 全量/训练路径（非增量）：src 含完整上下文，直接 logprob_matrix(src)。
             # 增量解码路径（use_cache 且 past 非空，即 generate 逐 token 喂入）：src 仅是新 token。
             # 阶段8.8：改用滚动增量查表 logprob_orders_incremental——仅就"新 token 各位置"按滚动
-            # 上下文(末 2 token)查表，不重建整段 (2+T) 上下文 → 每步 O(T) 而非 O(T^2)，长生成显著提速。
-            # 旧写法每步对完整 (2+T) ctx 调 logprob_orders_matrix，生成长度 T 时累计 O(T^2)。
-            # 滚动缓冲 _ngram_last_ids（末 2 token）仅在增量分支维护，全量分支不写实例状态，
+            # 上下文(末 ctx_len token，ctx_len=max_order-1)查表，不重建整段 ctx → 每步 O(T)。
+            # 滚动缓冲 _ngram_last_ids 仅在增量分支维护，全量分支不写实例状态，
             # 避免两次独立调用间相互污染（保证全量/cache 单调用 parity）。
+            ctx_len = max(1, getattr(self.ngram_model, 'max_order', 10) - 1)
             if use_cache and past_key_values is not None:
                 if getattr(self, '_ngram_last_ids', None) is None or \
                         self._ngram_last_ids.shape[0] != src.shape[0]:
                     pad = self.ngram_model.vocab.pad_idx \
                         if hasattr(self.ngram_model.vocab, 'pad_idx') else 0
-                    self._ngram_last_ids = src.new_full((src.shape[0], 2), pad)
+                    self._ngram_last_ids = src.new_full((src.shape[0], ctx_len), pad)
                 ngram_ord = self.ngram_model.logprob_orders_incremental(
                     self._ngram_last_ids, src, x.device).detach()          # (B,T,V,K) 仅新位置
-                # 更新滚动缓冲（保留末 2 token），供下一步增量解码
-                self._ngram_last_ids = torch.cat([self._ngram_last_ids, src], dim=1)[:, -2:]
+                # 更新滚动缓冲（保留末 ctx_len token），供下一步增量解码
+                self._ngram_last_ids = torch.cat([self._ngram_last_ids, src], dim=1)[:, -ctx_len:]
             else:
                 ngram_ord = self.ngram_model.logprob_orders_matrix(src, x.device).detach()  # (B,T,V,K)
             # 阶段8.7：可学阶混合——softmax(order_logits) 对 K 阶 logprob 加权混合（模型自选各阶占比）。
