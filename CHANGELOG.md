@@ -9,6 +9,16 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
+## `5747ed1`（本地，基于 `21aaf4b`）
+
+- fix: **第四轮子代理审查修复**（3 子代理并行审查 + 证据锚定验证）：
+  - BUG-7: `_generate_candidates_batch` 未重置 `_ngram_last_ids`，多次调用 `generate_igmcg` 时前一序列的 n-gram 上下文污染当前生成。修复：初始 forward 前 `model._ngram_last_ids = None`。
+  - BUG-8: `train.py` 互斥校验 `enhancement_off_prob > 0` 返回 bool，`bool is not None` 恒 True → 任何单一策略配置都误报冲突。修复：改为 `sum([schedule is not None, off_prob > 0, curriculum is not None])`。
+  - BUG-9: `train.py` resume 时 `optimizer.load_state_dict` 直接赋值 CPU 张量，首步 `optimizer.step()` 在 CUDA/DML 上崩溃。修复：加载后遍历 state 迁移至 `device`。
+  - BUG-10: `save_checkpoint` 未保存 GradScaler state，fp16 resume 丢失已调整的 scale factor 导致梯度溢出。修复：新增 `scaler` 参数 + resume 后恢复。
+- test: 新增 2 个回归测试（`test_ngram_last_ids_reset_across_candidates` + `test_enhancement_mutex_check`）。
+- 验证：pytest 98 passed + `py_compile` 全过。
+
 ## `81c9949`（已推送，基于 `9d62be6`）
 
 - fix: **KV 缓存 present 修复（BUG-6）**——原第三轮修复将 `present=(k,v)` 改为 `present=(k_token,v_token)`（仅存原始 token KV），意图避免 memory 进入缓存。但 `k_token` 在 past_kv 拼接前赋值，导致 `present` 只存当前 token 的 KV（形状始终 `[B,H,1,D]`），下一步的 `past_kv` 丢失全部历史 → 增量路径第 3 步起注意力仅看当前 token，全量/增量 max_diff≈0.09。修复：`present=(k,v)` 移至 past_kv 拼接之后、memory 拼接之前，存储累积的 token KV（不含 memory）。
