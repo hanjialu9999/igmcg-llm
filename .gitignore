@@ -32,18 +32,13 @@ test/
 *.pth
 *.ckpt
 checkpoints/
-checkpoints_smoke_4k/
-checkpoints_ngram_smoke/
+checkpoints_*/
 best_finetuned_model.pt
-
-# 8.1/8.2 机制冒烟配置（本地验证用，非主线）
-configs/config_ngram_smoke*.yaml
-configs/config_complexity_budget_smoke.yaml
-checkpoints_ngram_smoke/
 
 # Logs
 *.log
 logs/
+logs_*/
 logs_smoke_8k/
 
 # 冒烟/实验对比结果（生成质量仅验证机制，不入库）

@@ -128,7 +128,7 @@ class MemoryBank(nn.Module):
         # 可学习遗忘（per-slot）：先按 forget_gate sigmoid→(0,1)^M 衰减各槽旧记忆，再叠加新信息。
         # 运行时开关 _forget_active=False 时跳过（恒等保留，向后兼容）。
         if self.forget_enabled and getattr(self, '_forget_active', True):
-            f = torch.sigmoid(self.forget_gate)
+            f = torch.sigmoid(self.forget_gate).view(1, -1, 1)  # (1, M, 1) 广播到 (B, M, comp_dim)
             self.slots = f * self.slots
         # 压缩当前表示
         comp = self.compress(x)  # (B, T, comp_dim)
@@ -682,7 +682,7 @@ class LinearAttention(nn.Module):
     """
 
     def __init__(self, dim: int, num_heads: int, qk_norm: bool = True, attn_temp: bool = True,
-                 max_seq_length: int = 64, feature: str = 'elu'):
+                 max_seq_length: int = 64, feature: str = 'relu'):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
@@ -894,8 +894,8 @@ class MambaSSM(nn.Module):
         如果提供 past_state (B, d_inner, d_state)，将其作为 h_{-1} 用于计算 h_0 = a_0 * past_state + b_0。
         """
         L = a.shape[1]
-        A = a.clone()
-        B = b.clone()
+        A = a  # 无需 clone：循环中 A,B 通过新张量赋值，不修改原始 a,b
+        B = b
         
         # Standard parallel prefix scan (Hillis-Steele) assuming h_0 = 0
         offset = 1
@@ -956,19 +956,23 @@ class TransformerBlock(nn.Module):
                 # 阶段7：纯线性注意力（O(N) token mixer）
                 self.attn = LinearAttention(dim, num_heads, max_seq_length=max_seq_length,
                                            qk_norm=attn_kwargs.get('qk_norm', True),
-                                           attn_temp=attn_kwargs.get('attn_temp', True))
+                                           attn_temp=attn_kwargs.get('attn_temp', True),
+                                           feature=attn_kwargs.get('linear_attn_feature', 'relu'))
                 self.linear_attn = None
             elif mixer == 'hybrid':
                 # 阶段7：attn + 线性注意力 两路并行，可学习 mixer_gate 自选择用多少
+                attn_only = {k: v for k, v in attn_kwargs.items() if k != 'linear_attn_feature'}
                 self.attn = SlidingWindowCausalSelfAttention(
-                    dim, num_heads, max_seq_length=max_seq_length, **attn_kwargs)
+                    dim, num_heads, max_seq_length=max_seq_length, **attn_only)
                 self.linear_attn = LinearAttention(dim, num_heads, max_seq_length=max_seq_length,
-                                                  qk_norm=attn_kwargs.get('qk_norm', True),
-                                                  attn_temp=attn_kwargs.get('attn_temp', True))
+                                                   qk_norm=attn_kwargs.get('qk_norm', True),
+                                                   attn_temp=attn_kwargs.get('attn_temp', True),
+                                                   feature=attn_kwargs.get('linear_attn_feature', 'relu'))
                 self.mixer_gate = nn.Parameter(torch.ones(1))  # init 1.0 → 偏 attn
             else:
+                attn_only = {k: v for k, v in attn_kwargs.items() if k != 'linear_attn_feature'}
                 self.attn = SlidingWindowCausalSelfAttention(
-                    dim, num_heads, max_seq_length=max_seq_length, **attn_kwargs)
+                    dim, num_heads, max_seq_length=max_seq_length, **attn_only)
                 self.linear_attn = None
         if block_type in ('ssm', 'hybrid'):
             self.ssm = MambaSSM(dim, **ssm_kwargs)
@@ -1155,6 +1159,7 @@ class TransformerModel(nn.Module):
                     rope_learnable: bool = False, alibi: bool = False,
                    layer_skip: bool = False, learn_window: bool = False, window_base: int = 64,
                    mixer: str = 'attn',
+                   linear_attn_feature: str = 'relu',
                    ngram_fusion: bool = False, ngram_model=None,
                    ngram_gate_scale: float = 1.0, igmcg: bool = False):
         super(TransformerModel, self).__init__()
@@ -1224,7 +1229,8 @@ class TransformerModel(nn.Module):
                            rope_learnable=rope_learnable, alibi=alibi,
                            retrieval_full=memory_retrieval_full,
                            retrieval_topk=memory_retrieval_topk,
-                           learn_window=learn_window, window_base=window_base)
+                           learn_window=learn_window, window_base=window_base,
+                           linear_attn_feature=linear_attn_feature)
         self.blocks = nn.ModuleList([
             TransformerBlock(embedding_dim, num_heads, hidden_dim, block_type=bt,
                              dropout=dropout, max_seq_length=rope_max_len,

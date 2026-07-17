@@ -171,8 +171,8 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
                     leave=True) if (HAS_TQDM and show_progress) else None
 
     for batch_idx, batch in enumerate(progress if progress is not None else dataloader):
-        input_ids = batch['input_ids'].to(device)
-        target_ids = batch['target_ids'].to(device)
+        input_ids = batch['input_ids'].to(device, non_blocking=True)
+        target_ids = batch['target_ids'].to(device, non_blocking=True)
 
         # 交替/分段增强训练：
         #  - enhancement_schedule（分段，按开关粒度）：按 batch_idx 循环取各分段的增强掩码（dict）。
@@ -528,13 +528,13 @@ def main(config_path='configs/pretrain.yaml', resume=False):
     #  - enhancement_schedule：分段掩码列表（dict），按 batch 循环切换；缺省键补 True（恒开）。
     #  - enhancement_off_prob：整体随机关闭概率（旧式交替，与 schedule 互斥，schedule 优先）。
     enhancement_schedule = config['training'].get('enhancement_schedule')
+    enhancement_off_prob = config['training'].get('enhancement_off_prob', 0.0)
     if enhancement_schedule is not None:
         _full_keys = ["qk_norm", "attn_temp", "residual_gate", "hybrid_gate"]
         enhancement_schedule = [{**{k: True for k in _full_keys}, **m}
                                 for m in enhancement_schedule]
         print(f"  Enhancement schedule: {len(enhancement_schedule)} 段分段（按开关粒度交替）")
     else:
-        enhancement_off_prob = config['training'].get('enhancement_off_prob', 0.0)
         if enhancement_off_prob > 0:
             print(f"  Enhancement off-prob: {enhancement_off_prob}（整体随机交替）")
     # 课程式退火（阶段8.5）：替代固定 SEL。早期全增强，后期按进度随机关闭指定增强。
