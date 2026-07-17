@@ -317,7 +317,18 @@ def main(config_path='configs/pretrain.yaml', resume=False):
     
     # Create model
     print("Creating model...")
-    model = build_model(config, device=device)
+    # 阶段8.1：n-gram 神经融合——用训练语料（与模型训练同一份分布）构建统计 n-gram 缓冲，
+    # 传入 build_model 供可学习门控融合（缺省关；开启时 ngram_fusion=True 且 ngram_corpus 指向语料）。
+    _ngram_model = None
+    if config['model'].get('ngram_fusion', False):
+        try:
+            from scripts.generate import NGramModel
+            _ngram_corpus = config['model'].get('ngram_corpus', 'data/pretrain_corpus/merged.txt')
+            _ngram_model = NGramModel(vocab, _ngram_corpus, max_order=3, smoothing=1.0)
+            print(f"[n-gram 融合] 已从 {_ngram_corpus} 构建统计 n-gram 缓冲（与训练分布对齐）")
+        except Exception as e:
+            print(f"[n-gram 融合] 构建失败，已跳过：{e}")
+    model = build_model(config, device=device, ngram_model=_ngram_model)
 
     # 可选：torch.compile 加速（仅 CPU/CUDA 支持；与梯度检查点易冲突，自动关闭后者）
     if config['training'].get('compile', False) and hasattr(torch, 'compile') \

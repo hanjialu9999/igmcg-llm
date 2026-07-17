@@ -22,10 +22,13 @@ def load_config(config_path: str = 'configs/pretrain.yaml') -> Dict[str, Any]:
         return yaml.safe_load(f)
 
 
-def build_model(config: Dict[str, Any], device: Optional[torch.device] = None) -> TransformerModel:
+def build_model(config: Dict[str, Any], device: Optional[torch.device] = None,
+                ngram_model=None) -> TransformerModel:
     """Build a TransformerModel from a loaded config dict (config['model']).
 
      兼容混合架构：读取 layer_plan / ssm_* / attn_window / attn_rel_bias 等可选字段。
+     ngram_model：已构建的统计 NGramModel 实例（阶段8.1 神经融合用），由调用方传入，
+     避免在 config_loader 内 import scripts.generate（与 transformer 循环依赖）；默认 None。
     """
     mc = config['model']
     # 阶段8：统一记忆预算——用单一 memory_budget(0,1] 推导 window/记忆槽数/检索 topk，
@@ -90,6 +93,9 @@ def build_model(config: Dict[str, Any], device: Optional[torch.device] = None) -
         memory_forget=mc.get('memory_forget', False),
         memory_retrieval_full=mc.get('memory_retrieval_full', False),
         memory_retrieval_topk=mc.get('memory_retrieval_topk', 32),
+        # 阶段8.1：n-gram 神经融合（默认关，向后兼容；开启需传入 ngram_model 实例）
+        ngram_fusion=mc.get('ngram_fusion', False),
+        ngram_model=ngram_model,
     )
     # 机制组合校验：mixer='hybrid' 仅在 block_type='attn' 的层真正融合线性注意力；
     # 若 layer_plan 含 'hybrid'（SSM×注意力混合块），该块不会调用 linear_attn/mixer_gate，
