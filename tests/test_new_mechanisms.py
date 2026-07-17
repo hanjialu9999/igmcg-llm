@@ -424,6 +424,38 @@ def test_ngram_fusion_cache_parity():
     assert diff < 1e-4, f"ngram 融合训练/推理不一致：max_diff={diff}"
 
 
+def test_ngram_fusion_incremental_matches_full():
+    """B1 回归：generate 逐 token 喂入（src 仅新 token）时，n-gram 融合必须仍用正确上下文，
+    末步 logits 应≈全量前向末位 logits（否则退化成 unigram 先验，门控白给）。"""
+    v, ng = _small_ngram()
+    V = len(v)
+    m = _small(vocab_size=V, ngram_fusion=True, ngram_model=ng)
+    m.eval()
+    ids = torch.randint(0, V, (1, 12))
+    with torch.no_grad():
+        full = m(ids, use_cache=False)            # 全量前向（含正确上下文）
+        # 模拟 generate 逐 token 增量解码
+        logits, past = m(ids[:, :1], past_key_values=None, use_cache=True)
+        for t in range(1, 12):
+            logits, past = m(ids[:, t:t + 1], past_key_values=past, use_cache=True)
+    # 末步 logits 应等于全量前向末位
+    diff = (logits[0, -1] - full[0, -1]).abs().max().item()
+    assert diff < 1e-4, f"增量解码 n-gram 上下文错误（退化 unigram）：max_diff={diff}"
+
+
+def test_ngram_gate_scale_forwarded_by_build_model():
+    """M1 回归：build_model 必须把 config 的 ngram_gate_scale 透传（否则 YAML 配置静默失效）。"""
+    from models.config_loader import build_model
+    v, ng = _small_ngram()
+    V = len(v)
+    cfg = {'model': {'vocab_size': V, 'embedding_dim': 64, 'num_heads': 4,
+                     'num_layers': 2, 'hidden_dim': 128, 'max_seq_length': 32,
+                     'ngram_fusion': True, 'ngram_gate_scale': 0.37}}
+    m = build_model(cfg, device='cpu', ngram_model=ng)
+    assert m.ngram_fusion_enabled, "build_model 未开启 ngram_fusion"
+    assert abs(m.ngram_gate_scale - 0.37) < 1e-6, f"ngram_gate_scale 未透传：{m.ngram_gate_scale}"
+
+
 def test_ngram_fusion_gate_scale_zero():
     """gate_scale=0 应完全拔掉 n-gram 贡献（输出≈纯主干），验证用户可控总闸。"""
     v, ng = _small_ngram()
