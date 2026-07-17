@@ -721,34 +721,36 @@ class LinearAttention(nn.Module):
 
     def forward(self, x: torch.Tensor, past_kv=None, use_cache: bool = False, start_pos: int = 0,
                 memory_kv=None):
-        # 简化实现：全量因果线性注意力（增量解码复用 past_kv 累积状态 S）。
-        # past_kv 可来自 attn_kv 元组第 3 位（混合 mixer 时）：(k, v, linear_S)。
-        # 阶段8.10 RNN-style：逐位置维护累积状态 S_t (D,D) + z_t (D)，
-        # 内存从 O(T·D²) 降至 O(D²)，避免长序列时 kv_all/S_all 张量过大。
+        # 线性注意力：全量路径用 cumsum 向量化（O(T·D²) 内存，T≤64 安全），
+        # 增量解码路径用 RNN 逐 token 累积（O(D²) 内存）。
         q, k, v = self.project_and_norm(x, start_pos)
         B, H, T, D = q.shape
-        qf = self._feat(q)  # (B,H,T,D)
-        kf = self._feat(k)  # (B,H,T,D)
-        # 初始化累积状态：若有历史 past_kv，从 S_prev/z_prev 恢复
-        S = torch.zeros(B, H, D, D, device=x.device, dtype=x.dtype)
-        z = torch.zeros(B, H, D, device=x.device, dtype=x.dtype)
-        if past_kv is not None and len(past_kv) >= 3 and past_kv[2] is not None:
-            S = past_kv[2]  # (B,H,D,D)
-            if len(past_kv) >= 4 and past_kv[3] is not None:
-                z = past_kv[3]  # (B,H,D)
-        # 逐位置累积并计算输出
-        outs = []
-        for t in range(T):
-            kf_t = kf[:, :, t, :]    # (B,H,D)
-            v_t = v[:, :, t, :]      # (B,H,D)
-            S = S + torch.einsum('bhd,bhe->bhde', kf_t, v_t)  # O(D²) 更新
-            z = z + kf_t                                           # O(D) 更新
-            num_t = torch.einsum('bhd,bhde->bhe', qf[:, :, t, :], S)  # (B,H,D)
-            den_t = torch.einsum('bhd,bhd->bh', qf[:, :, t, :], z).unsqueeze(-1).clamp_min(1e-6)
-            outs.append(num_t / den_t)
-        out = torch.stack(outs, dim=2).transpose(1, 2).reshape(B, T, H * D)  # (B,T,H*D)
-        # present: 末尾累积状态供增量解码（S_final + z_final）
-        present = (k, v, S, z) if use_cache else None
+        qf = self._feat(q)
+        kf = self._feat(k)
+
+        if use_cache and past_kv is not None and len(past_kv) >= 4 and past_kv[2] is not None:
+            # 增量解码：RNN 逐 token（T=1）
+            S = past_kv[2]
+            z = past_kv[3]
+            kf_t = kf[:, :, 0, :]
+            v_t = v[:, :, 0, :]
+            S = S + torch.einsum('bhd,bhe->bhde', kf_t, v_t)
+            z = z + kf_t
+            num_t = torch.einsum('bhd,bhde->bhe', qf[:, :, 0, :], S)
+            den_t = torch.einsum('bhd,bhd->bh', qf[:, :, 0, :], z).unsqueeze(-1).clamp_min(1e-6)
+            out = self.proj((num_t / den_t).transpose(1, 2).reshape(B, 1, H * D))
+            present = (k, v, S, z)
+            return out, present
+
+        # 全量路径：cumsum 向量化
+        kv_all = torch.einsum('bhtd,bhte->bhtde', kf, v)  # (B,H,T,D,D)
+        S_all = torch.cumsum(kv_all, dim=2)                 # (B,H,T,D,D)
+        z_all = torch.cumsum(kf, dim=2)                     # (B,H,T,D)
+        num = torch.einsum('bhtd,bhtde->bhte', qf, S_all)  # (B,H,T,D)
+        den = torch.einsum('bhtd,bhtd->bht', qf, z_all).unsqueeze(-1).clamp_min(1e-6)
+        out = num / den                                     # (B,H,T,D)
+        out = out.transpose(1, 2).reshape(B, T, H * D)
+        present = (k, v, S_all[:, :, -1], z_all[:, :, -1]) if use_cache else None
         return self.proj(out), present
 
 
