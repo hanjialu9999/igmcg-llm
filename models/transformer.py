@@ -1147,6 +1147,8 @@ class TransformerModel(nn.Module):
         self.ngram_gate_scale = ngram_gate_scale
         if self.ngram_fusion_enabled:
             self.ngram_gate = nn.Linear(embedding_dim, 1)
+        # 增量解码 n-gram 上下文滚动缓冲（末 2 token），由 forward 维护；全量/训练时为 None。
+        self._ngram_last_ids = None
         # 阶段8.2：推理期静态剪枝标记（prune_layers 填充；默认空=不剪）
         self._pruned_layers = set()
         self.layer_plan = _parse_layer_plan(layer_plan, num_layers)
@@ -1391,7 +1393,9 @@ class TransformerModel(nn.Module):
 
         for i, block in enumerate(self.blocks):
             # 阶段8.2：推理期静态剪枝——被 prune_layers 标记的层直接跳过（直通，无计算）。
-            if getattr(self, '_pruned_layers', None) and i in self._pruned_layers:
+            # 仅推理模式生效；训练模式（self.training）下忽略剪枝，避免静态剪枝状态
+            # 残留到训练/验证造成静默质量退化（prune_layers 是持久标记，非自动重置）。
+            if (not self.training) and getattr(self, '_pruned_layers', None) and i in self._pruned_layers:
                 presents.append(past_key_values[i] if past_key_values is not None else None)
                 continue
             ssm_past_state = ssm_states[i] if use_cache else None
@@ -1405,7 +1409,25 @@ class TransformerModel(nn.Module):
         # g_t=sigmoid(h_t·W_g) 逐位置自决多信 n-gram，且随 use_cache 增量解码逐 token 计算也一致
         # （前向每步传入当前序列，logprob_matrix 按位置上下文查表，与全量路径共享同一张表）。
         if self.ngram_fusion_enabled and getattr(self, '_ngram_fusion_active', True):
-            ngram_vec = self.ngram_model.logprob_matrix(src, x.device).detach()  # (B,T,V)
+            # 阶段8.1 n-gram 神经融合：z_neural + g_t·ngram_vec（g_t 逐位置可学门控）。
+            # 全量/训练路径（非增量）：src 含完整上下文，直接 logprob_matrix(src)。
+            # 增量解码路径（use_cache 且 past 非空，即 generate 逐 token 喂入）：src 仅是新 token，
+            # 须用滚动缓冲 _ngram_last_ids（末 2 token）拼出 (前2, 新) 序列再查表，否则退化成
+            # unigram 先验（门控白给）。缓冲仅在增量分支维护，全量分支不写实例状态，
+            # 避免两次独立调用间相互污染（保证全量/cache 单调用 parity）。
+            if use_cache and past_key_values is not None:
+                if getattr(self, '_ngram_last_ids', None) is None or \
+                        self._ngram_last_ids.shape[0] != src.shape[0]:
+                    pad = self.ngram_model.vocab.pad_idx \
+                        if hasattr(self.ngram_model.vocab, 'pad_idx') else 0
+                    self._ngram_last_ids = src.new_full((src.shape[0], 2), pad)
+                ctx = torch.cat([self._ngram_last_ids, src], dim=1)        # (B, 2+T) 含完整上下文
+                ngram_vec = self.ngram_model.logprob_matrix(ctx, x.device).detach()  # (B,2+T,V)
+                ngram_vec = ngram_vec[:, -src.shape[1]:]                    # 仅取新 token 位置 (B,T,V)
+                # 更新滚动缓冲（保留末 2 token），供下一步增量解码
+                self._ngram_last_ids = torch.cat([self._ngram_last_ids, src], dim=1)[:, -2:]
+            else:
+                ngram_vec = self.ngram_model.logprob_matrix(src, x.device).detach()  # (B,T,V)
             gate = torch.sigmoid(self.ngram_gate(x)) * self.ngram_gate_scale    # (B,T,1)
             z = self.output_head(x)                                            # (B,T,V) 主干 logits
             fused = z + gate * ngram_vec

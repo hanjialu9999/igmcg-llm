@@ -121,6 +121,16 @@ def load_model(model_path, vocab_path, device='cpu', quantize=False, compile_mod
     model = build_model({'model': model_config}, device=device, ngram_model=_ngram_model)
 
     model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+    # 架构型参数（hybrid_mix / ngram_gate）缺失/多余属静默质量风险，主动告警而非 strict 吞掉。
+    _arch_keys = ['hybrid_mix', 'ngram_gate']
+    _missing = [k for k in model.state_dict().keys() if any(ak in k for ak in _arch_keys)
+                and k not in checkpoint['model_state_dict']]
+    _extra = [k for k in checkpoint['model_state_dict'].keys() if any(ak in k for ak in _arch_keys)
+              and k not in model.state_dict()]
+    if _missing:
+        print(f"[warn] checkpoint 缺少架构参数（缺失将用随机初始化，结果可能异常）：{_missing}")
+    if _extra:
+        print(f"[warn] checkpoint 含模型未定义的架构参数（已忽略）：{_extra}")
     model.eval()
 
     if quantize and getattr(device, 'type', None) != 'dml':

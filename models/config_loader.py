@@ -98,6 +98,7 @@ def build_model(config: Dict[str, Any], device: Optional[torch.device] = None,
         # 阶段8.1：n-gram 神经融合（默认关，向后兼容；开启需传入 ngram_model 实例）
         ngram_fusion=mc.get('ngram_fusion', False),
         ngram_model=ngram_model,
+        ngram_gate_scale=float(mc.get('ngram_gate_scale', 1.0)),
     )
     # 机制组合校验：mixer='hybrid' 仅在 block_type='attn' 的层真正融合线性注意力；
     # 若 layer_plan 含 'hybrid'（SSM×注意力混合块），该块不会调用 linear_attn/mixer_gate，
