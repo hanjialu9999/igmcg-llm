@@ -1461,6 +1461,9 @@ class TransformerModel(nn.Module):
             eos_penalty: EOS 惩罚值，默认 -5.0（负值抑制 EOS，正值鼓励 EOS）
         """
         self.eval()
+        # 增量解码 n-gram 滚动缓冲在每次新序列开头清空，避免复用同一模型实例时
+        # 残留上一条序列的末 2 token 上下文（仅影响首个新位置，仍应清以防串味）。
+        self._ngram_last_ids = None
         generated = list(token_ids)
         max_seq_length = self.max_seq_length
         eos_token_id = eos_id

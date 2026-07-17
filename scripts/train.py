@@ -526,6 +526,13 @@ def main(config_path='configs/pretrain.yaml', resume=False):
     curriculum_anneal = config['training'].get('curriculum_anneal')
     if curriculum_anneal is not None:
         print(f"  Curriculum anneal: {curriculum_anneal}（课程退火替代 SEL 交替）")
+    # 互斥校验：enhancement_schedule / enhancement_off_prob / curriculum_anneal 三者只能其一，
+    # 否则后者静默覆盖前者（train_epoch 内优先级 schedule > off_prob > curriculum）。主动告警避免误配。
+    _n_set = sum(x is not None for x in (enhancement_schedule, enhancement_off_prob > 0, curriculum_anneal is not None))
+    if _n_set > 1:
+        print("[warn] 训练增强策略配置冲突：enhancement_schedule / enhancement_off_prob / "
+              "curriculum_anneal 同时设置，仅按优先级（schedule > off_prob > curriculum）生效其一，"
+              "其余被忽略。建议只保留一个。")
     total_steps_all = total_batches * config['training']['epochs']
 
     # Training loop

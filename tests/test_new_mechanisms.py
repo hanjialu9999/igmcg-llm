@@ -570,6 +570,46 @@ def test_prune_layers_drops_blocks_and_changes_forward():
     assert torch.allclose(again, pruned_out), "再次剪枝应得一致输出"
 
 
+def test_prune_layers_applies_in_incremental_decode():
+    """M-A1 回归：剪枝须在实际推理路径（eval + use_cache 增量解码）生效，否则 layer_skip 训练白做。
+    剪枝后做逐 token 增量解码，确认输出与未剪枝不同（跳过层真的被移除）。"""
+    m = _small(vocab_size=200, layer_skip=True)
+    m.eval()
+    with torch.no_grad():
+        for i, blk in enumerate(m.blocks):
+            blk.skip_gate.fill_(50.0 if i % 2 == 0 else -50.0)
+    pruned = m.prune_layers(threshold=0.5)
+    assert pruned, "应至少剪掉一层"
+    ids = torch.randint(0, 200, (1, 12))
+    with torch.no_grad():
+        # 增量解码（eval 模式，触发 not self.training 守卫）
+        logits, past = m(ids[:, :1], past_key_values=None, use_cache=True)
+        for t in range(1, 12):
+            logits, past = m(ids[:, t:t + 1], past_key_values=past, use_cache=True)
+        pruned_last = logits[0, -1]
+        m.prune_layers(threshold=0.0)  # 取消剪枝
+        logits2, past2 = m(ids[:, :1], past_key_values=None, use_cache=True)
+        for t in range(1, 12):
+            logits2, past2 = m(ids[:, t:t + 1], past_key_values=past2, use_cache=True)
+        full_last = logits2[0, -1]
+    assert not torch.allclose(pruned_last, full_last), "剪枝未在增量推理路径生效（layer_skip 训练白做）"
+
+
+def test_ngram_buffer_reset_between_generate_calls():
+    """C2 回归：同一模型实例重复 generate 同 prompt 须得完全一致结果（证明_start_清空
+    _ngram_last_ids，上一条序列末 2 token 不串味到新序列；增量分支的滚动缓冲跨调用不污染）。"""
+    v, ng = _small_ngram()
+    V = len(v)
+    m = _small(vocab_size=V, ngram_fusion=True, ngram_model=ng)
+    m.eval()
+    torch.manual_seed(0)
+    g1 = m.generate([1, 2, 3], max_length=6, device='cpu')
+    torch.manual_seed(0)
+    g2 = m.generate([1, 2, 3], max_length=6, device='cpu')
+    assert isinstance(g1, list) and isinstance(g2, list), "generate 应返回 token 列表"
+    assert g1 == g2, "连续两次 generate 同 prompt 结果应完全一致（缓冲跨调用污染）"
+
+
 def test_complexity_budget_backward_flows():
     """hinge 预算约束下反向仍可回传（skip_gate 能收到超预算梯度），不报错。"""
     import torch.nn.functional as F
