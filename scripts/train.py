@@ -114,7 +114,8 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
                  lr_schedule='cosine', eta_min=0.0, wsd_decay_frac=0.1,
                  show_progress=True, amp_device=None, enhancement_off_prob=0.0,
                  enhancement_schedule=None, complexity_lambda=0.0,
-                 complexity_budget=None):
+                 complexity_budget=None,                  curriculum_anneal=None,
+                 global_step=0, curriculum_total_steps=1):
     """Train one epoch with warmup, gradient accumulation and mixed precision.
 
     - warmup_steps: 预热步数。若 <1 则按"占整个 epoch 有效步数的比例"解释（如 0.1=前 10% 步预热）。
@@ -126,6 +127,15 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
     loss_count = 0
     t_start = time.time()
     tokens_total = 0
+
+    # 课程式退火（阶段8.5）：早期全增强学表示，后期按比例随机关闭指定增强（替代固定 SEL）。
+    # 仅当未设 enhancement_schedule / enhancement_off_prob 时生效，向后兼容。
+    cur_warmup = cur_keys = None
+    cur_off_max = 0.0
+    if curriculum_anneal is not None and enhancement_schedule is None and enhancement_off_prob <= 0.0:
+        cur_warmup = float(curriculum_anneal.get('warmup_frac', 0.3))
+        cur_off_max = float(curriculum_anneal.get('off_prob_max', 0.5))
+        cur_keys = curriculum_anneal.get('keys', None)  # None=全部增强
 
     total_steps = len(dataloader)
     total_eff = (total_steps + grad_accum_steps - 1) // grad_accum_steps
@@ -173,6 +183,18 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
             model.set_enhancements_active(enhancement_schedule[batch_idx % len(enhancement_schedule)])
         elif enhancement_off_prob > 0.0:
             model.set_enhancements_active(random.random() >= enhancement_off_prob)
+        elif cur_keys is not None or cur_warmup is not None:
+            # 课程退火：frac∈[0,1] 当前训练进度；warmup 内恒开，之后 off 概率线性升到 off_prob_max。
+            frac = (global_step + batch_idx) / max(1, curriculum_total_steps)
+            if frac < cur_warmup:
+                model.set_enhancements_active(True)
+            else:
+                p_off = cur_off_max * (frac - cur_warmup) / max(1e-6, 1.0 - cur_warmup)
+                if random.random() < p_off:
+                    model.set_enhancements_active(
+                        {k: False for k in cur_keys} if cur_keys else False)
+                else:
+                    model.set_enhancements_active(True)
 
         # Forward pass (optionally under autocast for mixed precision)
         if use_amp and amp_device is not None:
@@ -500,13 +522,19 @@ def main(config_path='configs/pretrain.yaml', resume=False):
         enhancement_off_prob = config['training'].get('enhancement_off_prob', 0.0)
         if enhancement_off_prob > 0:
             print(f"  Enhancement off-prob: {enhancement_off_prob}（整体随机交替）")
+    # 课程式退火（阶段8.5）：替代固定 SEL。早期全增强，后期按进度随机关闭指定增强。
+    curriculum_anneal = config['training'].get('curriculum_anneal')
+    if curriculum_anneal is not None:
+        print(f"  Curriculum anneal: {curriculum_anneal}（课程退火替代 SEL 交替）")
+    total_steps_all = total_batches * config['training']['epochs']
 
     # Training loop
     print("\n[Training] Starting training...")
     history = {'train_loss': [], 'best_epoch': 0}
     no_improve_epochs = 0
     patience = config['training'].get('early_stop_patience', 5)
-    
+    global_step = 0  # 跨 epoch 累计步数，供课程退火计算训练进度
+
     for epoch in range(start_epoch, config['training']['epochs'] + 1):
         train_loss = train_epoch(
             model, dataloader, optimizer, criterion, device, epoch,
@@ -526,7 +554,11 @@ def main(config_path='configs/pretrain.yaml', resume=False):
             enhancement_schedule=enhancement_schedule,
             complexity_lambda=float(config['training'].get('complexity_lambda', 0.0)),
             complexity_budget=config['training'].get('complexity_budget', None),
+            curriculum_anneal=curriculum_anneal,
+            global_step=global_step,
+            curriculum_total_steps=total_steps_all,
         )
+        global_step += total_batches
 
         history['train_loss'].append(train_loss)
         

@@ -5,6 +5,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from models.transformer import TransformerModel, MemoryBank
+from scripts.train import train_epoch
+from torch.utils.data import Dataset, DataLoader
+
+
+class _TinyDS(Dataset):
+    def __len__(self):
+        return 24
+
+    def __getitem__(self, i):
+        x = torch.randint(0, 200, (12,))
+        return {'input_ids': x, 'target_ids': x}
 
 
 def _small(**over):
@@ -653,3 +664,56 @@ def test_hybrid_single_gate_backward_flows():
     loss.backward()
     assert m.blocks[1].hybrid_mix.weight.grad is not None, "hybrid_mix 无梯度（门控不可学）"
     assert m.blocks[1].attn.qkv.weight.grad is not None, "attn 无梯度"
+
+
+# ---------------------------------------------------------------------------
+# 阶段8.5：课程式退火（替代固定 SEL 交替）
+# ---------------------------------------------------------------------------
+
+def _run_epoch(m, total_steps, curriculum_anneal, global_step=0):
+    return train_epoch(
+        m, DataLoader(_TinyDS(), batch_size=4),
+        torch.optim.AdamW(m.parameters()), torch.nn.CrossEntropyLoss(),
+        'cpu', 1, curriculum_anneal=curriculum_anneal,
+        global_step=global_step, curriculum_total_steps=total_steps)
+
+
+def test_curriculum_anneal_warmup_all_on():
+    """warmup 段内（frac<warmup_frac）课程退火恒全开，不关闭任何增强。"""
+    m = _small()
+    m.train()
+    calls = []
+    orig = m.set_enhancements_active
+    m.set_enhancements_active = lambda spec: calls.append(spec)
+    _run_epoch(m, total_steps=100, curriculum_anneal={'warmup_frac': 0.5, 'off_prob_max': 0.9})
+    assert all(c is True for c in calls), "warmup 段内课程退火应恒全开"
+    m.set_enhancements_active = orig
+
+
+def test_curriculum_anneal_late_turns_off():
+    """后期（frac>warmup）课程退火按进度随机关闭指定增强，且出现过 off。"""
+    torch.manual_seed(0)
+    m = _small()
+    m.train()
+    calls = []
+    orig = m.set_enhancements_active
+    m.set_enhancements_active = lambda spec: calls.append(spec)
+    for _ in range(4):
+        _run_epoch(m, total_steps=24,
+                   curriculum_anneal={'warmup_frac': 0.0, 'off_prob_max': 0.8,
+                                      'keys': ['attn_temp', 'residual_gate']})
+    off_calls = [c for c in calls if c is not True]
+    assert off_calls, "后期课程退火应出现过关闭增强"
+    for c in off_calls:
+        assert isinstance(c, dict) and c.get('attn_temp') is False and c.get('residual_gate') is False
+    m.set_enhancements_active = orig
+
+
+def test_curriculum_anneal_not_crash():
+    """课程退火训练冒烟：多 epoch 不崩、loss 有限。"""
+    torch.manual_seed(1)
+    m = _small()
+    m.train()
+    loss = _run_epoch(m, total_steps=72,
+                      curriculum_anneal={'warmup_frac': 0.3, 'off_prob_max': 0.5})
+    assert float(loss) == float(loss) and float(loss) > 0, "课程退火训练 loss 异常"
