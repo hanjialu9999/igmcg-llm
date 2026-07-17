@@ -9,6 +9,36 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
+## `81c9949`（已推送，基于 `9d62be6`）
+
+- fix: **KV 缓存 present 修复（BUG-6）**——原第三轮修复将 `present=(k,v)` 改为 `present=(k_token,v_token)`（仅存原始 token KV），意图避免 memory 进入缓存。但 `k_token` 在 past_kv 拼接前赋值，导致 `present` 只存当前 token 的 KV（形状始终 `[B,H,1,D]`），下一步的 `past_kv` 丢失全部历史 → 增量路径第 3 步起注意力仅看当前 token，全量/增量 max_diff≈0.09。修复：`present=(k,v)` 移至 past_kv 拼接之后、memory 拼接之前，存储累积的 token KV（不含 memory）。
+- fix: **MambaSSM D_init 还原**——`_init_weights` 中 `nn.init.ones_(self.D)` 后补充 `self.D.data.mul_(self.D_init)`，确保 D 按构造函数传入的 `d_init` 初始化而非固定 1.0。
+- docs: n-gram 滚动缓冲注释"末 2 token"→"末 ctx_len token"。
+- 验证：pytest 96 passed + generation pipeline 12 passed。
+
+## `9d62be6`（已推送，基于 `f5e8ba0`）
+
+- fix: **第三轮子代理审查修复**（用户架构分析逐条验证 + 三轮子代理审查结果）：
+  - M1: `_init_weights` 跳过 `char_merge.gate` bias 零初始化，保留 `gate_bias_init=-1.0` 设计意图。
+  - M2: `_full_retrieval_bias` keep mask 改为 per-query `(Tq,Treal)` 窗口掩码 `keep[q,k] = (q-k<=window) & (k<=q)`，修复早期 query 窗口内 key 被 top-k 丢弃。
+  - M3: `sample_step` 统一为加性频率惩罚（与 IGMCG 路径一致），修复两条路径惩罚不一致。
+  - M4: LinearAttention 增加 `z_all=cumsum(kf)` 分母累积 + present 扩展为4元组 `(k, v, S_final, z_final)`，修复 cumsum 分母缺失。
+  - MINOR-1: `S_final` 死三元表达式清理。
+- 验证：pytest 96 passed + generation pipeline 12 passed。
+
+## `f5e8ba0`（已推送，基于 `9d62be6` 之前的主干）
+
+- feat: **8.9 架构升级**（n-gram max_order 3→10、LinearAttention 向量化、MemoryBank per-slot 遗忘门、重复惩罚改加性、RoPE 绑定、CharMerge 初始化、src_mask 清理）：
+  - n-gram max_order 3→10：`NGramModel` 泛化存储 `self.ngrams[order][context_tuple]`；`_compute_logprob_orders` / `logprob_orders_matrix/incremental` 泛化上下文窗口；`_ngram_last_ids` 缓冲长度 = `max_order-1`；`train.py`/`generate.py`/`load_model` 统一 `max_order=10`。
+  - ARCH-2 intuition 透传修复：`_generate_candidates_batch` 新增 `intuition` 参数 + `(N,7)` 广播。
+  - LinearAttention 向量化：`for t in range(T)` → `torch.cumsum`（分子+分母）。
+  - MemoryBank per-slot 遗忘门：`nn.Parameter(torch.zeros(1))` → `nn.Parameter(torch.zeros(M))`。
+  - 重复惩罚改加性：`generate.py` 乘性 → 加性 `logit -= penalty × freq`。
+  - RoPE max_len 绑定：`TransformerBlock` 接收 `rope_max_len`。
+  - CharMerge gate.bias 初始化：`gate_bias_init=-1.0`，`sigmoid(-1)≈0.27`。
+  - BUG-5 src_mask 删除。
+- 验证：pytest 96 passed + generation pipeline 12 passed。
+
 ## 结构清理（本地）
 
 - refactor: 实验脚本 `experiments/` 下 26 个临时/一次性脚本移入 `archive_unused/experiments_legacy/`（保留 `_bench_enh` / `_bench_speed` / `_cmp_sel_full` / `_smoke_gen_compare` / `_smoke_8k_gen` / `_run_train` / `_run_train_cpu` 共 7 个常用脚本）。`_bench_speed.py` 改为通过环境变量 `BENCH_MODEL` / `BENCH_VOCAB` 指定权重，去掉对已删除权重的硬编码路径。
