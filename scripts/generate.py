@@ -403,10 +403,10 @@ class NGramModel:
         return out
 
     def logprob_orders_incremental(self, ctx2: torch.Tensor, new_ids: torch.Tensor, device):
-        """泛化版增量解码：给定 (B,ctx_len) 滚动上下文 与 (B,T) 新 token，
+        """增量解码：给定 (B,ctx_len) 滚动上下文 与 (B,T) 新 token，
         仅计算新 token 各位置的逐阶 log 概率 (B,T,V,K)，不重建整段 ctx（避免 O(T^2)）。
-        复用 _orders_cache：上下文相同的位置直接命中，与全量路径完全一致 → parity 保持。
-        ctx2: (B, ctx_len)，其中 ctx_len = max_order-1。"""
+        ctx2: (B, ctx_len)，其中 ctx_len = max_order-1，含历史 token 用于构建上下文窗口。
+        复用 _orders_cache：上下文相同的位置直接命中，与全量路径完全一致。"""
         if new_ids.dim() == 1:
             new_ids = new_ids.unsqueeze(0)
         B, T = new_ids.shape
@@ -418,7 +418,7 @@ class NGramModel:
         out = torch.empty(B, T, V, K, device=device)
         for b in range(B):
             for t in range(T):
-                # 位置 t 的上下文窗口 = full[t : t+ctx_len]
+                # 位置 t 的上下文窗口 = full[t: t+ctx_len]
                 ctx_tokens = full[b, t: t + ctx_len].tolist()
                 ck = tuple(ctx_tokens)
                 if ck in self._orders_cache:
