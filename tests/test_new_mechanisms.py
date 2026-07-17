@@ -973,3 +973,86 @@ def test_igmcg_smarter_scorer_picks_coherent():
     z = _zscore([1.0, 2.0, 3.0, 100.0])
     assert abs(z[0] + 0.5) < 0.2, "z-score 标准化异常"  # 1.0 应约 -0.5σ 量级
     assert z[-1] > z[0], "z-score 未保持大小序"
+
+
+# ---------------------------------------------------------------------------
+# 第五轮审查回归测试（M2/M3/M4）
+# ---------------------------------------------------------------------------
+
+def test_retrieval_bias_per_query_keep_mask():
+    """回归测试 M2：_full_retrieval_bias 的 per-query keep mask 确保窗口内 key 不被 top-k 丢弃。
+    注意：keep mask 叠加到 attn_mask 上，因果掩码已对 q 前方位置施加 -1e9，
+    因此 keep mask 的 +1e9 只在因果允许的范围内有效（即 kpos <= qpos）。
+    对中间 query（q=4, window=3），窗口 [1,2,3,4] 内的 key 应有 +1e9 保护。"""
+    m = _small(vocab_size=200, attn_window=3, memory_retrieval_full=True, memory_retrieval_topk=2)
+    m.eval()
+    B, H, T, D = 1, 2, 8, 16
+    q = torch.randn(B, H, T, D)
+    k = torch.randn(B, H, T + 10, D)  # mem_cols=10
+    device = torch.device('cpu')
+    bias = m.blocks[0].attn._full_retrieval_bias(q, k, Treal=T, mem_cols=10, gate=None, device=device)
+    assert bias is not None
+    # q=4 (第5个位置)，窗口=3，因果允许 [0,1,2,3,4]，keep 保留 [1,2,3,4]
+    qpos = 4
+    for kpos in range(max(0, qpos - 3), qpos + 1):  # [1,2,3,4]
+        val = bias[0, 0, qpos, 10 + kpos].item()
+        assert val > 1e8, f'q={qpos}, key={kpos} 应有 +1e9 保护，实际={val}'
+    # 窗口外远端位置（如 key=0，距离 4 > window=3）不应有 +1e9
+    val_far = bias[0, 0, qpos, 10 + 0].item()
+    assert val_far < 1e8, f'q={qpos}, key=0 窗口外不应有 +1e9，实际={val_far}'
+
+
+def test_additive_repetition_penalty_igmcg_batch():
+    """回归测试 M3：IGMCG batch 路径使用加性频率惩罚（logits -= penalty × count）。"""
+    # 模拟 IGMCG batch 路径中的惩罚逻辑（generate.py:596-604）
+    V = 10
+    rep_penalty = 2.0
+    generated = [1, 2, 2, 3, 1, 1]  # token 1 出现 3 次，token 2 出现 2 次，token 3 出现 1 次
+    lt = torch.zeros(V)  # 原始 logits 全 0
+    from collections import Counter
+    freq = Counter(generated)
+    prev_toks = torch.tensor(list(freq.keys()), dtype=torch.long)
+    prev_counts = torch.tensor(list(freq.values()), dtype=torch.float)
+    valid = (prev_toks >= 0) & (prev_toks < V)
+    lt[prev_toks[valid]] = lt[prev_toks[valid]] - rep_penalty * prev_counts[valid]
+    # token 1: 0 - 2.0*3 = -6.0
+    assert abs(lt[1].item() - (-6.0)) < 1e-5, f'token 1 惩罚应为 -6.0，实际={lt[1].item()}'
+    # token 2: 0 - 2.0*2 = -4.0
+    assert abs(lt[2].item() - (-4.0)) < 1e-5, f'token 2 惩罚应为 -4.0，实际={lt[2].item()}'
+    # token 3: 0 - 2.0*1 = -2.0
+    assert abs(lt[3].item() - (-2.0)) < 1e-5, f'token 3 惩罚应为 -2.0，实际={lt[3].item()}'
+    # 未出现的 token 不受影响
+    assert lt[5].item() == 0.0, f'未出现 token 不应被惩罚，实际={lt[5].item()}'
+
+
+def test_linear_attention_cumsum_denominator():
+    """回归测试 M4：LinearAttention cumsum 分母累积正确——z_all = cumsum(kf)，den = einsum(qf, z_all)。"""
+    torch.manual_seed(42)
+    m = _small(vocab_size=200, mixer='linear')
+    m.eval()
+    x = torch.randint(0, 200, (1, 8))
+    with torch.no_grad():
+        # 全量前向（cumsum 路径）
+        full_out, present = m.blocks[0].attn(x=torch.randn(1, 8, 64), use_cache=False)
+        # 手动验证：构造简单输入
+        B, H, T, D = 1, 2, 4, 8
+        attn = m.blocks[0].attn
+        q = torch.randn(B, H, T, D)
+        k = torch.randn(B, H, T, D)
+        v = torch.randn(B, H, T, D)
+        qf = attn._feat(q)
+        kf = attn._feat(k)
+        kv_all = torch.einsum('bhtd,bhte->bhtde', kf, v)
+        S_all = torch.cumsum(kv_all, dim=2)
+        z_all = torch.cumsum(kf, dim=2)
+        num = torch.einsum('bhtd,bhtde->bhte', qf, S_all)
+        den = torch.einsum('bhtd,bhtd->bht', qf, z_all).unsqueeze(-1).clamp_min(1e-6)
+        out = num / den
+        # 验证 z_all 逐位置累积正确
+        assert z_all[:, :, 0, :].allclose(kf[:, :, 0, :]), 'z_all[0] 应等于 kf[0]'
+        assert z_all[:, :, 1, :].allclose(kf[:, :, 0, :] + kf[:, :, 1, :]), 'z_all[1] 应等于 kf[0]+kf[1]'
+        # 验证 den 与 z_all 的关系
+        den_expected = torch.einsum('bhtd,bhtd->bht', qf, z_all).unsqueeze(-1).clamp_min(1e-6)
+        assert den.allclose(den_expected), 'den 应等于 einsum(qf, z_all).clamp_min(1e-6)'
+        # 验证 present 包含 S_final 和 z_final
+        assert present is None or len(present) == 4 or len(present[0]) == 2

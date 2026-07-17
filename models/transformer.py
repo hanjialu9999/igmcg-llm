@@ -247,8 +247,12 @@ class RotaryEmbedding(nn.Module):
                     cos_full, sin_full = cached
                     return cos_full[:, :, start_pos:need, :].to(dtype), sin_full[:, :, start_pos:need, :].to(dtype)
 
-        # 计算新缓存
-        L = max(need, min(max_len, 4096))
+        # 计算新缓存；L 不超过 max_len，防止缓存无限增长
+        L = min(max(need, 128), max_len)
+        if need > max_len:
+            import warnings
+            warnings.warn(f'RoPE: need={need} > max_len={max_len}，位置将被 clamp，'
+                          '可能影响长序列质量。建议增大 rope_max_len。')
         t = torch.arange(0, L, device=device).type_as(self.inv_freq)
         inv_freq = self.inv_freq
         if self.learnable:
@@ -719,34 +723,32 @@ class LinearAttention(nn.Module):
                 memory_kv=None):
         # 简化实现：全量因果线性注意力（增量解码复用 past_kv 累积状态 S）。
         # past_kv 可来自 attn_kv 元组第 3 位（混合 mixer 时）：(k, v, linear_S)。
-        # 阶段8.9 向量化：用 cumsum 替代 for-t 循环，消除 O(T) Python 步。
+        # 阶段8.10 RNN-style：逐位置维护累积状态 S_t (D,D) + z_t (D)，
+        # 内存从 O(T·D²) 降至 O(D²)，避免长序列时 kv_all/S_all 张量过大。
         q, k, v = self.project_and_norm(x, start_pos)
         B, H, T, D = q.shape
         qf = self._feat(q)  # (B,H,T,D)
         kf = self._feat(k)  # (B,H,T,D)
-        # 外积: (B,H,T,D,D)
-        kv_all = torch.einsum('bhtd,bhte->bhtde', kf, v)
-        # 累积状态: S_t = Σ_{i=0}^{t} kv_i —— cumsum 沿 T 维
-        S_all = torch.cumsum(kv_all, dim=2)  # (B,H,T,D,D)
-        # 分母累积: z_t = Σ_{i=0}^{t} φ(k_i)，den_t = φ(q_t)·z_t
-        z_all = torch.cumsum(kf, dim=2)  # (B,H,T,D)
-        # 若有历史状态，偏移累积和
-        S_prev = None
+        # 初始化累积状态：若有历史 past_kv，从 S_prev/z_prev 恢复
+        S = torch.zeros(B, H, D, D, device=x.device, dtype=x.dtype)
+        z = torch.zeros(B, H, D, device=x.device, dtype=x.dtype)
         if past_kv is not None and len(past_kv) >= 3 and past_kv[2] is not None:
-            S_prev = past_kv[2]  # (B,H,D,D)
-            S_all = S_all + S_prev.unsqueeze(2)  # 广播加到每个位置
-            # 历史分母状态（z_prev: (B,H,D)），也需要偏移
+            S = past_kv[2]  # (B,H,D,D)
             if len(past_kv) >= 4 and past_kv[3] is not None:
-                z_all = z_all + past_kv[3].unsqueeze(2)
-        # 分子: q·S（每个位置查对应累积状态）
-        num = torch.einsum('bhtd,bhtde->bhte', qf, S_all)  # (B,H,T,D)
-        # 分母: φ(q_t)·z_t（累积分母，保证归一化正确）
-        den = torch.einsum('bhtd,bhtd->bht', qf, z_all).unsqueeze(-1).clamp_min(1e-6)  # (B,H,T,1)
-        out = (num / den).transpose(1, 2).reshape(B, T, H * D)
+                z = past_kv[3]  # (B,H,D)
+        # 逐位置累积并计算输出
+        outs = []
+        for t in range(T):
+            kf_t = kf[:, :, t, :]    # (B,H,D)
+            v_t = v[:, :, t, :]      # (B,H,D)
+            S = S + torch.einsum('bhd,bhe->bhde', kf_t, v_t)  # O(D²) 更新
+            z = z + kf_t                                           # O(D) 更新
+            num_t = torch.einsum('bhd,bhde->bhe', qf[:, :, t, :], S)  # (B,H,D)
+            den_t = torch.einsum('bhd,bhd->bh', qf[:, :, t, :], z).unsqueeze(-1).clamp_min(1e-6)
+            outs.append(num_t / den_t)
+        out = torch.stack(outs, dim=2).transpose(1, 2).reshape(B, T, H * D)  # (B,T,H*D)
         # present: 末尾累积状态供增量解码（S_final + z_final）
-        S_final = S_all[:, :, -1, :, :]
-        z_final = z_all[:, :, -1, :]
-        present = (k, v, S_final, z_final) if use_cache else None
+        present = (k, v, S, z) if use_cache else None
         return self.proj(out), present
 
 
