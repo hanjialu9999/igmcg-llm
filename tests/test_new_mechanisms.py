@@ -700,6 +700,23 @@ def test_memory_product_key_cache_parity():
     assert diff < 1e-4, f"product_key 记忆训练/推理不一致：max_diff={diff}"
 
 
+def test_memory_default_write_cache_parity():
+    """默认（非 product_key）记忆写路由下，训练（全量）与推理（cache）路径也必须数值一致。
+    默认路径为向量化 write_gate 分配，无顺序依赖，但此前仅 product_key 有 parity 覆盖，
+    此处补默认路径的 parity 回归，降低无测试盲区风险。"""
+    v = 200
+    m = _small_memory(memory_product_key=False)
+    m.eval()
+    ids = torch.randint(0, v, (1, 12))
+    with torch.no_grad():
+        full = m(ids, use_cache=False)
+        cached = m(ids, use_cache=True)
+    fl = full["logits"] if isinstance(full, dict) else full
+    cl = cached[0] if isinstance(cached, tuple) else (cached["logits"] if isinstance(cached, dict) else cached)
+    diff = (fl - cl).abs().max().item()
+    assert diff < 1e-4, f"默认记忆训练/推理不一致：max_diff={diff}"
+
+
 def test_memory_product_key_write_matches_reference():
     """阶段8.8：优化后的 product_key 顺序写（F.normalize + 无 unsqueeze 开销）必须与
     独立参考实现（逐 token 顺序 softmax 路由 + 1/(norm+1e-6) 归一）数值一致（优化不改数值语义）。"""
@@ -862,6 +879,24 @@ def _small_igmcg(**over):
               igmcg=True)
     kw.update(over)
     return TransformerModel(**kw), ng
+
+
+def test_zscore_vectorized_matches_reference():
+    """阶段8.9：_zscore 改为 torch 向量化后，须与独立 statistics 参考实现数值一致
+    （含单候选退化、零方差退化边界），避免去 statistics 依赖时引入数值漂移。"""
+    import statistics
+    from scripts.generate import _zscore
+    cases = [[1.0, 2.0, 3.0, 4.0], [0.5, 0.5, 0.5], [-1.0], [2.0, -3.0, 5.0, 0.0]]
+    for vals in cases:
+        got = _zscore(vals)
+        if len(vals) <= 1:
+            exp = [0.0] * len(vals)
+        else:
+            mu = statistics.mean(vals); sd = statistics.pstdev(vals)
+            exp = [0.0] * len(vals) if sd < 1e-9 else [(v - mu) / sd for v in vals]
+        assert len(got) == len(exp), f"长度不一致: {vals}"
+        for a, b in zip(got, exp):
+            assert abs(a - b) < 1e-5, f"_zscore 与参考实现不符: {vals} got={got}"
 
 
 def test_igmcg_order_weights_learnable_blend():

@@ -489,15 +489,15 @@ def _repetition(text):
 
 def _zscore(values):
     """对候选列表做跨候选 z-score 标准化（均值0方差1），使不同量纲特征可比、抗尺度。
-    单候选或零方差时返回全 0（退化为不贡献）。"""
-    import statistics
+    单候选或零方差时返回全 0（退化为不贡献）。用 torch 向量化替代原 statistics Python 循环，提速。"""
     if len(values) <= 1:
         return [0.0] * len(values)
-    mu = statistics.mean(values)
-    sd = statistics.pstdev(values)
+    t = torch.tensor(values, dtype=torch.float32)
+    mu = t.mean()
+    sd = t.std(unbiased=False)
     if sd < 1e-9:
         return [0.0] * len(values)
-    return [(v - mu) / sd for v in values]
+    return ((t - mu) / sd).tolist()
 
 
 def _style_features(text):
@@ -636,8 +636,6 @@ def generate_igmcg(model, vocab, prompt, intuition=None, num_candidates=4,
     if intuition is None:
         intuition = [0.5] * 7
     assert len(intuition) == 7, "直觉向量必须是 7 维"
-    # 把 0~1 映射为方向权重 (-1~1)
-    w = [(v - 0.5) * 2.0 for v in intuition]
 
     ids = [vocab.bos_idx] + vocab.encode(prompt, add_special_tokens=False)
     pad_id = vocab.pad_idx
