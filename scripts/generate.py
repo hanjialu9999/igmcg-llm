@@ -113,7 +113,7 @@ def load_model(model_path, vocab_path, device='cpu', quantize=False, compile_mod
             from scripts.generate import NGramModel
             _ngram_corpus = model_config.get('ngram_corpus', 'data/pretrain_corpus/merged.txt')
             _ngram_vocab_size = model_config.get('vocab_size', getattr(vocab, 'vocab_size', None))
-            _ngram_model = NGramModel(vocab, _ngram_corpus, max_order=3, smoothing=1.0,
+            _ngram_model = NGramModel(vocab, _ngram_corpus, max_order=10, smoothing=1.0,
                                       vocab_size=_ngram_vocab_size)
             print(f"[n-gram 融合] 已从 {_ngram_corpus} 重建统计缓冲（推理对齐训练分布）")
         except Exception as e:
@@ -182,7 +182,7 @@ class NGramModel:
     """统计语言模型（Unigram/Bigram/Trigram 插值）。解码期作为神经 LM 的先验，
      不改变模型、不需重训，专门改善字符级 LM 的局部连贯性。
      l1/l2/l3 为 uni/bi/tri 的插值权重（默认偏向高阶三元）。"""
-    def __init__(self, vocab, corpus_file, max_order=3, smoothing=1.0,
+    def __init__(self, vocab, corpus_file, max_order=10, smoothing=1.0,
                  l1=0.1, l2=0.3, l3=0.6, vocab_size=None):
         self.vocab = vocab
         self.max_order = max_order
@@ -191,32 +191,45 @@ class NGramModel:
         # vocab_size 决定统计缓冲维度：默认取 len(vocab)（语料实际覆盖的 token 数），
         # 但融合时需对齐模型词表（可能远大于语料覆盖），故允许显式覆盖。
         self.vocab_size = int(vocab_size) if vocab_size is not None else len(vocab)
-        self.uni = Counter()               # 一元
-        self.bi = defaultdict(Counter)     # (w_{i-1}) -> Counter(next)
-        self.tri = defaultdict(Counter)    # (w_{i-2}, w_{i-1}) -> Counter(next)
+        # 泛化 n-gram 存储：self.ngrams[order] = context_tuple → Counter(next_token)
+        # order=1 → 无上下文（unigram），order=2 → (w1,)，order=3 → (w2,w1) ...
+        self.ngrams = {o: defaultdict(Counter) for o in range(1, max_order + 1)}
+        self.uni = Counter()  # 保留 unigram 作为快捷访问
         self._build(corpus_file)
         # 解码期同一上下文会被多个候选反复查询，缓存 logprob 向量避免重复建表计算
         self._logprob_cache: Dict = {}
         self._logprob_cache_max = 8192
+        # 向后兼容快捷访问（bi/tri 用于旧路径 logprob_vector）
+        self.bi = self.ngrams.get(2, defaultdict(Counter))
+        self.tri = self.ngrams.get(3, defaultdict(Counter))
 
     def _build(self, corpus_file):
         # errors='replace' 避免脏语料含非法 UTF-8 序列时直接抛 UnicodeDecodeError
         with open(corpus_file, 'r', encoding='utf-8', errors='replace') as f:
             for line in f:
                 ids = self.vocab.encode(line, add_special_tokens=False)
+                # 左填充 2 个 pad 保证 context 窗口足够
                 ids = [self.vocab.pad_idx] * 2 + ids
                 for i in range(2, len(ids)):
                     self.uni[ids[i]] += 1
-                    self.bi[ids[i - 1]][ids[i]] += 1
-                    if self.max_order >= 3:
-                        self.tri[(ids[i - 2], ids[i - 1])][ids[i]] += 1
+                    # 构建 order 2..max_order 的 n-gram
+                    for order in range(2, self.max_order + 1):
+                        if i >= order - 1:
+                            ctx = tuple(ids[i - order + 1: i])  # (order-1) 个上下文 token
+                            self.ngrams[order][ctx][ids[i]] += 1
         # 预计算（加速解码期每次调用的 logprob_vector）
         V = self.vocab_size
         self.uni_total = sum(self.uni.values()) + self.smoothing * V
-        self.bi_total = {w: sum(c.values()) + self.smoothing * V
-                         for w, c in self.bi.items()}
-        self.tri_total = {k: sum(c.values()) + self.smoothing * V
-                          for k, c in self.tri.items()}
+        # 各阶上下文总计数
+        self.ngram_totals = {}
+        for order in range(2, self.max_order + 1):
+            self.ngram_totals[order] = {
+                ctx: sum(c.values()) + self.smoothing * V
+                for ctx, c in self.ngrams[order].items()
+            }
+        # 向后兼容
+        self.bi_total = self.ngram_totals.get(2, {})
+        self.tri_total = self.ngram_totals.get(3, {})
         u = torch.full((V,), self.smoothing)
         for t, c in self.uni.items():
             if 0 <= t < V:
@@ -267,80 +280,102 @@ class NGramModel:
                 out[b, t] = self._vec_for_ctx(w2, w1, device)
         return out
 
+    def _interp_weights(self, order):
+        """返回 order 阶插值的子阶权重 (w1, w2, ..., w_{order})，归一化和为 1。
+        默认方案：指数衰减，高阶权重更大（如 order=3 → 0.1/0.3/0.6）。"""
+        if order <= 3:
+            # 向后兼容：保留原 l1/l2/l3
+            ws = [self.l1, self.l2, self.l3][:order]
+        else:
+            # 泛化：指数衰减 w_i = 0.5^(order-i)，归一化
+            ws = [0.5 ** (order - i) for i in range(1, order + 1)]
+        s = sum(ws)
+        return [w / s for w in ws]
+
     def _compute_logprob(self, w2, w1, V, device):
-        """实际计算上下文 (w2,w1) 下的 log 概率向量（无缓存）。"""
+        """实际计算上下文 (w2,w1) 下的 log 概率向量（无缓存），泛化到任意 max_order。"""
         vec = self.uni_prob.to(device).clone()      # (V,) 已归一化的 unigram 先验
         uni_total = self.uni_total
+        # 从高阶到低阶逐步覆盖（高阶优先，低阶兜底）
+        # 收集所有命中的阶及其计数
+        order_data = []  # [(order, context_tuple, counter, total)]
+        for order in range(2, self.max_order + 1):
+            if order == 2 and w1 is not None:
+                ctx = (w1,)
+            elif order == 3 and w2 is not None:
+                ctx = (w2, w1)
+            elif order > 3:
+                # 需要 order-1 个上下文 token，但当前接口只有 w2/w1
+                # 对于 order>3，无法从当前接口获取完整上下文，跳过
+                continue
+            else:
+                continue
+            if order <= 2:
+                grams = self.ngrams.get(order, {})
+            else:
+                grams = self.ngrams.get(order, {})
+            if ctx in grams:
+                counter = grams[ctx]
+                total = self.ngram_totals.get(order, {}).get(ctx, self.smoothing * V)
+                order_data.append((order, ctx, counter, total))
 
-        # bigram 覆盖（仅遍历 w1 之后的少量 token）
-        if w1 is not None and w1 in self.bi:
-            bc = self.bi[w1]
-            bt = self.bi_total[w1]
-            idx = torch.tensor(list(bc.keys()), dtype=torch.long, device=device)
-            if idx.numel():
-                cu = torch.tensor([self.uni.get(t, 0) for t in bc.keys()], device=device)
-                cb = torch.tensor(list(bc.values()), device=device)
-                pu = (cu + self.smoothing) / uni_total
-                pb = (cb + self.smoothing) / bt
-                vec[idx] = self.l1 * pu + self.l2 * pb
-
-        # trigram 覆盖（优先，仅遍历 (w2,w1) 之后的少量 token）
-        if w2 is not None and (w2, w1) in self.tri:
-            tc = self.tri[(w2, w1)]
-            tt = self.tri_total[(w2, w1)]
-            idx = torch.tensor(list(tc.keys()), dtype=torch.long, device=device)
-            if idx.numel():
-                cu = torch.tensor([self.uni.get(t, 0) for t in tc.keys()], device=device)
-                cb = torch.tensor([self.bi[w1].get(t, 0) for t in tc.keys()], device=device)
-                ct = torch.tensor(list(tc.values()), device=device)
-                pu = (cu + self.smoothing) / uni_total
-                pb = (cb + self.smoothing) / self.bi_total.get(w1, self.smoothing * V)
-                pt = (ct + self.smoothing) / tt
-                vec[idx] = self.l1 * pu + self.l2 * pb + self.l3 * pt
+        # 插值：从最高命中阶到 unigram 加权混合
+        if order_data:
+            max_hit = max(o for o, _, _, _ in order_data)
+            ws = self._interp_weights(max_hit)
+            for order, ctx, counter, total in order_data:
+                idx = torch.tensor(list(counter.keys()), dtype=torch.long, device=device)
+                if idx.numel():
+                    counts = torch.tensor(list(counter.values()), device=device)
+                    # 构建该阶的 unigram/bigram/... 插值概率
+                    p = (counts + self.smoothing) / total
+                    # 对于高阶，混合低阶（简化：直接用该阶计数概率，权重由 order_logits 控制）
+                    w = ws[order - 1] if order <= len(ws) else ws[-1]
+                    vec[idx] = vec[idx] * (1 - w) + p * w
 
         vec = vec / vec.sum()
         return torch.log(vec + 1e-10)
 
-    def _compute_logprob_orders(self, w2, w1, V, device):
-        """IGMCG 2.0：返回各阶 n-gram 的 log 概率向量（未插值），shape (V, max_order)。
-        order 0 = unigram，1 = bigram（仅 w1 上下文），2 = trigram（w2,w1 上下文）。
+    def _compute_logprob_orders(self, ctx_tokens, V, device):
+        """泛化版：返回各阶 n-gram 的 log 概率向量（未插值），shape (V, max_order)。
+        ctx_tokens: 完整上下文 token 列表（最近 order-1 个 token），长度 >= max_order-1。
+        order 0 = unigram，order k (k>=1) = 用 ctx_tokens[-k:] 作为上下文的 k+1 gram。
         各阶独立返回，由模型学 order 权重（自选 n 的数量/占比）做可微混合，
         替代固定 l1/l2/l3 插值。无对应上下文的阶用 unigram 兜底。"""
         K = self.max_order
         out = torch.empty(V, K, device=device)
         uni = self.uni_prob.to(device)           # (V,) 已归一化 unigram
         uni_total = self.uni_total
-        out[:, 0] = torch.log(uni + 1e-10)
-        # bigram 阶
-        if K >= 2:
+        out[:, 0] = torch.log(uni + 1e-10)     # unigram 兜底
+        # 泛化：order 1..K-1 对应 2-gram .. K-gram
+        for k in range(1, K):
+            order = k + 1  # n-gram 阶数
             vec = uni.clone()
-            if w1 is not None and w1 in self.bi:
-                bc, bt = self.bi[w1], self.bi_total[w1]
-                idx = torch.tensor(list(bc.keys()), dtype=torch.long, device=device)
+            # 获取该阶所需的上下文 (order-1) 个 token
+            if len(ctx_tokens) >= order - 1:
+                ctx = tuple(ctx_tokens[-(order - 1):])  # 最近 order-1 个 token
+            else:
+                ctx = None
+            if ctx is not None and ctx in self.ngrams.get(order, {}):
+                counter = self.ngrams[order][ctx]
+                total = self.ngram_totals.get(order, {}).get(ctx, self.smoothing * V)
+                idx = torch.tensor(list(counter.keys()), dtype=torch.long, device=device)
                 if idx.numel():
-                    pu = (torch.tensor([self.uni.get(t, 0) for t in bc.keys()], device=device) + self.smoothing) / uni_total
-                    pb = (torch.tensor(list(bc.values()), device=device) + self.smoothing) / bt
-                    vec[idx] = self.l1 * pu + self.l2 * pb
+                    counts = torch.tensor(list(counter.values()), device=device)
+                    # 混合：该阶概率 = l_k * p_k + sum(l_i * p_i for i<k)
+                    # 简化：直接用该阶计数概率，权重由模型 order_logits 控制
+                    p_order = (counts + self.smoothing) / total
+                    # 低阶混合（简化：用 unigram 兜底）
+                    ws = self._interp_weights(order)
+                    vec[idx] = ws[-1] * p_order + (1 - ws[-1]) * uni[idx]
                     vec = vec / vec.sum()
-            out[:, 1] = torch.log(vec + 1e-10)
-        # trigram 阶
-        if K >= 3:
-            vec = uni.clone()
-            if w2 is not None and (w2, w1) in self.tri:
-                tc, tt = self.tri[(w2, w1)], self.tri_total[(w2, w1)]
-                idx = torch.tensor(list(tc.keys()), dtype=torch.long, device=device)
-                if idx.numel():
-                    cu = (torch.tensor([self.uni.get(t, 0) for t in tc.keys()], device=device) + self.smoothing) / uni_total
-                    cb = (torch.tensor([self.bi[w1].get(t, 0) for t in tc.keys()], device=device) + self.smoothing) / self.bi_total.get(w1, self.smoothing * V)
-                    ct = (torch.tensor(list(tc.values()), device=device) + self.smoothing) / tt
-                    vec[idx] = self.l1 * cu + self.l2 * cb + self.l3 * ct
-                    vec = vec / vec.sum()
-            out[:, 2] = torch.log(vec + 1e-10)
+            out[:, k] = torch.log(vec + 1e-10)
         return out
 
     def logprob_orders_matrix(self, ids: torch.Tensor, device):
-        """IGMCG 2.0：返回逐阶 n-gram log 概率，shape (B, T, V, max_order)。
-        供 TransformerModel 用可学 order 权重做混合（模型自选各阶占比）。"""
+        """泛化版：返回逐阶 n-gram log 概率，shape (B, T, V, max_order)。
+        供 TransformerModel 用可学 order 权重做混合（模型自选各阶占比）。
+        上下文窗口长度 = max_order-1（如 max_order=10 → 9 token 上下文）。"""
         if ids.dim() == 1:
             ids = ids.unsqueeze(0)
         B, T = ids.shape
@@ -348,17 +383,19 @@ class NGramModel:
         V = self.vocab_size
         out = torch.empty(B, T, V, K, device=device)
         pad = self.vocab.pad_idx if hasattr(self.vocab, 'pad_idx') else 0
+        ctx_len = max(1, K - 1)  # 上下文窗口长度
         for b in range(B):
             seq = ids[b].tolist()
-            ctx_w2 = [pad, pad] + seq[:-2]
-            ctx_w1 = [pad] + seq[:-1]
+            # 左填充 ctx_len 个 pad，保证每个位置都有足够上下文
+            padded = [pad] * ctx_len + seq
             for t in range(T):
-                w2 = ctx_w2[t]; w1 = ctx_w1[t]
-                ck = (w2, w1)
+                # 位置 t 的上下文窗口 = padded[t : t+ctx_len]
+                ctx_tokens = padded[t: t + ctx_len]
+                ck = tuple(ctx_tokens)
                 if ck in self._orders_cache:
                     out[b, t] = self._orders_cache[ck].to(device)
                 else:
-                    v = self._compute_logprob_orders(w2, w1, V, device)
+                    v = self._compute_logprob_orders(ctx_tokens, V, device)
                     if len(self._orders_cache) > self._logprob_cache_max:
                         self._orders_cache.clear()
                     self._orders_cache[ck] = v.cpu()
@@ -366,29 +403,28 @@ class NGramModel:
         return out
 
     def logprob_orders_incremental(self, ctx2: torch.Tensor, new_ids: torch.Tensor, device):
-        """IGMCG 2.0 增量解码：给定 (B,2) 滚动上下文(末 2 token) 与 (B,T) 新 token，
+        """泛化版增量解码：给定 (B,ctx_len) 滚动上下文 与 (B,T) 新 token，
         仅计算新 token 各位置的逐阶 log 概率 (B,T,V,K)，不重建整段 ctx（避免 O(T^2)）。
-        复用 _orders_cache（键 (w2,w1)）：上下文相同的位置直接命中，与全量路径 logprob
-        完全一致 → 训练/推理 parity 保持。"""
+        复用 _orders_cache：上下文相同的位置直接命中，与全量路径完全一致 → parity 保持。
+        ctx2: (B, ctx_len)，其中 ctx_len = max_order-1。"""
         if new_ids.dim() == 1:
             new_ids = new_ids.unsqueeze(0)
         B, T = new_ids.shape
         K = self.max_order
         V = self.vocab_size
-        # 拼接滚动上下文 + 新 token 得完整 context(长度 T+2)：[c0,c1,new0,new1,...]。
-        # 输出位置 t 的 (w2,w1) = (context[t], context[t+1])，即 w2=context[:T]、w1=context[1:T+1]，
-        # 与全量路径逐位置 (seq[t-2],seq[t-1]) 完全对应（t=0/1 退化为 pad 兜底），对任意 T 成立。
-        context = torch.cat([ctx2, new_ids], dim=1)                   # (B, 2+T)
-        w2 = context[:, :T]                                           # (B, T)
-        w1 = context[:, 1:T + 1]                                      # (B, T)
+        ctx_len = max(1, K - 1)
+        # 拼接滚动上下文 + 新 token：[ctx0..ctx_{L-1}, new0..new_{T-1}]
+        full = torch.cat([ctx2, new_ids], dim=1)                     # (B, ctx_len+T)
         out = torch.empty(B, T, V, K, device=device)
         for b in range(B):
             for t in range(T):
-                ck = (int(w2[b, t].item()), int(w1[b, t].item()))
+                # 位置 t 的上下文窗口 = full[t : t+ctx_len]
+                ctx_tokens = full[b, t: t + ctx_len].tolist()
+                ck = tuple(ctx_tokens)
                 if ck in self._orders_cache:
                     out[b, t] = self._orders_cache[ck].to(device)
                 else:
-                    v = self._compute_logprob_orders(ck[0], ck[1], V, device)
+                    v = self._compute_logprob_orders(ctx_tokens, V, device)
                     if len(self._orders_cache) > self._logprob_cache_max:
                         self._orders_cache.clear()
                     self._orders_cache[ck] = v.cpu()
@@ -523,18 +559,26 @@ def _style_features(text):
 
 def _generate_candidates_batch(model, ids, temps, max_length, top_k, rep_penalty,
                                 device, ngram_fn, ngram_weight, pad_id, sep_id, eos_id,
-                                min_length=3, eos_penalty=-5.0):
+                                min_length=3, eos_penalty=-5.0,
+                                intuition=None):
     """并行生成 N 个候选：单次 batch 前向（batch=N），每个候选在 batch 内各自独立维护
     KV-cache / SSM 状态，避免候选间污染，也避免逐候选串行 forward（num_candidates 倍提速）。
     已完成候选喂 pad 占位以保持 batch 对齐。"""
     N = len(temps)
     generated = [list(ids) for _ in range(N)]
     done = [False] * N
+    # IGMCG 2.0：直觉向量透传到 model.forward，广播到 batch 维 (N,7)
+    intu_batch = None
+    if intuition is not None:
+        import torch as _t
+        iv = _t.tensor(intuition, dtype=_t.float32, device=device).reshape(1, 7)
+        intu_batch = iv.expand(N, -1)  # (N, 7) 广播到所有候选
 
     with torch.no_grad():
         # 初始前向：所有候选共享同一输入，得到 batched past（batch 维 = N）
         inp = torch.tensor([ids] * N, dtype=torch.long, device=device)
-        logits, past = model.forward(inp, past_key_values=None, use_cache=True)
+        logits, past = model.forward(inp, past_key_values=None, use_cache=True,
+                                     intuition=intu_batch)
 
         for step in range(max_length):
             if all(done):
@@ -547,13 +591,15 @@ def _generate_candidates_batch(model, ids, temps, max_length, top_k, rep_penalty
                     nt.append(pad_id)
                     continue
                 lt = logits[n, -1, :] / temps[n]
-                # 符号感知的重复惩罚：正值除、负值乘（与 HF 一致）
-                for prev in set(generated[n]):
-                    if 0 <= prev < lt.shape[0]:
-                        if lt[prev] > 0:
-                            lt[prev] = lt[prev] / rep_penalty
-                        else:
-                            lt[prev] = lt[prev] * rep_penalty
+                # 阶段8.9：加性频率惩罚替代乘性重复惩罚——对已出现 token 按出现次数
+                # 减去 penalty*count（对称、无正负除/乘极端，更稳定）。
+                if rep_penalty > 0 and generated[n]:
+                    from collections import Counter
+                    freq = Counter(generated[n])
+                    prev_toks = torch.tensor(list(freq.keys()), dtype=torch.long, device=device)
+                    prev_counts = torch.tensor(list(freq.values()), dtype=torch.float, device=device)
+                    valid = (prev_toks >= 0) & (prev_toks < lt.shape[0])
+                    lt[prev_toks[valid]] = lt[prev_toks[valid]] - rep_penalty * prev_counts[valid]
                 if ngram_fn is not None and ngram_weight != 0.0:
                     lt = lt + ngram_weight * ngram_fn(generated[n], device)
                 lt[pad_id] = float('-inf')
@@ -571,7 +617,8 @@ def _generate_candidates_batch(model, ids, temps, max_length, top_k, rep_penalty
                 nt.append(int(torch.multinomial(torch.softmax(lt, 0), 1).item()))
             # 单次 batched 前向：feed 形状 (N,1)，past 为 batched（batch 维 = N）
             feed = torch.tensor(nt, dtype=torch.long, device=device).unsqueeze(1)
-            logits, past = model.forward(feed, past_key_values=past, use_cache=True)
+            logits, past = model.forward(feed, past_key_values=past, use_cache=True,
+                                         intuition=intu_batch)
             for n in range(N):
                 if not done[n]:
                     generated[n].append(nt[n])
@@ -647,7 +694,8 @@ def generate_igmcg(model, vocab, prompt, intuition=None, num_candidates=4,
     seqs = _generate_candidates_batch(model, ids, temps, max_length, top_k,
                                        repetition_penalty, device, ngram_fn,
                                        ngram_weight, pad_id, sep_id, eos_id,
-                                       min_length=min_length, eos_penalty=eos_penalty)
+                                       min_length=min_length, eos_penalty=eos_penalty,
+                                       intuition=intuition)
     flus = _fluency_batch(model, seqs, device, pad_id)
 
     COH_W, FLU_W, STYLE_W, REP_W = coh_w, flu_w, style_w, rep_w
@@ -796,7 +844,7 @@ def main():
     ngram = None
     if args.ngram:
         print(f"Building n-gram model from {args.ngram_corpus} ...")
-        ngram = NGramModel(vocab, args.ngram_corpus, max_order=3, smoothing=1.0)
+        ngram = NGramModel(vocab, args.ngram_corpus, max_order=10, smoothing=1.0)
         print(f"n-gram ready (weight={args.ngram_weight})")
     
     # Generation mode

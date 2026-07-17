@@ -361,7 +361,7 @@ def main(config_path='configs/pretrain.yaml', resume=False):
             # vocab_size 对齐模型词表（config 里可能远大于语料实际覆盖的 token 数），
             # 否则 logprob_matrix 维度与 output_head 不匹配会广播失败。
             _ngram_vocab_size = config['model'].get('vocab_size', getattr(vocab, 'vocab_size', None))
-            _ngram_model = NGramModel(vocab, _ngram_corpus, max_order=3, smoothing=1.0,
+            _ngram_model = NGramModel(vocab, _ngram_corpus, max_order=10, smoothing=1.0,
                                       vocab_size=_ngram_vocab_size)
             print(f"[n-gram 融合] 已从 {_ngram_corpus} 构建统计 n-gram 缓冲（与训练分布对齐）")
         except Exception as e:
