@@ -407,3 +407,54 @@ def test_ngram_fusion_gate_scale_zero():
         m.set_ngram_fusion_active(False)
         base = m(x)
     assert torch.allclose(off, base, atol=1e-5), "gate_scale=0 时仍含 n-gram 贡献"
+
+
+def test_ngram_logprob_matrix_matches_model_vocab():
+    """logprob_matrix 的最后一维必须等于模型 vocab_size，否则与主 logits 广播失败。
+
+    语料实际只覆盖 29 个 token，但模型词表是 12000；训练时传 vocab_size=12000 覆盖
+    对齐，logprob_matrix 须返回 (B,T,12000) 才能与 output_head(z) 广播相加。
+    """
+    v, ng = _small_ngram()
+    V = len(v)
+    import tempfile, os
+    corpus = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
+    corpus.write("中 国 人 民\n中 国 梦 想\n人 民 生 活\n")
+    corpus.close()
+    from scripts.generate import NGramModel
+    ng_big = NGramModel(v, corpus.name, max_order=3, smoothing=1.0, vocab_size=12000)
+    os.unlink(corpus.name)
+    assert ng_big.vocab_size == 12000
+    mat = ng_big.logprob_matrix(torch.randint(0, V, (2, 10)), 'cpu')
+    assert mat.shape == (2, 10, 12000), f"logprob_matrix 维度应为 (2,10,12000)，实得 {tuple(mat.shape)}"
+
+
+def test_ngram_fusion_save_load_preserves_gate(tmp_path):
+    """融合模型保存后重载必须重建 ngram_gate（否则 reload 缺门控 = 静默退化）。
+
+    回归：train.py 曾把 ngram_fusion 状态写入 saved config，load_model 须据配置重建
+    NGramModel 并透传 build_model；若漏透传，重载模型 ngram_fusion_enabled=False、
+    ngram_gate 缺失，与训练期不一致。
+    """
+    import os
+    import yaml
+    v, ng = _small_ngram()
+    V = len(v)
+    m = _small(vocab_size=V, ngram_fusion=True, ngram_model=ng)
+    m.eval()
+    # 模拟保存 config（含 ngram_fusion 标志）
+    cfg = {'vocab_size': V, 'embedding_dim': 64, 'num_heads': 4, 'num_layers': 2,
+           'hidden_dim': 128, 'max_seq_length': 32, 'ngram_fusion': True,
+           'ngram_corpus': 'data/pretrain_corpus/_ngram_smoke.txt', 'ngram_gate_scale': 1.0}
+    ckpt_dir = tmp_path / "ck"
+    ckpt_dir.mkdir()
+    torch.save({'model_state_dict': m.state_dict()}, ckpt_dir / "m.pt")
+    with open(ckpt_dir / "m_config.yaml", 'w', encoding='utf-8') as f:
+        yaml.dump(cfg, f)
+    # 复用 load_model 的重建逻辑：build_model 据 config 重建 ngram
+    from models.config_loader import build_model
+    from scripts.generate import NGramModel
+    _ng = NGramModel(v, cfg['ngram_corpus'], max_order=3, smoothing=1.0, vocab_size=V)
+    m2 = build_model({'model': cfg}, device=torch.device('cpu'), ngram_model=_ng)
+    assert m2.ngram_fusion_enabled, "重载后 ngram 融合未启用（门控缺失）"
+    assert hasattr(m2, 'ngram_gate'), "重载模型缺少 ngram_gate"

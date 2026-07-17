@@ -105,7 +105,20 @@ def load_model(model_path, vocab_path, device='cpu', quantize=False, compile_mod
     # 复用 build_model（正确传递所有参数：char_merge/memory/ssm/rope 等），避免手动列参数遗漏。
     # strict=False 兼容旧权重（旧 checkpoint 可能缺少 qk_norm/attn_temp/residual_gate 等新增参数）。
     from models.config_loader import build_model
-    model = build_model({'model': model_config}, device=device)
+    # 阶段8.1：若配置开启 ngram_fusion，需重建统计 n-gram 缓冲并透传给 build_model，
+    # 否则重新加载的模型会缺 ngram_gate（与 ENH/SEL 开关透传同一类坑）。
+    _ngram_model = None
+    if model_config.get('ngram_fusion', False):
+        try:
+            from scripts.generate import NGramModel
+            _ngram_corpus = model_config.get('ngram_corpus', 'data/pretrain_corpus/merged.txt')
+            _ngram_vocab_size = model_config.get('vocab_size', getattr(vocab, 'vocab_size', None))
+            _ngram_model = NGramModel(vocab, _ngram_corpus, max_order=3, smoothing=1.0,
+                                      vocab_size=_ngram_vocab_size)
+            print(f"[n-gram 融合] 已从 {_ngram_corpus} 重建统计缓冲（推理对齐训练分布）")
+        except Exception as e:
+            print(f"[n-gram 融合] 重建失败，已跳过：{e}")
+    model = build_model({'model': model_config}, device=device, ngram_model=_ngram_model)
 
     model.load_state_dict(checkpoint['model_state_dict'], strict=False)
     model.eval()
@@ -149,12 +162,14 @@ class NGramModel:
      不改变模型、不需重训，专门改善字符级 LM 的局部连贯性。
      l1/l2/l3 为 uni/bi/tri 的插值权重（默认偏向高阶三元）。"""
     def __init__(self, vocab, corpus_file, max_order=3, smoothing=1.0,
-                 l1=0.1, l2=0.3, l3=0.6):
+                 l1=0.1, l2=0.3, l3=0.6, vocab_size=None):
         self.vocab = vocab
         self.max_order = max_order
         self.smoothing = smoothing
         self.l1, self.l2, self.l3 = l1, l2, l3
-        self.vocab_size = len(vocab)
+        # vocab_size 决定统计缓冲维度：默认取 len(vocab)（语料实际覆盖的 token 数），
+        # 但融合时需对齐模型词表（可能远大于语料覆盖），故允许显式覆盖。
+        self.vocab_size = int(vocab_size) if vocab_size is not None else len(vocab)
         self.uni = Counter()               # 一元
         self.bi = defaultdict(Counter)     # (w_{i-1}) -> Counter(next)
         self.tri = defaultdict(Counter)    # (w_{i-2}, w_{i-1}) -> Counter(next)

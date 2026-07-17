@@ -33,7 +33,11 @@ test/
 *.ckpt
 checkpoints/
 checkpoints_smoke_4k/
+checkpoints_ngram_smoke/
 best_finetuned_model.pt
+
+# 8.1 n-gram 神经融合冒烟配置（本地验证用，非主线）
+configs/config_ngram_smoke*.yaml
 
 # Logs
 *.log
