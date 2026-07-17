@@ -91,6 +91,7 @@ def build_model(config: Dict[str, Any], device: Optional[torch.device] = None,
         memory_retrieval=mc.get('memory_retrieval', False),
         memory_sparse_topk=mc.get('memory_sparse_topk', 0),
         memory_forget=mc.get('memory_forget', False),
+        memory_product_key=mc.get('memory_product_key', False),
         memory_retrieval_full=mc.get('memory_retrieval_full', False),
         memory_retrieval_topk=mc.get('memory_retrieval_topk', 32),
         # 阶段8.1：n-gram 神经融合（默认关，向后兼容；开启需传入 ngram_model 实例）

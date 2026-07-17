@@ -64,7 +64,7 @@ class MemoryBank(nn.Module):
     def __init__(self, dim: int, num_slots: int = 64, comp_dim: int = 32,
                  head_dim: Optional[int] = None, dropout: float = 0.0,
                  retrieval: bool = False, sparse_topk: int = 0,
-                 forget: bool = False):
+                 forget: bool = False, product_key: bool = False):
         super().__init__()
         self.dim = dim
         self.num_slots = num_slots
@@ -73,6 +73,11 @@ class MemoryBank(nn.Module):
         self.retrieval_enabled = retrieval
         self.sparse_topk = sparse_topk
         self.forget_enabled = forget
+        # 阶段8.3：product-key 写路由——写入时按"新内容与各槽当前内容的相似度"分配
+        # （而非纯位置相关的 write_gate），让"写什么到哪"由内容相似度驱动（可微、无硬选择）。
+        # 与读路径的 query-槽相似度（attend 内 mlogits）天然对称：写用内容路由、读用查询路由。
+        # 默认关（向后兼容旧权重：无此标志则不启用相似度路由）。
+        self.product_key = product_key
         # 压缩 / 解压矩阵（可学）：把 D 维表示压到 comp_dim 再还原
         self.compress = nn.Linear(dim, comp_dim, bias=False)
         self.decompress = nn.Linear(comp_dim, dim, bias=False)
@@ -122,14 +127,30 @@ class MemoryBank(nn.Module):
             self.slots = f * self.slots
         # 压缩当前表示
         comp = self.compress(x)  # (B, T, comp_dim)
-        # 写入权重：对每步表示，softmax 分配到 M 个槽（可学门控）
-        gate = torch.softmax(self.write_gate(x), dim=-1)  # (B, T, M)
-        # 按 gate 把压缩表示累加到槽（加权求和，可微）
-        update = torch.einsum('btm,btc->bmc', gate, comp)  # (B, M, comp_dim)
-        # 移动平均式软写入（保留历史记忆，新信息按 gate 权重叠加）
-        self.slots = self.slots + update
-        # 归一化防止数值膨胀
-        self.slots = self.slots / (1e-6 + self.slots.norm(dim=-1, keepdim=True))
+        # 写入权重：对每步表示，softmax 分配到 M 个槽。
+        if self.product_key:
+            # 阶段8.3：按内容相似度路由——新内容与各槽现有内容越相似，越写到该槽
+            # （product-key 风格）。sim = comp·slots，softmax 后分配；可微、与读路径对称。
+            # 注意：sim 依赖当前 slots，而 slots 会随写入更新 → 必须逐 token 顺序写，
+            # 否则全量路径（一次算齐所有 token 的 gate）与增量 cache 路径（逐 token 更新
+            # slots 后再算下一 token 的 gate）结果不一致（曾在 cache parity 测试暴露
+            # max_diff=0.028）。顺序写让两条路径逐 token 等价。
+            for t in range(T):
+                comp_t = comp[:, t:t + 1, :]            # (B, 1, comp_dim)
+                sim = torch.einsum('bc,bmc->bm', comp_t.squeeze(1), self.slots)  # (B, M)
+                gate = torch.softmax(sim, dim=-1).unsqueeze(1)  # (B, 1, M)
+                update = torch.einsum('btm,btc->bmc', gate, comp_t)  # (B, M, comp_dim)
+                self.slots = self.slots + update
+                self.slots = self.slots / (1e-6 + self.slots.norm(dim=-1, keepdim=True))
+        else:
+            # 原始：可学线性门控（位置相关分配，与 slots 无关，可向量化且全量/增量一致）
+            gate = torch.softmax(self.write_gate(x), dim=-1)  # (B, T, M)
+            # 按 gate 把压缩表示累加到槽（加权求和，可微）
+            update = torch.einsum('btm,btc->bmc', gate, comp)  # (B, M, comp_dim)
+            # 移动平均式软写入（保留历史记忆，新信息按 gate 权重叠加）
+            self.slots = self.slots + update
+            # 归一化防止数值膨胀
+            self.slots = self.slots / (1e-6 + self.slots.norm(dim=-1, keepdim=True))
 
     def get_kv(self) -> Tuple[torch.Tensor, torch.Tensor, Optional[Dict[str, Any]]]:
         """返回记忆的 K/V：(B, M, head_dim) 及检索元信息（门控/稀疏）。
@@ -571,7 +592,11 @@ class SlidingWindowCausalSelfAttention(nn.Module):
                 # （记忆段本身全 0，不受因果限制）。
                 qpos = torch.arange(0, T, device=dev).unsqueeze(1)
                 kpos = torch.arange(0, Tkv, device=dev).unsqueeze(0)
-                cm = (kpos > qpos).float() * self.mask_fill_value  # 主序列因果
+                # 主序列因果：K/V 前 mem_cols 列是记忆（全局可检索，不施加因果），
+                # 主序列段（全局索引 >= mem_cols）的相对位置 = kpos - mem_cols，
+                # 故因果条件为 kpos > qpos + mem_cols（与 window 分支 line 582、
+                # cache 路径 line 498 一致）。原 kpos > qpos 会多遮 16 列合法过去 token。
+                cm = (kpos > (qpos + mem_cols)).float() * self.mask_fill_value  # 主序列因果
                 cm = cm.unsqueeze(0).unsqueeze(0)  # (1,1,T,Tkv)
                 if mem_cols > 0:
                     cm[:, :, :, :mem_cols] = 0.0  # 记忆段全 0（全局可检索）
@@ -1084,7 +1109,7 @@ class TransformerModel(nn.Module):
                     char_merge_dropout: float = 0.0,
                     memory_size: int = 0, memory_comp_dim: int = 32,
                     memory_retrieval: bool = False, memory_sparse_topk: int = 0,
-                    memory_forget: bool = False,
+                    memory_forget: bool = False, memory_product_key: bool = False,
                     memory_retrieval_full: bool = False, memory_retrieval_topk: int = 32,
                     rope_learnable: bool = False, alibi: bool = False,
                    layer_skip: bool = False, learn_window: bool = False, window_base: int = 64,
@@ -1164,7 +1189,7 @@ class TransformerModel(nn.Module):
                 embedding_dim, num_slots=memory_size, comp_dim=memory_comp_dim,
                 head_dim=embedding_dim // num_heads, dropout=dropout,
                 retrieval=memory_retrieval, sparse_topk=memory_sparse_topk,
-                forget=memory_forget)
+                forget=memory_forget, product_key=memory_product_key)
         # 权重初始化（_init_weights 遍历所有 Linear 用 N(0,0.02)，再对 SSM 调 proper_init 覆盖）
         self._init_weights()
 
