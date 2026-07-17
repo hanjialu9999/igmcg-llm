@@ -517,6 +517,9 @@ class SlidingWindowCausalSelfAttention(nn.Module):
                 pk, pv = past_kv[0], past_kv[1]
                 k = torch.cat([pk, k], dim=2)
                 v = torch.cat([pv, v], dim=2)
+            # present 存累积的 token KV（past+token，不含 memory），作为下一步的 past_kv；
+            # memory 只在注意力计算时临时拼接，不进入缓存，避免序列长度膨胀。
+            present = (k, v)
             if memory_kv is not None:
                 mk, mv = memory_kv[0], memory_kv[1]
                 # (B,M,D) -> (B,H,M,D) 各头共享记忆 KV
@@ -524,7 +527,6 @@ class SlidingWindowCausalSelfAttention(nn.Module):
                 mv = mv.unsqueeze(1).expand(-1, self.num_heads, -1, -1)
                 k = torch.cat([mk, k], dim=2)
                 v = torch.cat([mv, v], dim=2)
-            present = (k, v)
             Tkv = k.size(2)
             qpos = torch.arange(start_pos, start_pos + Tq, device=q.device).unsqueeze(1)
             kpos = torch.arange(0, Tkv, device=q.device).unsqueeze(0)
@@ -792,7 +794,7 @@ class MambaSSM(nn.Module):
          - in/out/x_proj/dt_proj 权重用 Xavier（B/C 投影更稳）
          - dt_proj 偏置置 0.1（遗忘偏置，缓解早期不稳定）
          - A_log 用 uniform(a_log_init_range) -> A=-exp(A_log) 为负且稳定（Mamba 风格）
-         - D 跳跃连接置 D_init
+         - D 跳跃连接置 D_init（构造函数传入值，非固定 1.0）
         """
         nn.init.xavier_uniform_(self.in_proj.weight)
         nn.init.xavier_uniform_(self.out_proj.weight)
@@ -801,6 +803,7 @@ class MambaSSM(nn.Module):
         nn.init.constant_(self.dt_proj.bias, 0.1)
         nn.init.uniform_(self.A_log, *self.a_log_init_range)
         nn.init.ones_(self.D)
+        self.D.data.mul_(self.D_init)
 
     def forward(self, x: torch.Tensor, past_state: Optional[torch.Tensor] = None, past_conv_state: Optional[torch.Tensor] = None, use_cache: bool = False) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
@@ -1182,7 +1185,7 @@ class TransformerModel(nn.Module):
                 # 逐位置"是否启用 IGMCG 引导"门控 + 直觉条件投影（7 维直觉→标量偏置，按序列）。
                 self.igmcg_use_gate = nn.Linear(embedding_dim, 1)
                 self.intuition_proj = nn.Linear(7, 1)
-        # 增量解码 n-gram 上下文滚动缓冲（末 2 token），由 forward 维护；全量/训练时为 None。
+        # 增量解码 n-gram 上下文滚动缓冲（末 ctx_len token），由 forward 维护；全量/训练时为 None。
         self._ngram_last_ids = None
         # 阶段8.2：推理期静态剪枝标记（prune_layers 填充；默认空=不剪）
         self._pruned_layers = set()
@@ -1525,8 +1528,7 @@ class TransformerModel(nn.Module):
             eos_penalty: EOS 惩罚值，默认 -5.0（负值抑制 EOS，正值鼓励 EOS）
         """
         self.eval()
-        # 增量解码 n-gram 滚动缓冲在每次新序列开头清空，避免复用同一模型实例时
-        # 残留上一条序列的末 2 token 上下文（仅影响首个新位置，仍应清以防串味）。
+        # 增量解码 n-gram 滚动缓冲在每次新序列开头清空，避免跨序列串味。
         self._ngram_last_ids = None
         generated = list(token_ids)
         max_seq_length = self.max_seq_length
