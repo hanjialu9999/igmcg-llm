@@ -424,10 +424,15 @@ class SlidingWindowCausalSelfAttention(nn.Module):
         rlogits = torch.einsum('bhqd,bhkd->bhqk', q, k_real)  # (B,H,Tq,Treal)
         if gate is not None:
             rlogits = rlogits * gate
-        # 局部窗口（距离 <= window 的过去位置）恒保留：置为最大值，永不被稀疏丢弃
-        qpos = torch.arange(Treal, device=device).unsqueeze(0)  # 真实段内位置（0..Treal-1）
+        # 局部窗口恒保留：对每个 query q，保留其因果窗口 [q-window, q] 内的 key 位置，
+        # 防止这些本应可见的位置被 top-k 稀疏误丢。原实现仅保留全局末尾 window+1 个位置，
+        # 导致早期 query 的窗口内 key 无 +1e9 保护，被 top-k 丢弃后 retrieval bias 叠加
+        # -1e9 到基础掩码的 0 上 → 静默遮蔽本应可见的位置。
         if self.window > 0:
-            keep = (Treal - 1 - qpos) <= self.window  # (1,Treal) 每个 query 的局部窗口
+            Tq = q.size(2)
+            qpos_q = torch.arange(Tq, device=device).unsqueeze(1)  # (Tq, 1)
+            kpos = torch.arange(Treal, device=device).unsqueeze(0)  # (1, Treal)
+            keep = ((qpos_q - kpos) <= self.window) & (kpos <= qpos_q)  # (Tq, Treal)
             rlogits = rlogits + keep.unsqueeze(0).unsqueeze(0).float() * 1e9
         # 因果：未来位置本就被 attn_mask 屏蔽，这里也压到 -inf 不参与检索
         causal = torch.triu(torch.ones(Treal, Treal, dtype=torch.bool, device=device), diagonal=1)
@@ -721,19 +726,25 @@ class LinearAttention(nn.Module):
         kv_all = torch.einsum('bhtd,bhte->bhtde', kf, v)
         # 累积状态: S_t = Σ_{i=0}^{t} kv_i —— cumsum 沿 T 维
         S_all = torch.cumsum(kv_all, dim=2)  # (B,H,T,D,D)
+        # 分母累积: z_t = Σ_{i=0}^{t} φ(k_i)，den_t = φ(q_t)·z_t
+        z_all = torch.cumsum(kf, dim=2)  # (B,H,T,D)
         # 若有历史状态，偏移累积和
         S_prev = None
         if past_kv is not None and len(past_kv) >= 3 and past_kv[2] is not None:
             S_prev = past_kv[2]  # (B,H,D,D)
             S_all = S_all + S_prev.unsqueeze(2)  # 广播加到每个位置
+            # 历史分母状态（z_prev: (B,H,D)），也需要偏移
+            if len(past_kv) >= 4 and past_kv[3] is not None:
+                z_all = z_all + past_kv[3].unsqueeze(2)
         # 分子: q·S（每个位置查对应累积状态）
         num = torch.einsum('bhtd,bhtde->bhte', qf, S_all)  # (B,H,T,D)
-        # 分母: q·k（每个位置仅自身特征，不依赖历史）
-        den = torch.einsum('bhtd,bhtd->bht', qf, kf).unsqueeze(-1).clamp_min(1e-6)  # (B,H,T,1)
+        # 分母: φ(q_t)·z_t（累积分母，保证归一化正确）
+        den = torch.einsum('bhtd,bhtd->bht', qf, z_all).unsqueeze(-1).clamp_min(1e-6)  # (B,H,T,1)
         out = (num / den).transpose(1, 2).reshape(B, T, H * D)
-        # present: 末尾累积状态供增量解码
-        S_final = S_all[:, :, -1, :, :] if S_prev is None else S_all[:, :, -1, :, :]
-        present = (k, v, S_final) if use_cache else None
+        # present: 末尾累积状态供增量解码（S_final + z_final）
+        S_final = S_all[:, :, -1, :, :]
+        z_final = z_all[:, :, -1, :]
+        present = (k, v, S_final, z_final) if use_cache else None
         return self.proj(out), present
 
 
@@ -1012,10 +1023,9 @@ class TransformerBlock(nn.Module):
                 mg = torch.sigmoid(self.mixer_gate).to(x.device)
                 h = mg * h + (1.0 - mg) * lh
                 if use_cache and lpresent is not None:
-                    # 两路 KV 缓存合并：把线性注意力状态 S 塞进 attn_kv 元组第 3 位
-                    # (k, v, linear_S)，保持块级 (attn_kv, ssm_state, ssm_conv_state) 三元组不变，
-                    # 各子模块从 attn_kv 元组中取自己需要的部分。
-                    present = ((present[0], present[1], lpresent[2]), None, None)
+                    # 两路 KV 缓存合并：把线性注意力状态 S 和分母累积 z 塞进 attn_kv 元组
+                    # (k, v, linear_S, z_final)，保持块级 (attn_kv, ssm_state, ssm_conv_state) 三元组不变。
+                    present = ((present[0], present[1], lpresent[2], lpresent[3] if len(lpresent) > 3 else None), None, None)
             h_eff = (sk * h) if sk is not None else h
             x = x + self.drop(gate1 * h_eff if gate1 is not None else h_eff)
         elif self.block_type == 'ssm':
@@ -1339,7 +1349,10 @@ class TransformerModel(nn.Module):
             if isinstance(m, nn.Linear):
                 nn.init.normal_(m.weight, 0, 0.02)
                 if m.bias is not None:
-                    nn.init.zeros_(m.bias)
+                    # CharMergeLayer 的 gate.bias 有专用初始化（-1.0 → sigmoid≈0.27，初期少融合），
+                    # 跳过通用零初始化以保留该设计意图。
+                    if not (hasattr(self, 'char_merge') and m is getattr(self.char_merge, 'gate', None)):
+                        nn.init.zeros_(m.bias)
         nn.init.normal_(self.embedding.weight, 0, 0.02)
         # SSM 模块用更专业的初始化覆盖通用初始化
         for m in self.modules():
@@ -1532,12 +1545,14 @@ class TransformerModel(nn.Module):
                 dtype=torch.long, device=device
             )
             if prev_tokens.numel() > 0:
-                lt = next_token_logits[prev_tokens]
-                pos_mask = lt > 0
-                neg_mask = ~pos_mask
-                lt = torch.where(pos_mask, lt / repetition_penalty, lt)
-                lt = torch.where(neg_mask, lt * repetition_penalty, lt)
-                next_token_logits[prev_tokens] = lt
+                # 加性频率惩罚（统一 IGMCG 路径与 sample_step 路径）：
+                # 对已出现 token 按出现次数减去 penalty，对称稳定无正负不对称问题。
+                from collections import Counter
+                freq = Counter(generated)
+                prev_toks = torch.tensor(list(freq.keys()), dtype=torch.long, device=device)
+                prev_counts = torch.tensor(list(freq.values()), dtype=torch.float, device=device)
+                valid = (prev_toks >= 0) & (prev_toks < vocab_size)
+                next_token_logits[prev_toks[valid]] -= repetition_penalty * prev_counts[valid]
             if ngram_fn is not None and ngram_weight != 0.0:
                 next_token_logits = next_token_logits + ngram_weight * ngram_fn(generated, device)
             next_token_logits[pad_token_id] = float('-inf')
