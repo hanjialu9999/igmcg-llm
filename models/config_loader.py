@@ -77,6 +77,7 @@ def build_model(config: Dict[str, Any], device: Optional[torch.device] = None,
         window_base=mc.get('window_base', 64),
         # 阶段7：token mixer 选择（attn | linear | hybrid，默认 attn 向后兼容）
         mixer=mc.get('mixer', 'attn'),
+        linear_attn_feature=mc.get('linear_attn_feature', 'relu'),
         # 架构增强（默认全开：2026-07-14 起；旧权重门控 init=1.0 仍兼容，但开启后需重新训练以生效）
         qk_norm=mc.get('qk_norm', True),
         attn_temp=mc.get('attn_temp', True),
@@ -104,7 +105,8 @@ def build_model(config: Dict[str, Any], device: Optional[torch.device] = None,
     # 机制组合校验：mixer='hybrid' 仅在 block_type='attn' 的层真正融合线性注意力；
     # 若 layer_plan 含 'hybrid'（SSM×注意力混合块），该块不会调用 linear_attn/mixer_gate，
     # 导致二者成为永不更新的死参数（占显存与 checkpoint 体积）。发出告警避免静默无效训练。
-    if mc.get('mixer', 'attn') == 'hybrid' and layer_plan is not None:
+    if mc.get('mixer', 'attn') == 'hybrid' and mc.get('layer_plan', None) is not None:
+        layer_plan = mc.get('layer_plan', None)
         hybrid_blocks = [p for p in layer_plan.replace(',', ' ').split() if p == 'hybrid']
         if hybrid_blocks:
             import warnings

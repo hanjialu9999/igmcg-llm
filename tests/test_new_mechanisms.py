@@ -1056,3 +1056,33 @@ def test_linear_attention_cumsum_denominator():
         assert den.allclose(den_expected), 'den 应等于 einsum(qf, z_all).clamp_min(1e-6)'
         # 验证 present 包含 S_final 和 z_final
         assert present is None or len(present) == 4 or len(present[0]) == 2
+
+
+def test_linear_attention_relu_feature():
+    """LinearAttention relu 特征映射：relu(x)+1e-6 >= 0，DML 兼容（elu 会 CPU 回退）。"""
+    from models.transformer import LinearAttention
+    attn = LinearAttention(64, 4, feature='relu')
+    x = torch.randn(2, 8, 64)
+    feat = attn._feat(x)
+    # relu(x)+1e-6 >= 0（relu(x)>=0, +1e-6 后 >0）
+    assert (feat >= 0).all(), f'relu(x)+1e-6 应全 >=0, got min={feat.min().item():.6f}'
+    # 同时验证 out shape 正确
+    out, present = attn(x)
+    assert out.shape == (2, 8, 64), f'输出形状错误: {out.shape}'
+
+
+def test_hybrid_block_no_leak_attn_kwargs():
+    """hybrid block 构建时 linear_attn_feature 不泄漏到 SlidingWindowCausalSelfAttention。"""
+    from models.transformer import TransformerBlock
+    # 不应 TypeError: unexpected keyword argument
+    blk = TransformerBlock(
+        64, 4, 128, block_type='attn', mixer='hybrid',
+        attn_kwargs={'window': 32, 'qk_norm': True, 'attn_temp': True,
+                     'linear_attn_feature': 'relu'}
+    )
+    assert blk.linear_attn is not None
+    assert blk.linear_attn.feature == 'relu'
+    x = torch.randn(2, 8, 64)
+    out = blk(x)
+    assert isinstance(out, tuple)
+    assert out[0].shape == (2, 8, 64)

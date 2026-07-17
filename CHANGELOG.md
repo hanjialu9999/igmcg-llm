@@ -9,7 +9,13 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
-## `5747ed1`（本地，基于 `21aaf4b`）
+## `（本地，基于 `2b6fafb`）
+
+- fix: **LinearAttention elu→relu（DML 兼容）**——`LinearAttention._feat()` 默认 `elu(x)+1`，DML 不支持 `aten::elu.out` → 每步 CPU 回退（~100ms 固定税）。改默认 `feature='relu'`（`relu(x)+1e-6`），新增 config `linear_attn_feature` 可配置；`TransformerModel.__init__` 新增 `linear_attn_feature` 参数透传至 `attn_kwargs`；`TransformerBlock` 构建 LinearAttention 时取 `attn_kwargs['linear_attn_feature']`，并通过 `attn_only` 过滤避免泄漏至 `SlidingWindowCausalSelfAttention`。
+- test: 新增 `test_linear_attention_relu_feature`（验证 relu 特征映射非负 + 输出形状）、`test_hybrid_block_no_leak_attn_kwargs`（验证 hybrid block 构建不报 TypeError + linear_attn.feature='relu'）。pytest 103 passed。
+- chore: 清理旧 checkpoint 目录（`checkpoints_50mb*`, `checkpoints_dml`, `checkpoints_hybrid*`, `checkpoints_ngram_smoke`, `checkpoints_smoke`）；保留 `checkpoints`/`checkpoints_full_dml`/`checkpoints_baseline_dml`/`checkpoints_smoke_4k`/`checkpoints_cmp_*_full`。
+
+## `2b6fafb`（已推送，基于 `690e57a`）
 
 - fix: **第四轮子代理审查修复**（3 子代理并行审查 + 证据锚定验证）：
   - BUG-7: `_generate_candidates_batch` 未重置 `_ngram_last_ids`，多次调用 `generate_igmcg` 时前一序列的 n-gram 上下文污染当前生成。修复：初始 forward 前 `model._ngram_last_ids = None`。
