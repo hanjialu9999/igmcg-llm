@@ -574,15 +574,17 @@ def main():
     print(f"Vocabulary size: {len(vocab)}")
 
     # 推理精度：bf16 在支持的 CPU/CUDA 上约 1.5~1.8x 提速，且质量基本无损（此机实测困惑度更优）
+    # 注意：torch 2.4.1 无 torch.cpu.get_cpu_capability()（该 API 在更新版本才存在），
+    # 旧代码调用它会抛异常被吞掉、实际回退 fp32 但打印"bf16"——属假 bf16 打印 bug。
+    # 修正：CPU bf16 自 torch 2.0 起由 oneDNN 稳定支持，CUDA 用官方 is_bf16_supported() 探测，
+    # 探测失败才回退 fp32，且打印与实际行为严格一致。
     dtype = args.dtype
     if dtype == 'auto':
         dtype = 'bf16' if device.type in ('cpu', 'cuda') else 'fp32'
-        if device.type == 'cpu':
-            try:
-                if 'BF16' not in str(torch.cpu.get_cpu_capability()).upper():
-                    dtype = 'fp32'
-            except Exception:
+        if device.type == 'cuda':
+            if not torch.cuda.is_bf16_supported():
                 dtype = 'fp32'
+        # CPU 下 torch>=2.0 默认支持 bf16 自动混合精度，无需额外探测
     if dtype == 'bf16' and device.type in ('cpu', 'cuda'):
         # 在对应后端启用 bf16 自动混合精度（注意必须按实际 device.type 开启，
         # 原实现只开了 'cpu' autocast，导致 CUDA 下 bf16 实际未生效）

@@ -113,7 +113,7 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
                  use_amp=True, autocast_dtype=torch.float32, grad_accum_steps=1,
                  lr_schedule='cosine', eta_min=0.0, wsd_decay_frac=0.1,
                  show_progress=True, amp_device=None, enhancement_off_prob=0.0,
-                 enhancement_schedule=None):
+                 enhancement_schedule=None, complexity_lambda=0.0):
     """Train one epoch with warmup, gradient accumulation and mixed precision.
 
     - warmup_steps: 预热步数。若 <1 则按"占整个 epoch 有效步数的比例"解释（如 0.1=前 10% 步预热）。
@@ -181,6 +181,12 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
         else:
             logits = model(input_ids).view(-1, model.vocab_size)
             loss = criterion(logits, target_ids.view(-1))
+        # 阶段6：计算复杂度奖励（正则项）——复杂度越低给奖励（即惩罚高复杂度）。
+        # 仅当配置 complexity_lambda>0 且模型含可学复杂度参数（skip/mixer/learn_window）时生效，
+        # 量级很小（默认 1e-4），避免压垮主语言建模损失。
+        if complexity_lambda and complexity_lambda > 0:
+            comp = model.compute_complexity()
+            loss = loss + complexity_lambda * comp
 
         # Scale loss for gradient accumulation, then backward
         scaled = loss / grad_accum_steps
@@ -494,7 +500,8 @@ def main(config_path='configs/pretrain.yaml', resume=False):
             wsd_decay_frac=wsd_decay_frac,
             show_progress=config['training'].get('show_progress', True),
             enhancement_off_prob=config['training'].get('enhancement_off_prob', 0.0),
-            enhancement_schedule=enhancement_schedule
+            enhancement_schedule=enhancement_schedule,
+            complexity_lambda=float(config['training'].get('complexity_lambda', 0.0)),
         )
 
         history['train_loss'].append(train_loss)

@@ -11,6 +11,7 @@
 - **IGMCG 反碎片化**：生成多个温度候选，按综合分选优，抑制“碎片式”输出。
 - **跨设备**：自动选择 `cuda` / `dml`(AMD) / `cpu`；DML 推理现已可用，训练侧 bf16 在 CPU/CUDA 上开启混合精度。
 - **低功耗选项**：CPU 可用 `--cpu-threads` 限线程、`--quantize` 启 int8 动态量化。
+- **增强架构机制**（默认关闭、向后兼容旧权重）：可学习遗忘 `MemoryBank`（memory_forget）、可学 RoPE 频率 + ALiBi（rope_learnable / alibi）、全上下文检索（memory_retrieval_full / memory_retrieval_topk）、可学滑动窗口（learn_window / window_base）、选择性跳过层（layer_skip）、线性注意力 mixer（mixer=attn|linear|hybrid）、计算复杂度奖励（training.complexity_lambda）、统一记忆预算（memory_budget）。详见各 `configs/*.yaml` 注释。
 
 ## 目录结构
 
@@ -76,6 +77,30 @@ python scripts/diagnose.py --model checkpoints/final_model.pt --vocab checkpoint
 # 参数扫描（Top-K / Temperature）
 python scripts/tuning/tune_topk.py --model checkpoints/final_model.pt --vocab checkpoints/vocab.json --device auto
 ```
+
+### 完整快速开始（数据 / 微调 / 调参 / FAQ）
+
+**准备数据**：小样本调试可用 `merged_sample.txt`（由 `scripts/data_manager.py merge` 自动生成）；原始 QA 数据在 `data/datasets/`（仅本地保留，未入库）。重新构建语料：
+
+```bash
+python scripts/data_manager.py merge     # 合并 datasets/ 下语料并构建词表（统一入口）
+python scripts/data_manager.py to-jsonl   # 转换为 jsonl（可选）
+```
+
+**训练基座**：`python scripts/train.py --config configs/pretrain.yaml`；结束在 `checkpoints/` 产出 `final_model.pt` 与 `vocab.json`。支持 warmup、混合精度、早停与自动清理旧检查点。
+
+**微调（可选）**：`python scripts/train_finetune.py`（数据来自 `data/datasets/`，产出 `best_finetuned_model.pt`，供 `chat.py` / `dialogue_interactive.py` 使用）。优化器 / 学习率 / 轮数均从 `configs/pretrain.yaml` 的 `training` 段读取。
+
+**CPU 推理提速**：`--dtype bf16`（默认 auto 启用，CPU/CUDA 约 1.5~1.8× 提速且质量基本无损）；`--cpu-threads N` 限线程；`--quantize` 启 int8 动态量化（约 4× 更小模型、质量无损）。
+
+**调参**：`scripts/tuning/tune_temperature.py` / `tune_topk.py` / `showcase_optimal_params.py`（展示最优参数并回写 `chat_config.json`）。
+
+**常见问题**：
+- `FileNotFoundError: vocab.json`：先执行训练（或单独构建词表）。
+- 换模型结构：只改 `configs/pretrain.yaml` 的 `model` 段，所有脚本自动同步。
+- 显存不足：调小 `training.batch_size`，或微调脚本中减小 `DataLoader` 的 `batch_size`。
+
+> 更详尽的步骤即上方「完整快速开始」章节（原 `QUICK_START.md` 已并入本文件）。
 
 ## 模型架构
 

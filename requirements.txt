@@ -1,4 +1,6 @@
-torch>=2.0,<2.5
+# 注意：torch-directml 要求 torch>=2.0,<2.2（DML 实际运行版本上限），
+# 写 <2.5 会让 pip 装到不兼容版本（DML 设备推理崩溃），故上界锁 <2.2。
+torch>=2.0,<2.2
 pyyaml==6.0
 numpy==1.24.3
 tqdm>=4.65.0

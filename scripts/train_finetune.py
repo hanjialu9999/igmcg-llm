@@ -99,11 +99,11 @@ def train():
         print("加载权重参数...")
         checkpoint = torch.load(model_path, map_location='cpu', weights_only=True)
         if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
-            model.load_state_dict(checkpoint['model_state_dict'])
-            print("OK 从 checkpoint 成功加载权重")
+            missing, unexpected = model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+            print(f"OK 从 checkpoint 成功加载权重（missing={len(missing)}, unexpected={len(unexpected)}）")
         else:
-            model.load_state_dict(checkpoint)
-            print("OK 直接加载权重成功")
+            missing, unexpected = model.load_state_dict(checkpoint, strict=False)
+            print(f"OK 直接加载权重成功（missing={len(missing)}, unexpected={len(unexpected)}）")
 
     apply_cpu_threads(config['training'].get('cpu_threads'))
     model.train()
@@ -114,12 +114,26 @@ def train():
     # batch_size 设为 16，显存如果炸了就改小
     dataloader = DataLoader(dataset, batch_size=16, shuffle=True)
 
-    optimizer = AdamW(model.parameters(), lr=2e-5)
+    # 优化器/学习率/轮数统一从 config['training'] 读取，与预训练脚本保持一致（避免硬编码漂移）
+    tc = config['training']
+    opt_name = str(tc.get('optimizer', 'adamw')).lower()
+    lr = float(tc.get('learning_rate', 5e-4))
+    if opt_name == 'sgd':
+        lr = float(tc.get('sgd_learning_rate', lr))
+        momentum = float(tc.get('momentum', 0.9))
+        optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=momentum,
+                                    weight_decay=tc.get('weight_decay', 0.0))
+    elif opt_name == 'adam':
+        optimizer = torch.optim.Adam(model.parameters(), lr=lr,
+                                     weight_decay=tc.get('weight_decay', 0.0))
+    else:
+        optimizer = AdamW(model.parameters(), lr=lr,
+                          weight_decay=tc.get('weight_decay', 0.0))
     # 忽略 padding 部分的 loss
     criterion = nn.CrossEntropyLoss(ignore_index=vocab.pad_idx)
 
-    num_epochs = 10  # 原 200 轮过多，改为 10 轮
-    print(f"\n开始微调，共 {num_epochs} 个epoch...\n")
+    num_epochs = int(tc.get('finetune_epochs', tc.get('epochs', 10)))
+    print(f"\n开始微调，共 {num_epochs} 个epoch（optimizer={opt_name}, lr={lr}）...\n")
 
     best_loss = float('inf')
 

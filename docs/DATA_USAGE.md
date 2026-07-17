@@ -13,15 +13,17 @@ data/
 │   ├── biology_qa.txt
 │   ├── ...
 │   └── natural_chat.txt
-└── processed/             # process_data.py 生成的 jsonl（可选，本地）
+└── processed/             # data_manager.py to-jsonl 生成的 jsonl（可选，本地）
 ```
 
 ## 准备训练语料
 
-将 `data/datasets/` 下的多个 QA 文件合并为单一训练文本：
+将 `data/datasets/` 下的多个 QA 文件合并为单一训练文本（统一入口）：
 
 ```bash
-python scripts/merge_data.py
+python scripts/data_manager.py merge          # 合并 datasets/ 为 data/train_data_combined.txt
+python scripts/data_manager.py merge --dedup --build-vocab   # 去重并构建词表
+python scripts/data_manager.py stats          # 仅查看统计
 ```
 
 也可对单个目录做更细的处理：
@@ -29,13 +31,15 @@ python scripts/merge_data.py
 ```bash
 python scripts/improve_data.py
 python scripts/reformat_data.py
-python scripts/data_manager.py
+python scripts/data_manager.py                # 交互式菜单
 ```
+
+> `scripts/merge_data.py` 与 `scripts/process_data.py` 现为上述命令的兼容薄包装。
 
 ## 转换为 JSONL（可选）
 
 ```bash
-python scripts/process_data.py
+python scripts/data_manager.py to-jsonl
 ```
 
 把 `data/datasets/*.txt`（奇数行问题、偶数行答案）转换为

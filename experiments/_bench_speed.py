@@ -15,8 +15,10 @@ import models.transformer as T
 from generate import load_model, generate_text
 from models.data_utils import Vocabulary
 
-MODEL = "archive_unused/checkpoints_backup/_stab_ckpt/final_model.pt"
-VOCAB = "checkpoints_dml_test/vocab.json"
+# 权重路径通过环境变量覆盖（默认指向正式 checkpoints，需用真实训练产物才能跑）
+import os
+MODEL = os.environ.get("BENCH_MODEL", "checkpoints/final_model.pt")
+VOCAB = os.environ.get("BENCH_VOCAB", "checkpoints/vocab.json")
 PROMPT = "人工智能正在改变世界，"
 MAX_LEN = 200
 DEVICE = "cpu"
