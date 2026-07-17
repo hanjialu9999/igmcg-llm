@@ -907,7 +907,8 @@ class TransformerBlock(nn.Module):
                  dropout: float = 0.0, max_seq_length: int = 64,
                  ssm_kwargs: Optional[Dict[str, Any]] = None, attn_kwargs: Optional[Dict[str, Any]] = None,
                  residual_gate: bool = True, hybrid_gate: bool = True, gradient_checkpointing: bool = True,
-                 skip: bool = False, mixer: str = 'attn'):
+                 skip: bool = False, mixer: str = 'attn',
+                 hybrid_single_gate: bool = False):
         super().__init__()
         self.block_type = block_type
         self.drop = nn.Dropout(dropout)
@@ -955,6 +956,12 @@ class TransformerBlock(nn.Module):
         if hybrid_gate and block_type == 'hybrid':
             self.hybrid_attn_gate = nn.Parameter(torch.ones(1))
             self.hybrid_ssm_gate = nn.Parameter(torch.ones(1))
+        # 阶段8.4：单动态门控 g_t（默认关，向后兼容）。用 g_t=sigmoid(W_g·ln1(x)) 逐位置混合
+        # attn 与 ssm（g_t·attn_h + (1-g_t)·ssm_h），替代原两独立标量门控相加（双残差、非真融合）。
+        # 单门控是凸组合、逐位置动态、参数更少，架构更干净（见 §8 推进顺序 #4）。
+        self.hybrid_single_gate = hybrid_single_gate and block_type == 'hybrid'
+        if self.hybrid_single_gate:
+            self.hybrid_mix = nn.Linear(dim, 1)
         # 阶段6：可学习跳过层（skip gate）——sigmoid 门控，模型自决本层是否跳过。
         # skip≈1 走残差（等效跳过该块计算），推理时可按阈值静态剪枝省算力。
         self.skip_enabled = skip
@@ -1016,7 +1023,13 @@ class TransformerBlock(nn.Module):
                 h, attn_present = self.attn(xn, attn_past_kv, use_cache, start_pos, memory_kv=mem_kv)
                 ssm_h, ssm_present_state, ssm_present_conv_state = self.ssm(xn, past_state=ssm_past_state, past_conv_state=ssm_past_conv_state, use_cache=use_cache)
             h_eff = (sk * h) if sk is not None else h
-            if self.hybrid_gate_enabled and self._rt["hybrid_gate"]:
+            if self.hybrid_single_gate and self._rt.get("hybrid_gate", True):
+                # 阶段8.4：单动态门控 —— g_t 逐位置混合 attn/ssm 两路（凸组合）。
+                # g_t=sigmoid(W_g·ln1(x)) ∈(0,1)，out = g_t·attn_h + (1-g_t)·ssm_h。
+                g = torch.sigmoid(self.hybrid_mix(xn)).to(x.device)  # (B,T,1)
+                mixed = g * h_eff + (1.0 - g) * ssm_h              # (B,T,D)
+                x = x + self.drop(mixed)
+            elif self.hybrid_gate_enabled and self._rt["hybrid_gate"]:
                 # ⭐A 混合块：attn 与 ssm 两路各自可学习门控，让模型自决每层偏重
                 x = x + self.drop(self.hybrid_attn_gate * h_eff) \
                       + self.drop(self.hybrid_ssm_gate * ssm_h)
@@ -1105,6 +1118,7 @@ class TransformerModel(nn.Module):
                  mask_fill_value: float = -1e9,
                   qk_norm: bool = True, attn_temp: bool = True,
                     residual_gate: bool = True, hybrid_gate: bool = True,
+                    hybrid_single_gate: bool = False,
                     char_merge: bool = False, char_merge_kernel: int = 3,
                     char_merge_dropout: float = 0.0,
                     memory_size: int = 0, memory_comp_dim: int = 32,
@@ -1174,6 +1188,7 @@ class TransformerModel(nn.Module):
                              dropout=dropout, max_seq_length=max_seq_length,
                              ssm_kwargs=ssm_kwargs, attn_kwargs=attn_kwargs,
                              residual_gate=residual_gate, hybrid_gate=hybrid_gate,
+                             hybrid_single_gate=hybrid_single_gate,
                              gradient_checkpointing=gradient_checkpointing,
                              skip=layer_skip, mixer=mixer)
             for bt in self.layer_plan

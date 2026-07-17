@@ -602,3 +602,54 @@ def test_memory_product_key_backward_flows():
     # 写路由可微：压缩矩阵（叶子参数）收到梯度，即证明写入路径参与计算图并反向可训。
     # 注：slots 是非叶缓冲（每次 write 重赋值），其 .grad 不会填充，故不依赖它判梯度。
     assert m.memory_bank.compress.weight.grad is not None, "记忆压缩矩阵无梯度（product_key 写路由不可微）"
+
+
+# ---------------------------------------------------------------------------
+# 阶段8.4：hybrid 单动态门控 g_t（替代双独立标量门控相加）
+# ---------------------------------------------------------------------------
+
+def _small_hybrid(**over):
+    kw = dict(vocab_size=200, embedding_dim=64, num_heads=4, num_layers=2,
+              hidden_dim=128, max_seq_length=32, layer_plan='attn,hybrid')
+    kw.update(over)
+    return TransformerModel(**kw)
+
+
+def test_hybrid_single_gate_changes_output():
+    """开启 hybrid_single_gate 后，输出应与原双标量门控路径不同（确为真融合）。"""
+    m_single = _small_hybrid(hybrid_single_gate=True)
+    m_dual = _small_hybrid(hybrid_single_gate=False)
+    m_single.eval(); m_dual.eval()
+    x = torch.randint(0, 200, (2, 10))
+    with torch.no_grad():
+        out_s = m_single(x)
+        out_d = m_dual(x)
+    assert not torch.allclose(out_s, out_d), "单动态门控应与双标量门控输出不同"
+    assert hasattr(m_single.blocks[1], 'hybrid_mix'), "单门控未创建 hybrid_mix 线性层"
+
+
+def test_hybrid_single_gate_cache_parity():
+    """单动态门控下训练（全量）与推理（cache）路径数值一致。"""
+    m = _small_hybrid(hybrid_single_gate=True)
+    m.eval()
+    ids = torch.randint(0, 200, (1, 12))
+    with torch.no_grad():
+        full = m(ids, use_cache=False)
+        cached = m(ids, use_cache=True)
+    fl = full["logits"] if isinstance(full, dict) else full
+    cl = cached[0] if isinstance(cached, tuple) else (cached["logits"] if isinstance(cached, dict) else cached)
+    diff = (fl - cl).abs().max().item()
+    assert diff < 1e-4, f"单动态门控训练/推理不一致：max_diff={diff}"
+
+
+def test_hybrid_single_gate_backward_flows():
+    """单动态门控 g_t 可反向：hybrid_mix 线性层与 attn/ssm 均收到梯度。"""
+    import torch.nn.functional as F
+    m = _small_hybrid(hybrid_single_gate=True)
+    m.train()
+    x = torch.randint(0, 200, (2, 8))
+    out = m(x)
+    loss = F.cross_entropy(out.reshape(-1, 200), torch.randint(0, 200, (16,)))
+    loss.backward()
+    assert m.blocks[1].hybrid_mix.weight.grad is not None, "hybrid_mix 无梯度（门控不可学）"
+    assert m.blocks[1].attn.qkv.weight.grad is not None, "attn 无梯度"
