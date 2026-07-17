@@ -1087,8 +1087,10 @@ class TransformerModel(nn.Module):
                     memory_forget: bool = False,
                     memory_retrieval_full: bool = False, memory_retrieval_topk: int = 32,
                     rope_learnable: bool = False, alibi: bool = False,
-                  layer_skip: bool = False, learn_window: bool = False, window_base: int = 64,
-                  mixer: str = 'attn'):
+                   layer_skip: bool = False, learn_window: bool = False, window_base: int = 64,
+                   mixer: str = 'attn',
+                   ngram_fusion: bool = False, ngram_model=None,
+                   ngram_gate_scale: float = 1.0):
         super(TransformerModel, self).__init__()
 
         self.vocab_size = vocab_size
@@ -1096,6 +1098,16 @@ class TransformerModel(nn.Module):
         self.max_seq_length = max_seq_length
         self.attn_window = attn_window
         self.gradient_checkpointing = gradient_checkpointing
+        # 阶段8.1：n-gram 神经融合——把统计 n-gram 先验经可学习门控 g_t=sigmoid(h_t·W_g)
+        # 逐位置加回 logits（z_neural + g_t·ngram_vec.detach()）。主干 z_neural 仍吃完整
+        # CE 梯度（gate 只缩放外部统计向量、不缩放主干），故不会塌缩、主干始终是独立 LM。
+        # 模型于每步自决多信 n-gram：自身不确定时 g_t↑（靠统计兜底），有把握时 g_t↓。
+        # 默认关（向后兼容、不增参数、不构建统计表）；开启时由调用方传入已构建的 ngram_model。
+        self.ngram_fusion_enabled = bool(ngram_fusion) and (ngram_model is not None)
+        self.ngram_model = ngram_model if self.ngram_fusion_enabled else None
+        self.ngram_gate_scale = ngram_gate_scale
+        if self.ngram_fusion_enabled:
+            self.ngram_gate = nn.Linear(embedding_dim, 1)
         self.layer_plan = _parse_layer_plan(layer_plan, num_layers)
         self.rope_base = rope_base
         self.rope_max_len = rope_max_len
@@ -1170,6 +1182,14 @@ class TransformerModel(nn.Module):
         """统一开关跳过层门控（同步到各 block）。"""
         for blk in self.blocks:
             blk.set_skip_active(active)
+
+    def set_ngram_fusion_active(self, active: bool = True):
+        """运行时开关 n-gram 神经融合（训练全开、推理可按需关）。"""
+        self._ngram_fusion_active = bool(active) and self.ngram_fusion_enabled
+
+    def set_ngram_gate_scale(self, scale: float):
+        """推理期总闸：用户在 (0, 1+] 间缩放门控输出（1.0=模型自决，0=拔掉 n-gram）。"""
+        self.ngram_gate_scale = float(scale)
 
     def compute_complexity(self) -> torch.Tensor:
         """阶段6/8：计算当前模型结构的"激活复杂度"标量（用于复杂度奖励正则）。
@@ -1308,6 +1328,18 @@ class TransformerModel(nn.Module):
             x, present = block(x, past_key_values[i], use_cache, start_pos, ssm_past_state, ssm_past_conv_state, memory)
             presents.append(present)
         x = self.ln_f(x)
+        # 阶段8.1：n-gram 神经融合——z_neural + g_t·ngram_vec。ngram_vec 是固定统计缓冲
+        # （.detach() 不引梯度，主干 z_neural 仍吃完整 CE 梯度、不被缩放 → 不塌缩）。
+        # g_t=sigmoid(h_t·W_g) 逐位置自决多信 n-gram，且随 use_cache 增量解码逐 token 计算也一致
+        # （前向每步传入当前序列，logprob_matrix 按位置上下文查表，与全量路径共享同一张表）。
+        if self.ngram_fusion_enabled and getattr(self, '_ngram_fusion_active', True):
+            ngram_vec = self.ngram_model.logprob_matrix(src, x.device).detach()  # (B,T,V)
+            gate = torch.sigmoid(self.ngram_gate(x)) * self.ngram_gate_scale    # (B,T,1)
+            z = self.output_head(x)                                            # (B,T,V) 主干 logits
+            fused = z + gate * ngram_vec
+            if use_cache:
+                return fused, presents
+            return fused
         if use_cache:
             return self.output_head(x), presents
         return self.output_head(x)

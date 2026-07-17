@@ -194,14 +194,42 @@ class NGramModel:
         V = self.vocab_size
         w2 = generated[-2] if len(generated) >= 2 else None
         w1 = generated[-1] if len(generated) >= 1 else None
+        return self._vec_for_ctx(w2, w1, device)
+
+    def _vec_for_ctx(self, w2, w1, device):
+        """上下文 (w2,w1) 下的 log 概率向量 (V,)，按上下文缓存。"""
         cache_key = (w2, w1)
         if cache_key in self._logprob_cache:
             return self._logprob_cache[cache_key].to(device)
+        V = self.vocab_size
         vec = self._compute_logprob(w2, w1, V, device)
         if len(self._logprob_cache) > self._logprob_cache_max:
             self._logprob_cache.clear()
         self._logprob_cache[cache_key] = vec.cpu()
         return vec
+
+    def logprob_matrix(self, ids: torch.Tensor, device) -> torch.Tensor:
+        """向量化版本：输入 (B,T) 的 token id，返回 (B,T,V) 的 n-gram log 概率矩阵，
+        每个位置 t 用其前 2 个 token 上下文 (ids[t-2], ids[t-1]) 插值。
+
+        训练期让神经 LM 逐位置自决"多信 n-gram"；统计表是固定缓冲（调用方应 .detach()），
+        与解码期 logprob_vector 共用同一张计数表与缓存，分布一致。复杂度取决于
+        不同上下文数（经 _vec_for_ctx 缓存），而非 B*T，故长序列也可接受。"""
+        if ids.dim() == 1:
+            ids = ids.unsqueeze(0)
+        B, T = ids.shape
+        V = self.vocab_size
+        out = torch.empty(B, T, V, device=device)
+        pad = self.vocab.pad_idx if hasattr(self.vocab, 'pad_idx') else 0
+        for b in range(B):
+            seq = ids[b].tolist()
+            ctx_w2 = [pad, pad] + seq[:-2]
+            ctx_w1 = [pad] + seq[:-1]
+            for t in range(T):
+                w2 = ctx_w2[t]
+                w1 = ctx_w1[t]
+                out[b, t] = self._vec_for_ctx(w2, w1, device)
+        return out
 
     def _compute_logprob(self, w2, w1, V, device):
         """实际计算上下文 (w2,w1) 下的 log 概率向量（无缓存）。"""

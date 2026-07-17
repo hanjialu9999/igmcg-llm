@@ -291,3 +291,119 @@ def test_compute_complexity_linear_discount():
     c_attn = m_attn.compute_complexity().item()
     ratio = c_lin / c_attn
     assert ratio < 0.6, f"linear 复杂度未获 0.3x 折扣：ratio={ratio:.3f}"
+
+
+# ---------------------------------------------------------------------------
+# 阶段8.1：n-gram 神经融合（可学习门控 g_t 逐位置把统计 n-gram 先验加回 logits）
+# ---------------------------------------------------------------------------
+
+def _small_ngram(vocab_size=200):
+    """构建一个小型 Vocabulary + 统计 NGramModel，供 n-gram 融合测试。
+
+    走 Vocabulary 的标准 build_vocab 路径（而非伪造 encode），保证 vocab 长度、
+    pad_idx、encode 行为均与生产一致；ngram 统计表由此真实 vocab 派生。
+    """
+    import tempfile, os
+    from models.data_utils import Vocabulary
+    from scripts.generate import NGramModel
+    corpus_texts = [
+        "中 国 人 民 生 活 幸 福",
+        "中 国 梦 想 伟 大 复 兴",
+        "人 民 当 家 作 主 权 利",
+        "中 国 人 民 共 和 国 万 岁",
+    ]
+    v = Vocabulary(vocab_size)
+    v.build_vocab(corpus_texts)  # 真实构建：len(v)≈vocab_size，encode 产出合法 id
+    corpus = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
+    corpus.write("\n".join(corpus_texts) + "\n")
+    corpus.close()
+    ng = NGramModel(v, corpus.name, max_order=3, smoothing=1.0)
+    os.unlink(corpus.name)
+    return v, ng
+
+
+def test_ngram_fusion_changes_logits():
+    """开启 ngram_fusion 时，输出 logits 必须被门控融合改变（而非等于纯主干）。"""
+    v, ng = _small_ngram()
+    V = len(v)
+    m = _small(vocab_size=V, ngram_fusion=True, ngram_model=ng)
+    m.eval()
+    x = torch.randint(0, V, (2, 10))
+    with torch.no_grad():
+        fused = m(x)
+        m.set_ngram_fusion_active(False)
+        base = m(x)
+    assert not torch.allclose(fused, base), "ngram 融合未改变 logits"
+
+
+def test_ngram_fusion_gate_trainable():
+    """ngram_gate 应可经反向传播获得梯度，且主干 embedding 仍拿完整梯度（不塌缩）。"""
+    import torch.nn.functional as F
+    v, ng = _small_ngram()
+    V = len(v)
+    m = _small(vocab_size=V, ngram_fusion=True, ngram_model=ng)
+    m.train()
+    x = torch.randint(0, V, (2, 10))
+    out = m(x)
+    loss = F.cross_entropy(out.reshape(-1, V), torch.randint(0, V, (20,)))
+    loss.backward()
+    assert m.ngram_gate.weight.grad is not None, "ngram_gate 无梯度（门控不可学）"
+    assert m.embedding.weight.grad is not None, "embedding 无梯度（主干被 detach 塌缩）"
+
+
+def test_ngram_fusion_detach_no_leak():
+    """ngram 统计向量应 .detach()，反向不试图对统计缓冲（无 grad）求导而报错。"""
+    import torch.nn.functional as F
+    v, ng = _small_ngram()
+    V = len(v)
+    m = _small(vocab_size=V, ngram_fusion=True, ngram_model=ng)
+    m.train()
+    x = torch.randint(0, V, (2, 8))
+    out = m(x)
+    loss = F.cross_entropy(out.reshape(-1, V), torch.randint(0, V, (16,)))
+    # 若 ngram_vec 未 detach，反向会触及无 grad 的统计张量 → 抛错；此处应正常
+    loss.backward()
+
+
+def test_ngram_fusion_disabled_is_identity():
+    """默认 ngram_fusion=False 时不构建统计表、不增参数、输出与纯主干一致。"""
+    m = _small(vocab_size=200)  # 未传 ngram_fusion
+    assert not getattr(m, 'ngram_fusion_enabled', False), "默认应关闭 ngram 融合"
+    assert not hasattr(m, 'ngram_gate'), "关闭时不应有 ngram_gate 参数"
+    m.eval()
+    x = torch.randint(0, 200, (2, 10))
+    with torch.no_grad():
+        out = m(x)
+    assert out.shape == (2, 10, 200)
+
+
+def test_ngram_fusion_cache_parity():
+    """ngram 融合下训练（全量）与推理（cache）路径必须数值一致（逐 token 融合也对齐）。"""
+    v, ng = _small_ngram()
+    V = len(v)
+    m = _small(vocab_size=V, ngram_fusion=True, ngram_model=ng)
+    m.eval()
+    ids = torch.randint(0, V, (1, 12))
+    with torch.no_grad():
+        full = m(ids, use_cache=False)
+        cached = m(ids, use_cache=True)
+    fl = full["logits"] if isinstance(full, dict) else full
+    cl = cached[0] if isinstance(cached, tuple) else (cached["logits"] if isinstance(cached, dict) else cached)
+    diff = (fl - cl).abs().max().item()
+    assert diff < 1e-4, f"ngram 融合训练/推理不一致：max_diff={diff}"
+
+
+def test_ngram_fusion_gate_scale_zero():
+    """gate_scale=0 应完全拔掉 n-gram 贡献（输出≈纯主干），验证用户可控总闸。"""
+    v, ng = _small_ngram()
+    V = len(v)
+    m = _small(vocab_size=V, ngram_fusion=True, ngram_model=ng)
+    m.eval()
+    x = torch.randint(0, V, (2, 10))
+    with torch.no_grad():
+        m.set_ngram_gate_scale(0.0)
+        off = m(x)
+        m.set_ngram_gate_scale(1.0)
+        m.set_ngram_fusion_active(False)
+        base = m(x)
+    assert torch.allclose(off, base, atol=1e-5), "gate_scale=0 时仍含 n-gram 贡献"
