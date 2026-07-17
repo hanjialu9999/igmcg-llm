@@ -444,6 +444,27 @@ def test_ngram_fusion_incremental_matches_full():
     assert diff < 1e-4, f"增量解码 n-gram 上下文错误（退化 unigram）：max_diff={diff}"
 
 
+def test_ngram_orders_incremental_matches_full():
+    """阶段8.8：logprob_orders_incremental（滚动增量查表）必须与 logprob_orders_matrix
+    （全量 ctx）逐位置完全一致（否则增量解码 n-gram 上下文错位）。"""
+    v, ng = _small_ngram()
+    V = len(v)
+    ids = torch.randint(0, V, (2, 12))
+    with torch.no_grad():
+        full_ord = ng.logprob_orders_matrix(ids, 'cpu')           # (B,T,V,K)
+        # 模拟增量：初值 ctx2=(pad,pad)，逐段喂入
+        ctx2 = torch.zeros(2, 2, dtype=torch.long)
+        inc_parts = []
+        for t in range(0, 12, 3):
+            seg = ids[:, t:t + 3]
+            inc_parts.append(ng.logprob_orders_incremental(ctx2, seg, 'cpu'))
+            ctx2 = torch.cat([ctx2, seg], dim=1)[:, -2:]
+        inc_ord = torch.cat(inc_parts, dim=1)                     # (B,T,V,K)
+    assert full_ord.shape == inc_ord.shape
+    diff = (full_ord - inc_ord).abs().max().item()
+    assert diff < 1e-5, f"增量查表与全量查表不一致：max_diff={diff}"
+
+
 def test_ngram_gate_scale_forwarded_by_build_model():
     """M1 回归：build_model 必须把 config 的 ngram_gate_scale 透传（否则 YAML 配置静默失效）。"""
     from models.config_loader import build_model
@@ -458,7 +479,8 @@ def test_ngram_gate_scale_forwarded_by_build_model():
 
 
 def test_ngram_fusion_gate_scale_zero():
-    """gate_scale=0 应完全拔掉 n-gram 贡献（输出≈纯主干），验证用户可控总闸。"""
+    """gate_scale=0 应完全拔掉 n-gram 贡献（输出=纯主干 log_softmax(z)，不含 ngram_vec），
+    验证用户可控总闸。阶段8.8 起融合在 log 概率空间：gate=0 → fused=log_softmax(z)。"""
     v, ng = _small_ngram()
     V = len(v)
     m = _small(vocab_size=V, ngram_fusion=True, ngram_model=ng)
@@ -467,10 +489,14 @@ def test_ngram_fusion_gate_scale_zero():
     with torch.no_grad():
         m.set_ngram_gate_scale(0.0)
         off = m(x)
+        # 纯主干：仅跑 backbone + output_head，不经 n-gram 融合
         m.set_ngram_gate_scale(1.0)
         m.set_ngram_fusion_active(False)
         base = m(x)
-    assert torch.allclose(off, base, atol=1e-5), "gate_scale=0 时仍含 n-gram 贡献"
+        # 纯主干的 log 概率（与 gate=0 融合输出等价：fused=log_softmax(z) + 0）
+        base_logp = torch.log_softmax(base, dim=-1)
+    # gate=0 时 n-gram 贡献应完全为零：fused 等于纯主干 log_softmax
+    assert torch.allclose(off, base_logp, atol=1e-5), "gate_scale=0 时仍含 n-gram 贡献"
 
 
 def test_ngram_logprob_matrix_matches_model_vocab():
@@ -672,6 +698,32 @@ def test_memory_product_key_cache_parity():
     cl = cached[0] if isinstance(cached, tuple) else (cached["logits"] if isinstance(cached, dict) else cached)
     diff = (fl - cl).abs().max().item()
     assert diff < 1e-4, f"product_key 记忆训练/推理不一致：max_diff={diff}"
+
+
+def test_memory_product_key_write_matches_reference():
+    """阶段8.8：优化后的 product_key 顺序写（F.normalize + 无 unsqueeze 开销）必须与
+    独立参考实现（逐 token 顺序 softmax 路由 + 1/(norm+1e-6) 归一）数值一致（优化不改数值语义）。"""
+    import torch.nn.functional as F
+    B, T, D, M = 2, 8, 16, 12
+    x = torch.randn(B, T, D)
+    from models.transformer import MemoryBank
+    mb = MemoryBank(D, num_slots=M, comp_dim=D, product_key=True)
+    mb.eval()
+    mb.reset(B, 'cpu', torch.float32)
+    # 参考实现：复用同一 compress，逐 token 顺序写，softmax(sim) 路由 + 1/(norm+1e-6) 归一
+    comp = mb.compress(x)                                      # (B, T, D) 与 write 内部一致
+    slots_ref = torch.zeros(B, M, D)
+    for t in range(T):
+        ct = comp[:, t, :]
+        sim = torch.einsum('bc,bmc->bm', ct, slots_ref)        # (B,M)
+        gate = torch.softmax(sim, dim=-1)
+        upd = torch.einsum('bm,bc->bmc', gate, ct)
+        slots_ref = slots_ref + upd
+        slots_ref = slots_ref / (1e-6 + slots_ref.norm(dim=-1, keepdim=True))
+    # 待测实现：MemoryBank.write（product_key=True）走优化后顺序写
+    mb.write(x)
+    diff = (mb.slots - slots_ref).abs().max().item()
+    assert diff < 1e-5, f"优化后 product_key 写与参考实现不一致：max_diff={diff}"
 
 
 def test_memory_product_key_backward_flows():
