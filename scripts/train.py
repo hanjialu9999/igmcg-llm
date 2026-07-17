@@ -451,6 +451,7 @@ def main(config_path='configs/pretrain.yaml', resume=False):
     # ---- 续训（resume）：加载最新 checkpoint 恢复训练 ----
     start_epoch = 1
     best_loss = float('inf')
+    _resume_scaler_state = None
     if resume:
         resume_epoch, resume_path = find_latest_checkpoint(checkpoint_dir)
         if resume_path is not None:
@@ -458,8 +459,15 @@ def main(config_path='configs/pretrain.yaml', resume=False):
             ckpt = torch.load(resume_path, map_location='cpu', weights_only=True)
             model.load_state_dict(ckpt['model_state_dict'])
             optimizer.load_state_dict(ckpt['optimizer_state_dict'])
+            # optimizer.load_state_dict 直接赋值 CPU 张量，需迁移至训练设备，否则首步 optimizer.step 崩溃
+            for state in optimizer.state.values():
+                for k, v in state.items():
+                    if isinstance(v, torch.Tensor):
+                        state[k] = v.to(device)
             best_loss = ckpt.get('best_loss', float('inf'))
             start_epoch = resume_epoch + 1
+            # 暂存 scaler state，待 scaler 创建后恢复（resume 块先于 scaler 创建）
+            _resume_scaler_state = ckpt.get('scaler_state_dict', None)
             print(f"[Resume] best_loss={best_loss:.4f}, 从 epoch {start_epoch} 继续")
         else:
             print("[Resume] 未找到 checkpoint，从头开始训练")
@@ -498,6 +506,9 @@ def main(config_path='configs/pretrain.yaml', resume=False):
         else:
             print(f"[警告] precision={precision} 混合精度仅支持 CUDA(fp16/bf16) 与 CPU(bf16)；"
                   f"当前设备 {device} 不支持 AMP/bf16，自动回退 fp32 训练。")
+    # 恢复 GradScaler state（fp16 resume 时 scaler scale 已调整，丢失会导致梯度溢出）
+    if scaler is not None and _resume_scaler_state is not None:
+        scaler.load_state_dict(_resume_scaler_state)
     
     total_batches = len(dataloader)
     total_eff = (total_batches + grad_accum_steps - 1) // grad_accum_steps
@@ -532,7 +543,11 @@ def main(config_path='configs/pretrain.yaml', resume=False):
         print(f"  Curriculum anneal: {curriculum_anneal}（课程退火替代 SEL 交替）")
     # 互斥校验：enhancement_schedule / enhancement_off_prob / curriculum_anneal 三者只能其一，
     # 否则后者静默覆盖前者（train_epoch 内优先级 schedule > off_prob > curriculum）。主动告警避免误配。
-    _n_set = sum(x is not None for x in (enhancement_schedule, enhancement_off_prob > 0, curriculum_anneal is not None))
+    _n_set = sum([
+        enhancement_schedule is not None,
+        enhancement_off_prob > 0,
+        curriculum_anneal is not None
+    ])
     if _n_set > 1:
         print("[warn] 训练增强策略配置冲突：enhancement_schedule / enhancement_off_prob / "
               "curriculum_anneal 同时设置，仅按优先级（schedule > off_prob > curriculum）生效其一，"
@@ -591,7 +606,7 @@ def main(config_path='configs/pretrain.yaml', resume=False):
             no_improve_epochs = 0
             # Save per-epoch checkpoint (skipped when single epoch to avoid redundant file)
             if config['training']['epochs'] > 1:
-                save_checkpoint(model, optimizer, epoch, best_loss, checkpoint_dir, len(vocab), config['model'])
+                save_checkpoint(model, optimizer, epoch, best_loss, checkpoint_dir, len(vocab), config['model'], scaler=scaler)
         else:
             no_improve_epochs += 1
             print(f"No improvement for {no_improve_epochs} epoch(s).")

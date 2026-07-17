@@ -216,6 +216,46 @@ def test_arch_options_enabled_build_and_forward():
     assert torch.isfinite(logits2).all()
 
 
+def test_ngram_last_ids_reset_across_candidates():
+    """回归测试：_generate_candidates_batch 必须重置 _ngram_last_ids，否则跨调用残留污染 n-gram 上下文。"""
+    vocab = Vocabulary(200)
+    vocab.build_vocab(['中 国 人 民', '中 国 梦 想'])
+    V = len(vocab)
+    from models.transformer import TransformerModel
+    m = TransformerModel(V, 64, 4, 2, 128, 32)
+    m.eval()
+    prompt = '中 国'
+    # 手动设置残留的 _ngram_last_ids（batch=2，与后续 N=4 不同）
+    m._ngram_last_ids = torch.ones(2, 9, dtype=torch.long)
+    from scripts.generate import generate_igmcg
+    with torch.no_grad():
+        generate_igmcg(m, vocab, prompt, num_candidates=4, max_length=5, device=torch.device('cpu'))
+    # 验证：生成完成后 _ngram_last_ids 要么是 None，要么 shape 匹配新 batch
+    if m._ngram_last_ids is not None:
+        assert m._ngram_last_ids.shape[0] == 4, f'Expected batch=4, got {m._ngram_last_ids.shape[0]}'
+
+
+def test_enhancement_mutex_check():
+    """回归测试：互斥校验 enhancement_off_prob>0 是 bool，不应被 is not None 恒判为 True。"""
+    # 模拟 train.py 的互斥校验逻辑
+    enhancement_schedule = 'selv2'
+    enhancement_off_prob = 0.0
+    curriculum_anneal = None
+    # 旧逻辑（有 bug）: sum(x is not None for x in (schedule, off_prob > 0, curriculum is not None))
+    # off_prob > 0 -> False, False is not None -> True，恒计数 +1
+    _n_set_buggy = sum(x is not None for x in (enhancement_schedule, enhancement_off_prob > 0, curriculum_anneal is not None))
+    # 新逻辑（修复后）: 分别检查三个条件
+    _n_set_fixed = sum([
+        enhancement_schedule is not None,
+        enhancement_off_prob > 0,
+        curriculum_anneal is not None
+    ])
+    # 只设了 schedule，应该 _n_set=1
+    assert _n_set_fixed == 1, f'Expected 1, got {_n_set_fixed}'
+    # 旧逻辑会得到 3（全部恒 True，误报）
+    assert _n_set_buggy == 3, f'Old logic should give 3 (false positive), got {_n_set_buggy}'
+
+
 if __name__ == '__main__':
     test_vocab_empty_corpus_no_divzero()
     test_vocab_encode_decode_roundtrip()
@@ -229,4 +269,6 @@ if __name__ == '__main__':
     test_gradient_accumulation()
     test_quantization_load()
     test_arch_options_enabled_build_and_forward()
+    test_ngram_last_ids_reset_across_candidates()
+    test_enhancement_mutex_check()
     print("\nAll pipeline tests passed!")

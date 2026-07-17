@@ -575,6 +575,8 @@ def _generate_candidates_batch(model, ids, temps, max_length, top_k, rep_penalty
         intu_batch = iv.expand(N, -1)  # (N, 7) 广播到所有候选
 
     with torch.no_grad():
+        # 重置 n-gram 滚动缓冲，避免跨调用残留上一序列的上下文污染当前生成
+        model._ngram_last_ids = None
         # 初始前向：所有候选共享同一输入，得到 batched past（batch 维 = N）
         inp = torch.tensor([ids] * N, dtype=torch.long, device=device)
         logits, past = model.forward(inp, past_key_values=None, use_cache=True,

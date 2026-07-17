@@ -73,7 +73,8 @@ def save_checkpoint(model: torch.nn.Module,
                     best_loss: float,
                     checkpoint_dir: str,
                     vocab_size: int,
-                    model_config: Optional[Dict] = None) -> str:
+                    model_config: Optional[Dict] = None,
+                    scaler: Optional[object] = None) -> str:
     """
     Save model checkpoint with separate config YAML for weights_only=True compatibility.
 
@@ -91,13 +92,16 @@ def save_checkpoint(model: torch.nn.Module,
     """
     checkpoint_path = os.path.join(checkpoint_dir, f'model_epoch_{epoch}.pt')
     # 保存为 CPU 张量，保证在任意设备（含 DML/CUDA）上都能用 weights_only=True 加载
-    torch.save({
+    save_dict = {
         'epoch': epoch,
         'model_state_dict': _cpu_offload(model.state_dict()),
         'optimizer_state_dict': _cpu_offload(optimizer.state_dict()),
         'best_loss': best_loss,
         'vocab_size': vocab_size,
-    }, checkpoint_path)
+    }
+    if scaler is not None:
+        save_dict['scaler_state_dict'] = scaler.state_dict()
+    torch.save(save_dict, checkpoint_path)
 
     # Save config separately for weights_only=True compatibility
     if model_config is not None:
