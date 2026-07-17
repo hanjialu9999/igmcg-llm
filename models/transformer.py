@@ -135,13 +135,18 @@ class MemoryBank(nn.Module):
             # 否则全量路径（一次算齐所有 token 的 gate）与增量 cache 路径（逐 token 更新
             # slots 后再算下一 token 的 gate）结果不一致（曾在 cache parity 测试暴露
             # max_diff=0.028）。顺序写让两条路径逐 token 等价。
+            # 阶段8.8 优化：保留顺序语义（parity 关键），但消除每步 unsqueeze/squeeze 与
+            # 重复的 norm 新建张量开销——用 F.normalize 原地式归一、comp_t 直接索引 (B,comp_dim)。
+            slots = self.slots
+            comp_t_all = comp  # (B, T, comp_dim)
             for t in range(T):
-                comp_t = comp[:, t:t + 1, :]            # (B, 1, comp_dim)
-                sim = torch.einsum('bc,bmc->bm', comp_t.squeeze(1), self.slots)  # (B, M)
-                gate = torch.softmax(sim, dim=-1).unsqueeze(1)  # (B, 1, M)
-                update = torch.einsum('btm,btc->bmc', gate, comp_t)  # (B, M, comp_dim)
-                self.slots = self.slots + update
-                self.slots = self.slots / (1e-6 + self.slots.norm(dim=-1, keepdim=True))
+                ct = comp_t_all[:, t, :]                              # (B, comp_dim)
+                sim = torch.einsum('bc,bmc->bm', ct, slots)          # (B, M)
+                gate = torch.softmax(sim, dim=-1)                    # (B, M)
+                update = torch.einsum('bm,bc->bmc', gate, ct)         # (B, M, comp_dim)
+                slots = slots + update
+                slots = F.normalize(slots, dim=-1, eps=1e-6)          # 替代 /(norm+1e-6)
+            self.slots = slots
         else:
             # 原始：可学线性门控（位置相关分配，与 slots 无关，可向量化且全量/增量一致）
             gate = torch.softmax(self.write_gate(x), dim=-1)  # (B, T, M)
@@ -1426,9 +1431,11 @@ class TransformerModel(nn.Module):
         if self.ngram_fusion_enabled and getattr(self, '_ngram_fusion_active', True):
             # 阶段8.1 n-gram 神经融合：z_neural + g_t·ngram_vec（g_t 逐位置可学门控）。
             # 全量/训练路径（非增量）：src 含完整上下文，直接 logprob_matrix(src)。
-            # 增量解码路径（use_cache 且 past 非空，即 generate 逐 token 喂入）：src 仅是新 token，
-            # 须用滚动缓冲 _ngram_last_ids（末 2 token）拼出 (前2, 新) 序列再查表，否则退化成
-            # unigram 先验（门控白给）。缓冲仅在增量分支维护，全量分支不写实例状态，
+            # 增量解码路径（use_cache 且 past 非空，即 generate 逐 token 喂入）：src 仅是新 token。
+            # 阶段8.8：改用滚动增量查表 logprob_orders_incremental——仅就"新 token 各位置"按滚动
+            # 上下文(末 2 token)查表，不重建整段 (2+T) 上下文 → 每步 O(T) 而非 O(T^2)，长生成显著提速。
+            # 旧写法每步对完整 (2+T) ctx 调 logprob_orders_matrix，生成长度 T 时累计 O(T^2)。
+            # 滚动缓冲 _ngram_last_ids（末 2 token）仅在增量分支维护，全量分支不写实例状态，
             # 避免两次独立调用间相互污染（保证全量/cache 单调用 parity）。
             if use_cache and past_key_values is not None:
                 if getattr(self, '_ngram_last_ids', None) is None or \
@@ -1436,29 +1443,38 @@ class TransformerModel(nn.Module):
                     pad = self.ngram_model.vocab.pad_idx \
                         if hasattr(self.ngram_model.vocab, 'pad_idx') else 0
                     self._ngram_last_ids = src.new_full((src.shape[0], 2), pad)
-                ctx = torch.cat([self._ngram_last_ids, src], dim=1)        # (B, 2+T) 含完整上下文
-                ngram_ord = self.ngram_model.logprob_orders_matrix(ctx, x.device).detach()  # (B,2+T,V,K)
-                ngram_ord = ngram_ord[:, -src.shape[1]:]                    # 仅取新 token 位置 (B,T,V,K)
+                ngram_ord = self.ngram_model.logprob_orders_incremental(
+                    self._ngram_last_ids, src, x.device).detach()          # (B,T,V,K) 仅新位置
                 # 更新滚动缓冲（保留末 2 token），供下一步增量解码
                 self._ngram_last_ids = torch.cat([self._ngram_last_ids, src], dim=1)[:, -2:]
             else:
                 ngram_ord = self.ngram_model.logprob_orders_matrix(src, x.device).detach()  # (B,T,V,K)
             # 阶段8.7：可学阶混合——softmax(order_logits) 对 K 阶 logprob 加权混合（模型自选各阶占比）。
             _ow = torch.softmax(self.ngram_order_logits, dim=0)             # (K,)
-            ngram_vec = (ngram_ord * _ow.view(1, 1, 1, -1)).sum(-1)         # (B,T,V)
-            # 阶段8.7：IGMCG 自使用门控——模型逐位置自决"是否启用 IGMCG 引导"（可归零）。
-            g_base = torch.sigmoid(self.ngram_gate(x))                     # (B,T,1) 基础 n-gram 门控
+            ngram_vec = (ngram_ord * _ow.view(1, 1, 1, -1)).sum(-1)         # (B,T,V) 处于 log 概率空间(≈-7..-1)
+            # 阶段8.7/8.8：融合改为在"对数概率空间"进行，修复原 z(原始 logits, ±数十) 直接加
+            # gate·ngram_vec(log 概率, ≈-7) 的量纲错位——原写法须让 gate 学到超大尺度才有意义，
+            # n-gram 先验事实上只是微小扰动。现：logp = log_softmax(z) + gate·ngram_vec，
+            # gate 语义即"先验权重"(∈(0,1) 表示混合比例)，与 ngram_vec 同尺度、可直接调节概率。
+            # softmax 单调，返回 logp 与返回 logits 在采样上等价，不破坏下游（仅采样消费该输出）。
+            z = self.output_head(x)                                         # (B,T,V) 主干 logits
+            logp = F.log_softmax(z, dim=-1)                                 # (B,T,V) 同尺度 log 概率
+            # 门控角色分离（消除 8.1/8.7 双 (0,1) sigmoid 冗余）：
+            #  - igmcg_use_gate（仅 IGMCG 启用时）："是否启用 IGMCG 引导"的逐位置自决门控（含直觉条件偏置）；
+            #  - ngram_gate：逐位置"对 n-gram 先验的置信/强度"（8.1 语义，保留以兼容已训练权重）；
+            #  - ngram_gate_scale：推理期总闸（用户 0~1+ 缩放，1.0=模型自决）。
+            # 二者相乘仍∈(0,1)：igmcg_use_gate 为"用不用"决策、ngram_gate 为"信多少"强度，分工不冗余。
+            g_strength = torch.sigmoid(self.ngram_gate(x))                  # (B,T,1) 强度
             if self.igmcg_enabled and not igmcg_force_off:
                 _shift = 0.0
                 if intuition is not None:
                     # 7 维直觉向量投影为 (B,1) 序列级偏置，广播到 (B,T,1) 影响 use 门控（融合训练直觉）。
                     _shift = self.intuition_proj(intuition).unsqueeze(1)   # (B,1,1)
-                p_use = torch.sigmoid(self.igmcg_use_gate(x) + _shift)     # (B,T,1)
-                gate = p_use * g_base * self.ngram_gate_scale
+                p_use = torch.sigmoid(self.igmcg_use_gate(x) + _shift)     # (B,T,1) 用/不用决策
+                gate = p_use * g_strength * self.ngram_gate_scale
             else:
-                gate = g_base * self.ngram_gate_scale
-            z = self.output_head(x)                                            # (B,T,V) 主干 logits
-            fused = z + gate * ngram_vec
+                gate = g_strength * self.ngram_gate_scale
+            fused = logp + gate * ngram_vec
             if use_cache:
                 return fused, presents
             return fused

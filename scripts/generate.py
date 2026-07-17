@@ -365,6 +365,36 @@ class NGramModel:
                     out[b, t] = v
         return out
 
+    def logprob_orders_incremental(self, ctx2: torch.Tensor, new_ids: torch.Tensor, device):
+        """IGMCG 2.0 增量解码：给定 (B,2) 滚动上下文(末 2 token) 与 (B,T) 新 token，
+        仅计算新 token 各位置的逐阶 log 概率 (B,T,V,K)，不重建整段 ctx（避免 O(T^2)）。
+        复用 _orders_cache（键 (w2,w1)）：上下文相同的位置直接命中，与全量路径 logprob
+        完全一致 → 训练/推理 parity 保持。"""
+        if new_ids.dim() == 1:
+            new_ids = new_ids.unsqueeze(0)
+        B, T = new_ids.shape
+        K = self.max_order
+        V = self.vocab_size
+        # 拼接滚动上下文 + 新 token 得完整 context(长度 T+2)：[c0,c1,new0,new1,...]。
+        # 输出位置 t 的 (w2,w1) = (context[t], context[t+1])，即 w2=context[:T]、w1=context[1:T+1]，
+        # 与全量路径逐位置 (seq[t-2],seq[t-1]) 完全对应（t=0/1 退化为 pad 兜底），对任意 T 成立。
+        context = torch.cat([ctx2, new_ids], dim=1)                   # (B, 2+T)
+        w2 = context[:, :T]                                           # (B, T)
+        w1 = context[:, 1:T + 1]                                      # (B, T)
+        out = torch.empty(B, T, V, K, device=device)
+        for b in range(B):
+            for t in range(T):
+                ck = (int(w2[b, t].item()), int(w1[b, t].item()))
+                if ck in self._orders_cache:
+                    out[b, t] = self._orders_cache[ck].to(device)
+                else:
+                    v = self._compute_logprob_orders(ck[0], ck[1], V, device)
+                    if len(self._orders_cache) > self._logprob_cache_max:
+                        self._orders_cache.clear()
+                    self._orders_cache[ck] = v.cpu()
+                    out[b, t] = v
+        return out
+
     @property
     def _orders_cache(self):
         if not hasattr(self, '_orders_cache_store'):
