@@ -65,19 +65,27 @@ def test_full_retrieval_no_future_leak():
     assert torch.allclose(logits_a[:, :11], logits_b[:, :11], atol=1e-5), "未来 token 泄漏到过去"
 
 
-def test_skip_gate_reduces_when_disabled():
-    """关闭 skip 门控（_skip_active=False）时，层输出退化为恒等（跳过该层）。"""
+def test_skip_gate_prunes_layer():
+    """skip_gate 压到很大负数时，sigmoid→0，块输出≈残差（等效跳过该层计算）。
+
+    回归：旧断言用 `or True` 恒真、不验证任何东西。
+    """
     m = _small(layer_skip=True)
     m.eval()
+    blk = m.blocks[0]
     x = torch.randn(1, 6, 64)
     with torch.no_grad():
-        out_on = m.blocks[0](x)[0].clone()
-    m.blocks[0].set_skip_active(False)
+        out_normal = blk(x)[0].clone()
+    # 把 skip_gate 推到 -inf → sigmoid≈0 → x + 0*h ≈ x
     with torch.no_grad():
-        out_off = m.blocks[0](x)[0].clone()
-    # 关闭跳过门控时等同于纯残差（x + 0*h = x），与开启时不同
-    assert not torch.allclose(out_on, out_off) or True  # 结构正确即可；数值差异由门控值决定
-    m.blocks[0].set_skip_active(True)
+        blk.skip_gate.fill_(-50.0)
+        out_skipped = blk(x)[0].clone()
+    # skip_gate≈0（sigmoid≈0）时块输出应退化为近似恒等（残差），明显比正常块更接近输入 x
+    d_skip = (out_skipped - x).abs().mean().item()
+    d_normal = (out_normal - x).abs().mean().item()
+    assert d_skip < d_normal * 0.5, f"skip_gate≈0 未显著退化为残差：d_skip={d_skip} >= d_normal/2={d_normal*0.5}"
+    assert not torch.allclose(out_normal, out_skipped), "正常块与跳过块输出应不同"
+    blk.set_skip_active(True)
 
 
 def test_compute_complexity_scalar():
@@ -89,17 +97,48 @@ def test_compute_complexity_scalar():
 
 
 def test_linear_mixer_generation():
-    """纯线性注意力 mixer 应能前向 + 增量生成。"""
+    """纯线性注意力 mixer 应能前向 + 增量生成（推理路径）。"""
     m = _small(mixer='linear')
     m.eval()
     with torch.no_grad():
         out, pres = m.forward(torch.randint(0, 200, (1, 5)), use_cache=True)
         for _ in range(3):
             out, pres = m.forward(torch.randint(0, 200, (1, 1)),
-                                   past_key_values=pres, use_cache=True)
+                                    past_key_values=pres, use_cache=True)
     assert out.shape[-1] == 200
     gen = m.generate([1, 2, 3], max_length=5, device='cpu')
     assert len(gen) > 3
+
+
+def test_linear_mixer_training_no_crash():
+    """纯线性注意力 mixer 在默认 gradient_checkpointing=True 下必须能前向+反向。
+
+    回归 BUG-3：LinearAttention 无 `attend` 方法，原 ckpt 分支调用
+    checkpoint(self.attn.attend, ...) 会 AttributeError 崩溃，导致 linear mixer 无法训练
+    （旧 test_linear_mixer_generation 仅测 eval+use_cache，绕过了崩溃分支、假绿）。
+    """
+    m = _small(mixer='linear', gradient_checkpointing=True)
+    m.train()
+    x = torch.randint(0, 200, (2, 12))
+    out = m(x)
+    logits = out["logits"] if isinstance(out, dict) else out
+    logits.sum().backward()
+    # 梯度应真实可达
+    assert any(p.grad is not None for p in m.parameters() if p.requires_grad)
+
+
+def test_linear_mixer_full_cache_parity():
+    """纯线性注意力 mixer 的训练（全量）与推理（cache）路径必须数值一致。"""
+    m = _small(mixer='linear')
+    m.eval()
+    ids = torch.randint(0, 200, (1, 12))
+    with torch.no_grad():
+        full = m(ids, use_cache=False)
+        cached = m(ids, use_cache=True)
+    fl = full["logits"] if isinstance(full, dict) else full
+    cl = cached[0] if isinstance(cached, tuple) else (cached["logits"] if isinstance(cached, dict) else cached)
+    diff = (fl - cl).abs().max().item()
+    assert diff < 1e-4, f"linear mixer 训练/推理不一致：max_diff={diff}"
 
 
 def test_memory_window_reset_after_train():
@@ -171,3 +210,84 @@ def test_memory_window0_training_no_crash_and_retrievable():
     mem_segment = bias[0, 0, :, :mem_cols]
     # 记忆列应全 0（可见），而非被 -1e9 遮蔽
     assert mem_segment.abs().max().item() < 1e-3, "记忆段被静默遮蔽（全 -1e9），模型读不到记忆"
+
+
+def test_memory_window_cache_parity():
+    """memory_size>0 + attn_window>0 时，训练（全量）与推理（cache）路径必须数值一致。
+
+    回归 BUG-2：cache 路径曾用 `kpos > qpos` 把记忆段（位于 KV 前缀）当成序列前缀按位置
+    因果遮蔽，导致推理期记忆按位置被部分遮蔽，与训练全可见不一致（静默质量退化）。
+    原 test_memory_window0_training 只测 window==0，漏掉此路径。
+    """
+    for w in (4, 8):
+        m = _small(memory_size=16, memory_comp_dim=16, attn_window=w)
+        m.eval()
+        ids = torch.randint(0, 200, (1, 14))
+        with torch.no_grad():
+            full = m(ids, use_cache=False)
+            cached = m(ids, use_cache=True)
+        fl = full["logits"] if isinstance(full, dict) else full
+        cl = cached[0] if isinstance(cached, tuple) else (cached["logits"] if isinstance(cached, dict) else cached)
+        diff = (fl - cl).abs().max().item()
+        assert diff < 1e-4, f"memory+window={w} 训练/推理不一致：max_diff={diff}"
+
+
+def test_memory_retrieval_full_cache_parity():
+    """memory_retrieval_full=True 时，训练（全量）与推理（cache）路径必须数值一致。
+
+    回归 BUG-1：cache 路径曾完全漏调用 `_full_retrieval_bias`，训练用 top-k 稀疏检索偏置、
+    推理（generate）不注入，导致训练-推理系统性偏差、生成质量偏离训练行为。
+    """
+    m = _small(memory_size=16, memory_comp_dim=16, memory_retrieval_full=True,
+               memory_retrieval_topk=8, attn_window=8)
+    m.eval()
+    ids = torch.randint(0, 200, (1, 14))
+    with torch.no_grad():
+        full = m(ids, use_cache=False)
+        cached = m(ids, use_cache=True)
+    fl = full["logits"] if isinstance(full, dict) else full
+    cl = cached[0] if isinstance(cached, tuple) else (cached["logits"] if isinstance(cached, dict) else cached)
+    diff = (fl - cl).abs().max().item()
+    assert diff < 1e-4, f"retrieval_full 训练/推理不一致：max_diff={diff}"
+
+
+def test_alibi_memory_window_cache_parity():
+    """alibi + memory + window>0 三路组合，训练与推理必须数值一致（交叉 bug 温床）。"""
+    m = _small(alibi=True, memory_size=16, memory_comp_dim=16, attn_window=8)
+    m.eval()
+    ids = torch.randint(0, 200, (1, 14))
+    with torch.no_grad():
+        full = m(ids, use_cache=False)
+        cached = m(ids, use_cache=True)
+    fl = full["logits"] if isinstance(full, dict) else full
+    cl = cached[0] if isinstance(cached, tuple) else (cached["logits"] if isinstance(cached, dict) else cached)
+    diff = (fl - cl).abs().max().item()
+    assert diff < 1e-4, f"alibi+memory+window 训练/推理不一致：max_diff={diff}"
+
+
+def test_learn_window_preserves_configured_window():
+    """learn_window=True 时，配置 attn_window 经首步 _sync_window 还原后须等于配置值（非退化到 1）。
+
+    回归 BUG-5：原 `_sync_window` 用 `round(exp(log_window))`，而 log_window=log(w/base)，
+    exp 后丢失 base 缩放，任何 w<32 都被 round 成 1，窗口无声退化 8~32 倍。
+    """
+    for w in (8, 16, 32):
+        m = _small(attn_window=w, learn_window=True, window_base=64)
+        m.eval()
+        m(torch.randint(0, 200, (1, 8)))  # 触发 _sync_window
+        actual = m.blocks[0].attn.window
+        assert actual == w, f"learn_window 配置 {w} 被退化为 {actual}"
+
+
+def test_compute_complexity_linear_discount():
+    """纯 linear mixer 的复杂度应约为 attn mixer 的 0.3x（线性注意力更省）。
+
+    回归 BUG-4：原 compute_complexity 仅在 hybrid（linear_attn is not None）时给 0.3x 折扣，
+    纯 linear mixer（linear_attn is None）漏算，导致其复杂度奖励无法正确引导更小模型。
+    """
+    m_lin = _small(attn_window=8, mixer='linear')
+    m_attn = _small(attn_window=8)
+    c_lin = m_lin.compute_complexity().item()
+    c_attn = m_attn.compute_complexity().item()
+    ratio = c_lin / c_attn
+    assert ratio < 0.6, f"linear 复杂度未获 0.3x 折扣：ratio={ratio:.3f}"

@@ -317,9 +317,13 @@ class SlidingWindowCausalSelfAttention(nn.Module):
         self._bias_cache: Optional[torch.Tensor] = None
 
     def _sync_window(self):
-        """阶段6：从可学习 log_window 重算实际窗口尺寸（每步前向同步，训练时随参数变化）。"""
+        """阶段6：从可学习 log_window 重算实际窗口尺寸（每步前向同步，训练时随参数变化）。
+
+        log_window 初始化为 log(init_w / window_base)，故还原须乘回 window_base，
+        否则 exp 后丢失 base 缩放、任意 window<32 都会被 round 成 1（窗口无声退化）。
+        """
         if self.learn_window:
-            w = int(round(math.exp(float(self.log_window))))
+            w = int(round(math.exp(float(self.log_window)) * self.window_base))
             w = max(1, min(w, max(self.window_base, 1) * 4))
             if w != self.window:
                 self.window = w
@@ -488,9 +492,14 @@ class SlidingWindowCausalSelfAttention(nn.Module):
             Tkv = k.size(2)
             qpos = torch.arange(start_pos, start_pos + Tq, device=q.device).unsqueeze(1)
             kpos = torch.arange(0, Tkv, device=q.device).unsqueeze(0)
-            causal_mask = kpos > qpos
+            # 与全量路径 line 543 对齐：掩码用「合并坐标」（记忆段占前 mem_cols 列、真实序列紧随其后），
+            # 因果 = 真实键列 > 查询绝对位置 + mem_cols（记忆列恒被该式排除、再显式清零双保险），
+            # 保证 memory+window>0 时训练/推理一致性（否则推理期记忆按位置被部分遮蔽、静默质量退化）。
+            causal_mask = kpos > (qpos + mem_cols)
             if self.window > 0:
                 causal_mask = causal_mask | (qpos - kpos > self.window)
+            if mem_cols > 0:
+                causal_mask[..., :mem_cols] = False
             attn_mask = (causal_mask.float() * self.mask_fill_value).unsqueeze(0)   # (1,1,T,Tkv)
             # 记忆槽位置在窗口 KV 之前（seq 起点之前），永远不被因果遮蔽，
             # 但也不参与"未来"泄露：记忆是历史压缩，视为已发生，不施加 causal 惩罚
@@ -504,6 +513,15 @@ class SlidingWindowCausalSelfAttention(nn.Module):
             alibi_b = self._alibi_bias(Tq, Tkv, q.device, start_pos)
             if alibi_b is not None:
                 attn_mask = attn_mask + alibi_b
+            # 全上下文检索（与全量路径 line 577-583 对齐）：cache 路径同样注入对真实 KV 远端的 top-k 稀疏偏置，
+            # 否则开启 retrieval_full 时训练-推理系统性不一致（生成质量偏离训练行为）。
+            if self.retrieval_full and mem_cols < Tkv:
+                rgate = None
+                if memory_kv is not None and memory_kv[2] is not None and memory_kv[2].get('retrieval_gate') is not None:
+                    rgate = torch.sigmoid(memory_kv[2]['retrieval_gate']).view(1, 1, 1, 1).to(q.device)
+                rbias = self._full_retrieval_bias(q, k, Tkv - mem_cols, mem_cols, rgate, q.device)
+                if rbias is not None:
+                    attn_mask = attn_mask + rbias
             # 与全量（非缓存）路径走同一后端：cuda/cpu 用 fused SDPA、DML(privateuseone) 用 manual，
             # 保证训练-推理在带偏置（alibi/rel_bias/mem_bias）时数值一致。
             if q.device.type in ('cuda', 'cpu'):
@@ -936,11 +954,14 @@ class TransformerBlock(nn.Module):
         sk = torch.sigmoid(self.skip_gate).to(x.device) if (self.skip_enabled and getattr(self, '_skip_active', True)) else None
 
         if self.block_type == 'attn':
-            if ckpt:
+            if ckpt and hasattr(self.attn, 'attend'):
+                # SlidingWindowCausalSelfAttention：拆分 project_and_norm / attend 以缩小检查点重算区
                 q, k, v = self.attn.project_and_norm(self.ln1(x), start_pos)
                 h, present = checkpoint(self.attn.attend, q, k, v, attn_past_kv, use_cache, start_pos, mem_kv, use_reentrant=False)
             else:
-                h, present = self.attn(self.ln1(x), attn_past_kv, use_cache, start_pos, memory_kv=mem_kv)
+                # LinearAttention 等无 attend 接口的 mixer：直接对整层前向做检查点
+                h, present = checkpoint(self.attn, self.ln1(x), attn_past_kv, use_cache, start_pos, mem_kv, use_reentrant=False) if ckpt else \
+                    self.attn(self.ln1(x), attn_past_kv, use_cache, start_pos, memory_kv=mem_kv)
             if self.linear_attn is not None:
                 # 阶段7：混合 mixer（attn + 线性注意力并行），mixer_gate 自选择比例
                 lh, lpresent = self.linear_attn(self.ln1(x), attn_past_kv, use_cache, start_pos, memory_kv=mem_kv)
@@ -1073,6 +1094,7 @@ class TransformerModel(nn.Module):
         self.vocab_size = vocab_size
         self.embedding_dim = embedding_dim
         self.max_seq_length = max_seq_length
+        self.attn_window = attn_window
         self.gradient_checkpointing = gradient_checkpointing
         self.layer_plan = _parse_layer_plan(layer_plan, num_layers)
         self.rope_base = rope_base
@@ -1168,20 +1190,27 @@ class TransformerModel(nn.Module):
             else:
                 keep = torch.ones(1, device=total.device).sum()
             layer_cost = keep
-            # mixer：线性注意力更省（约 0.3x），hybrid 按 mixer_gate 比例插值
+            # mixer：线性注意力更省（约 0.3x）。hybrid 按 mixer_gate 比例插值；
+            # 纯 linear mixer（self.attn 即 LinearAttention、linear_attn 为 None）直接 0.3x 折扣。
             if getattr(blk, 'linear_attn', None) is not None:
                 mg = torch.sigmoid(blk.mixer_gate).sum()
                 attn_cost = mg * 1.0 + (1.0 - mg) * 0.3
                 layer_cost = layer_cost * attn_cost
+            elif hasattr(blk, 'attn') and isinstance(blk.attn, LinearAttention):
+                layer_cost = layer_cost * 0.3
             # 窗口成本：相对 max_seq_length。learn_window 时用连续软窗口
             # (sigmoid(log_window)*window_base) 参与成本计算，使复杂度奖励能经梯度
             # 调节可学窗口（离散 window 经 round(exp) 不可导，故走软代理）。
+            eff_window = 0
             if hasattr(blk, 'attn') and getattr(blk.attn, 'learn_window', False):
-                soft_w = torch.sigmoid(blk.attn.log_window) * blk.attn.window_base
-                wcost = soft_w / max(self.max_seq_length, 1)
-                layer_cost = layer_cost * wcost
+                eff_window = (torch.sigmoid(blk.attn.log_window) * blk.attn.window_base)
             elif hasattr(blk, 'attn') and getattr(blk.attn, 'window', 0) > 0:
-                wcost = min(blk.attn.window, self.max_seq_length) / max(self.max_seq_length, 1)
+                eff_window = min(blk.attn.window, self.max_seq_length)
+            elif isinstance(blk.attn, LinearAttention) and getattr(self, 'attn_window', 0) > 0:
+                # 线性注意力同样处理窗口内 token，按模型配置窗口计成本（再乘 0.3x 折扣）
+                eff_window = min(self.attn_window, self.max_seq_length)
+            if eff_window:
+                wcost = eff_window / max(self.max_seq_length, 1)
                 layer_cost = layer_cost * wcost
             total = total + layer_cost
         # 记忆预算：记忆槽数相对序列长度
