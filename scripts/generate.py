@@ -131,6 +131,17 @@ def load_model(model_path, vocab_path, device='cpu', quantize=False, compile_mod
         print(f"[warn] checkpoint 缺少架构参数（缺失将用随机初始化，结果可能异常）：{_missing}")
     if _extra:
         print(f"[warn] checkpoint 含模型未定义的架构参数（已忽略）：{_extra}")
+    # 阶段8.2：推理期静态剪枝——若训练时启用 layer_skip，加载后按阈值把"几乎必跳过"的层
+    # 真正移除（实现推理提速，否则 skip 门控只训不用、纯死参数）。阈值由 prune_threshold
+    # 控制，默认 0.5；设 <=0 则取消剪枝（全保留）。
+    if model_config.get('layer_skip', False):
+        _pt = float(model_config.get('prune_threshold', 0.5))
+        try:
+            _pruned = model.prune_layers(_pt)
+            if _pruned:
+                print(f"[剪枝] 已静态移除 {len(_pruned)} 层（索引 {_pruned}），推理提速生效")
+        except Exception as e:
+            print(f"[warn] 推理期剪枝失败，已跳过：{e}")
     model.eval()
 
     if quantize and getattr(device, 'type', None) != 'dml':
