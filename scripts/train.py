@@ -113,7 +113,8 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
                  use_amp=True, autocast_dtype=torch.float32, grad_accum_steps=1,
                  lr_schedule='cosine', eta_min=0.0, wsd_decay_frac=0.1,
                  show_progress=True, amp_device=None, enhancement_off_prob=0.0,
-                 enhancement_schedule=None, complexity_lambda=0.0):
+                 enhancement_schedule=None, complexity_lambda=0.0,
+                 complexity_budget=None):
     """Train one epoch with warmup, gradient accumulation and mixed precision.
 
     - warmup_steps: 预热步数。若 <1 则按"占整个 epoch 有效步数的比例"解释（如 0.1=前 10% 步预热）。
@@ -181,12 +182,19 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
         else:
             logits = model(input_ids).view(-1, model.vocab_size)
             loss = criterion(logits, target_ids.view(-1))
-        # 阶段6：计算复杂度奖励（正则项）——复杂度越低给奖励（即惩罚高复杂度）。
-        # 仅当配置 complexity_lambda>0 且模型含可学复杂度参数（skip/mixer/learn_window）时生效，
-        # 量级很小（默认 1e-4），避免压垮主语言建模损失。
+        # 阶段8.2：复杂度约束（正则项）——把"小模型/提速"从弱乘奖励升级为预算硬约束。
+        #  - 旧式弱乘：complexity_lambda>0 且未设 budget → loss += λ·comp（λ=1e-4，量级可忽略）。
+        #  - 新式 hinge 预算：设 complexity_budget∈(0,1]（相对 max_complexity 的目标占比）→
+        #    仅当 comp 超过 target 才惩罚 relu(comp-target)，梯度只在超预算时生效，
+        #    且 λ 可设大（如 0.01~0.1），驱动 skip_gate/mixer/learn_window 真正压到低复杂度。
         if complexity_lambda and complexity_lambda > 0:
             comp = model.compute_complexity()
-            loss = loss + complexity_lambda * comp
+            if complexity_budget is not None and complexity_budget > 0:
+                target = float(complexity_budget) * model.max_complexity()
+                over = torch.relu(comp - target)
+                loss = loss + complexity_lambda * over
+            else:
+                loss = loss + complexity_lambda * comp
 
         # Scale loss for gradient accumulation, then backward
         scaled = loss / grad_accum_steps
@@ -517,6 +525,7 @@ def main(config_path='configs/pretrain.yaml', resume=False):
             enhancement_off_prob=config['training'].get('enhancement_off_prob', 0.0),
             enhancement_schedule=enhancement_schedule,
             complexity_lambda=float(config['training'].get('complexity_lambda', 0.0)),
+            complexity_budget=config['training'].get('complexity_budget', None),
         )
 
         history['train_loss'].append(train_loss)

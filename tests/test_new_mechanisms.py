@@ -458,3 +458,72 @@ def test_ngram_fusion_save_load_preserves_gate(tmp_path):
     m2 = build_model({'model': cfg}, device=torch.device('cpu'), ngram_model=_ng)
     assert m2.ngram_fusion_enabled, "重载后 ngram 融合未启用（门控缺失）"
     assert hasattr(m2, 'ngram_gate'), "重载模型缺少 ngram_gate"
+
+
+# ---------------------------------------------------------------------------
+# 阶段8.2：复杂度奖励改 hinge 预算约束 + 推理期静态剪枝
+# ---------------------------------------------------------------------------
+
+def test_complexity_hinge_only_over_budget():
+    """设 complexity_budget 后，复杂度惩罚应只在 comp>target 时非零（hinge 语义）。
+
+    旧式 λ·comp 永远惩罚（量级可忽略）；新式 relu(comp-target) 仅超预算生效，
+    梯度才有意义。验证：comp 远低于 target → 惩罚≈0；comp 远高于 target → 惩罚=comp-target。
+    """
+    m = _small(vocab_size=200, layer_skip=True)
+    m.eval()
+    full = m.max_complexity()
+    comp = m.compute_complexity()
+    # comp 默认所有层保留 ≈ full（skip_gate 初值使 sigmoid≈0.73，仍计入）
+    target_low = 0.5 * full   # 目标很低，comp 应超预算
+    target_high = 2.0 * full  # 目标很高，comp 应远低于预算
+    over_low = max(0.0, float(comp) - target_low)
+    over_high = max(0.0, float(comp) - target_high)
+    assert over_low > 0, "comp 超预算时 hinge 惩罚应 >0"
+    assert over_high == 0, "comp 远低于预算时 hinge 惩罚应 =0"
+
+
+def test_prune_layers_drops_blocks_and_changes_forward():
+    """prune_layers 标记的层在推理前向被跳过，输出与全保留不同且更快（层数减少）。"""
+    import torch.nn.functional as F
+    m = _small(vocab_size=200, layer_skip=True)
+    m.eval()
+    # 强制让一半层的 skip_gate 极大（sigmoid→1，必被剪）
+    with torch.no_grad():
+        for i, blk in enumerate(m.blocks):
+            blk.skip_gate.fill_(50.0 if i % 2 == 0 else -50.0)
+    pruned = m.prune_layers(threshold=0.5)
+    assert len(pruned) == (len(m.blocks) + 1) // 2, f"应剪掉约半数层，实得 {pruned}"
+    x = torch.randint(0, 200, (2, 10))
+    with torch.no_grad():
+        pruned_out = m(x)
+        m.prune_layers(threshold=0.0)  # 取消剪枝
+        full_out = m(x)
+    assert not torch.allclose(pruned_out, full_out), "剪枝后前向输出应改变"
+    # 取消剪枝后恢复全保留前向
+    m.prune_layers(threshold=0.5)
+    with torch.no_grad():
+        again = m(x)
+    assert torch.allclose(again, pruned_out), "再次剪枝应得一致输出"
+
+
+def test_complexity_budget_backward_flows():
+    """hinge 预算约束下反向仍可回传（skip_gate 能收到超预算梯度），不报错。"""
+    import torch.nn.functional as F
+    m = _small(vocab_size=200, layer_skip=True)
+    m.train()
+    # skip_gate=0 → sigmoid=0.5（活跃区，梯度非零），comp≈0.5·N 远超 0.3·N 低预算
+    # → hinge 激活且 skip_gate 收到非零梯度（验证预算约束真正推动剪枝，而非饱和死区）。
+    with torch.no_grad():
+        for blk in m.blocks:
+            blk.skip_gate.zero_()
+    x = torch.randint(0, 200, (2, 8))
+    out = m(x)
+    loss = F.cross_entropy(out.reshape(-1, 200), torch.randint(0, 200, (16,)))
+    target = 0.3 * m.max_complexity()
+    over = torch.relu(m.compute_complexity() - target)
+    loss = loss + 0.1 * over
+    loss.backward()
+    grads = [float(blk.skip_gate.grad) for blk in m.blocks if blk.skip_gate.grad is not None]
+    assert len(grads) > 0, "skip_gate 未收到梯度"
+    assert any(g != 0.0 for g in grads), "超预算时 skip_gate 梯度应非零"

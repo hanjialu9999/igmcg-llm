@@ -1108,6 +1108,8 @@ class TransformerModel(nn.Module):
         self.ngram_gate_scale = ngram_gate_scale
         if self.ngram_fusion_enabled:
             self.ngram_gate = nn.Linear(embedding_dim, 1)
+        # 阶段8.2：推理期静态剪枝标记（prune_layers 填充；默认空=不剪）
+        self._pruned_layers = set()
         self.layer_plan = _parse_layer_plan(layer_plan, num_layers)
         self.rope_base = rope_base
         self.rope_max_len = rope_max_len
@@ -1239,6 +1241,32 @@ class TransformerModel(nn.Module):
                                          device=total.device)
         return total
 
+    def max_complexity(self) -> float:
+        """阶段8.2：结构复杂度的理论上限（所有层全保留、窗口取最大、含记忆），用作
+        hinge 预算约束的归一化分母。纯 Python 标量，无张量、不参与反向。"""
+        full = float(len(self.blocks))
+        if self.memory_enabled and self.memory_size > 0:
+            full += self.memory_size / max(self.max_seq_length, 1)
+        return full
+
+    def prune_layers(self, threshold: float = 0.5):
+        """阶段8.2：推理期静态剪枝——跳过 skip_gate 概率 > threshold 的层（sigmoid 直阈）。
+
+        skip_gate 经 straight-through 训练后，推理时把"几乎必跳过"的层直接移除，
+        实现真实的推理提速（不止是软正则）。置 threshold<=0 取消剪枝（全保留）。
+
+        返回被剪掉的层索引列表。
+        """
+        self._prune_threshold = float(threshold)
+        pruned = []
+        for i, blk in enumerate(self.blocks):
+            if getattr(blk, 'skip_enabled', False):
+                p = float(torch.sigmoid(blk.skip_gate).item())
+                if p > threshold:
+                    pruned.append(i)
+        self._pruned_layers = set(pruned) if threshold > 0 else set()
+        return pruned
+
     def _init_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Linear):
@@ -1322,6 +1350,10 @@ class TransformerModel(nn.Module):
                         blk.attn._cached_T = -1
 
         for i, block in enumerate(self.blocks):
+            # 阶段8.2：推理期静态剪枝——被 prune_layers 标记的层直接跳过（直通，无计算）。
+            if getattr(self, '_pruned_layers', None) and i in self._pruned_layers:
+                presents.append(past_key_values[i] if past_key_values is not None else None)
+                continue
             ssm_past_state = ssm_states[i] if use_cache else None
             ssm_past_conv_state = ssm_conv_states[i] if use_cache else None
             # 检查点（仅重算力部分）已在 block 内部按 self.gradient_checkpointing 处理，此处直接调用
