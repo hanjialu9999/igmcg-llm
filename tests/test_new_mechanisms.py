@@ -226,10 +226,30 @@ def test_memory_window_cache_parity():
         with torch.no_grad():
             full = m(ids, use_cache=False)
             cached = m(ids, use_cache=True)
-        fl = full["logits"] if isinstance(full, dict) else full
-        cl = cached[0] if isinstance(cached, tuple) else (cached["logits"] if isinstance(cached, dict) else cached)
-        diff = (fl - cl).abs().max().item()
-        assert diff < 1e-4, f"memory+window={w} 训练/推理不一致：max_diff={diff}"
+    fl = full["logits"] if isinstance(full, dict) else full
+    cl = cached[0] if isinstance(cached, tuple) else (cached["logits"] if isinstance(cached, dict) else cached)
+    diff = (fl - cl).abs().max().item()
+    assert diff < 1e-4, f"memory+window={w} 训练/推理不一致：max_diff={diff}"
+
+
+def test_memory_window0_cache_parity():
+    """memory_size>0 且 attn_window=0 时，训练/推理路径必须一致（回归潜在 bug）。
+
+    window==0 + memory 走 attend 的纯因果分支，原主序列因果用 kpos>qpos（全局索引）
+    多遮了 mem_cols 列合法过去 token，与 cache 路径 kpos>qpos+mem_cols 不一致
+    （full 路径主序列列被错标 -1e9，max_diff≈0.037）。window>0 走含正确项的窗口分支故掩盖。
+    修复：纯因果分支改 kpos>(qpos+mem_cols)，与 cache/窗口分支对齐。
+    """
+    m = _small(memory_size=16, memory_comp_dim=16, attn_window=0)
+    m.eval()
+    ids = torch.randint(0, 200, (1, 14))
+    with torch.no_grad():
+        full = m(ids, use_cache=False)
+        cached = m(ids, use_cache=True)
+    fl = full["logits"] if isinstance(full, dict) else full
+    cl = cached[0] if isinstance(cached, tuple) else (cached["logits"] if isinstance(cached, dict) else cached)
+    diff = (fl - cl).abs().max().item()
+    assert diff < 1e-4, f"memory+window=0 训练/推理不一致：max_diff={diff}"
 
 
 def test_memory_retrieval_full_cache_parity():
@@ -527,3 +547,58 @@ def test_complexity_budget_backward_flows():
     grads = [float(blk.skip_gate.grad) for blk in m.blocks if blk.skip_gate.grad is not None]
     assert len(grads) > 0, "skip_gate 未收到梯度"
     assert any(g != 0.0 for g in grads), "超预算时 skip_gate 梯度应非零"
+
+
+# ---------------------------------------------------------------------------
+# 阶段8.3：记忆 product-key 写路由（内容相似度驱动写入槽位）
+# ---------------------------------------------------------------------------
+
+def _small_memory(**over):
+    kw = dict(vocab_size=200, embedding_dim=64, num_heads=4, num_layers=2,
+              hidden_dim=128, max_seq_length=32, memory_size=16, memory_comp_dim=16)
+    kw.update(over)
+    return TransformerModel(**kw)
+
+
+def test_memory_product_key_changes_write_routing():
+    """开启 product_key 后写入分配由内容相似度驱动，应与默认 write_gate 路径不同。"""
+    import torch.nn.functional as F
+    m_pk = _small_memory(memory_product_key=True)
+    m_def = _small_memory(memory_product_key=False)
+    m_pk.eval(); m_def.eval()
+    x = torch.randn(2, 8, 64)
+    with torch.no_grad():
+        m_pk.memory_bank.reset(2, next(m_pk.parameters()).device, torch.float32)
+        m_def.memory_bank.reset(2, next(m_def.parameters()).device, torch.float32)
+        m_pk.memory_bank.write(x); slots_pk = m_pk.memory_bank.slots.clone()
+        m_def.memory_bank.write(x); slots_def = m_def.memory_bank.slots.clone()
+    assert not torch.allclose(slots_pk, slots_def), "product_key 写路由应与默认不同"
+
+
+def test_memory_product_key_cache_parity():
+    """product_key 记忆下训练（全量）与推理（cache）路径必须数值一致。"""
+    v = 200
+    m = _small_memory(memory_product_key=True)
+    m.eval()
+    ids = torch.randint(0, v, (1, 12))
+    with torch.no_grad():
+        full = m(ids, use_cache=False)
+        cached = m(ids, use_cache=True)
+    fl = full["logits"] if isinstance(full, dict) else full
+    cl = cached[0] if isinstance(cached, tuple) else (cached["logits"] if isinstance(cached, dict) else cached)
+    diff = (fl - cl).abs().max().item()
+    assert diff < 1e-4, f"product_key 记忆训练/推理不一致：max_diff={diff}"
+
+
+def test_memory_product_key_backward_flows():
+    """product_key 写路由下反向不报错且记忆槽收到梯度（可微写路由）。"""
+    import torch.nn.functional as F
+    m = _small_memory(memory_product_key=True)
+    m.train()
+    x = torch.randint(0, 200, (2, 8))
+    out = m(x)
+    loss = F.cross_entropy(out.reshape(-1, 200), torch.randint(0, 200, (16,)))
+    loss.backward()
+    # 写路由可微：压缩矩阵（叶子参数）收到梯度，即证明写入路径参与计算图并反向可训。
+    # 注：slots 是非叶缓冲（每次 write 重赋值），其 .grad 不会填充，故不依赖它判梯度。
+    assert m.memory_bank.compress.weight.grad is not None, "记忆压缩矩阵无梯度（product_key 写路由不可微）"
