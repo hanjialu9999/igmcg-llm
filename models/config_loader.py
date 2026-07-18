@@ -78,6 +78,7 @@ def build_model(config: Dict[str, Any], device: Optional[torch.device] = None,
         # 阶段7：token mixer 选择（attn | linear | hybrid，默认 attn 向后兼容）
         mixer=mc.get('mixer', 'attn'),
         linear_attn_feature=mc.get('linear_attn_feature', 'relu'),
+        linear_attn_head_dim=mc.get('linear_attn_head_dim', None),
         # 架构增强（默认全开：2026-07-14 起；旧权重门控 init=1.0 仍兼容，但开启后需重新训练以生效）
         qk_norm=mc.get('qk_norm', True),
         attn_temp=mc.get('attn_temp', True),

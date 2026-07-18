@@ -1,0 +1,59 @@
+﻿# 8.1 n-gram 神经融合端到端冒烟：验证 ngram 构建 + 门控梯度回传 + loss 下降
+model:
+  vocab_size: 12000
+  embedding_dim: 128
+  num_heads: 4
+  num_layers: 2
+  hidden_dim: 256
+  max_seq_length: 64
+  dropout: 0
+  tie_weights: true
+  gradient_checkpointing: false
+  rope_base: 10000.0
+  rope_max_len: 4096
+  mask_fill_value: -1e9
+  layer_plan: null
+  attn_window: 0
+  attn_rel_bias: false
+  # 阶段8.1：开启 n-gram 神经融合
+  ngram_fusion: false
+  ngram_corpus: "data/pretrain_corpus/_ngram_smoke.txt"
+  ngram_gate_scale: 1.0
+
+training:
+  batch_size: 16
+  epochs: 1
+  learning_rate: 3.0e-3
+  weight_decay: 0.0
+  gradient_clip: 1.0
+  warmup_steps: 0
+  early_stop_patience: 9999
+  label_smoothing: 0.0
+  cpu_threads: 4
+  precision: "fp32"
+  grad_accum_steps: 1
+  eta_min: 0.0
+  lr_schedule: "constant"
+  compile: false
+  optimizer: "adamw"
+
+data:
+  train_file: "data/pretrain_corpus/_ngram_smoke.txt"
+  vocab_size: 12000
+  max_seq_length: 64
+  num_workers: 0
+  test_split: 0.1
+
+paths:
+  checkpoint_dir: "checkpoints_ngram_smoke"
+  log_dir: "logs_ngram_smoke"
+
+device: "cpu"
+seed: 42
+
+generation:
+  temperature: 0.8
+  top_k: 50
+  repetition_penalty: 1.2
+  min_length: 3
+  eos_penalty: -5.0

@@ -9,6 +9,21 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
+## `（本地，基于 `d941095`，待推送）
+
+- feat: **LinearAttention 可配置 head_dim**——新增 `linear_attn_head_dim` 参数（三级透传：LinearAttention / TransformerBlock / config_loader）；qkv 投影改为 `3*num_heads*head_dim`，proj 改为 `num_heads*head_dim→dim`。默认 `16`（AMD 780M iGPU DML 上比原默认 64 **快 1.75x** 且质量持平：中间张量 33.6MB→2MB 解除内存带宽瓶颈）。
+- exp: **DML 配置扫描（速度 + 1-epoch val_loss 双指标）** 定 Pareto 最优：
+  - `linear_attn_head_dim`：16(61k/7.99) > 32(53k/8.01) > 64(35k)。→ 定 16。
+  - `memory_size`：32 质量最优(6.05)，0 最快(73k/6.10)。→ 定 32（特性+质量双赢）。
+  - `embedding_dim`：256 为"不退化"最大维(4.3M/61k/6.02)，320+ 过拟合崩(8.03/9.37)。→ 定 256。
+  - `num_layers`：4 质量最优(5.89) 且速度可接受(62k)。→ 定 4。
+  - `ngram_fusion`：开(true) 轻微质量+特性增益、速度几乎不变。→ **默认开**。
+  - `learn_window`：单独开 +15% 提速（64k→93k 量级）。→ **默认开**。
+  - `layer_skip`：训练期负收益（58k/6.35），属推理静态剪枝特性，训练期反添开销。→ **保持关**（推理时 `prune_layers` 生效）。
+- config: **`configs/config_full_dml.yaml` 更新为扫描最优**（ed256/nl4/mem32/hd16/ngram_fusion+learn_window 开）；端到端验证 4.28M params / **91.6k tok/s / val_loss 6.20**（对比最初 hd64 729 tok/s → **提速 128x**）。
+- chore: 清理扫描实验脚本（`_sweep*.py` / `_exp_*.py` / 临时结果 json）。
+- 验证：pytest 103 passed + `py_compile` 全过。
+
 ## `（本地，基于 `2b6fafb`）
 
 - fix: **LinearAttention elu→relu（DML 兼容）**——`LinearAttention._feat()` 默认 `elu(x)+1`，DML 不支持 `aten::elu.out` → 每步 CPU 回退（~100ms 固定税）。改默认 `feature='relu'`（`relu(x)+1e-6`），新增 config `linear_attn_feature` 可配置；`TransformerModel.__init__` 新增 `linear_attn_feature` 参数透传至 `attn_kwargs`；`TransformerBlock` 构建 LinearAttention 时取 `attn_kwargs['linear_attn_feature']`，并通过 `attn_only` 过滤避免泄漏至 `SlidingWindowCausalSelfAttention`。
