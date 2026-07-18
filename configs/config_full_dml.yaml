@@ -36,15 +36,15 @@ model:
 training:
   complexity_lambda: 0.05           # 复杂度奖励系数（hinge 预算约束）
   batch_size: 8
-  batch_size: 8
-  epochs: 1
+  # DML 扫描（2026-07-18）：epochs 是质量第一杠杆（ep1 val8.0 → ep3 val5.2 → ep3+lr0.3 val2.8）；lr 偏高更优
+  epochs: 3
   optimizer: sgd
-  learning_rate: 0.08
-  sgd_learning_rate: 0.08
+  learning_rate: 0.3
+  sgd_learning_rate: 0.3
   momentum: 0.9
   weight_decay: 0.01
   gradient_clip: 1.0
-  warmup_steps: 0.05
+  warmup_steps: 0.0
   lr_schedule: wsd
   wsd_decay_frac: 0.1
   early_stop_patience: 3
