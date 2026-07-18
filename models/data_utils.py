@@ -452,7 +452,7 @@ class BPETokenizer:
 
     @staticmethod
     def _is_valid_char(ch: str) -> bool:
-        """剔除无效/噪声字符：替换符、私用区、未定义码点、控制字符。"""
+        """剔除无效/噪声字符：替换符、私用区、未定义码点、控制字符、CJK 扩展/增补区生僻字。"""
         if ch == '\ufffd':
             return False
         o = ord(ch)
@@ -462,6 +462,12 @@ class BPETokenizer:
             return False  # 私用区
         if 0xf0000 <= o <= 0xfffff or 0x100000 <= o <= 0x10ffff:
             return False  # 增补私用区
+        # 剔除 CJK 扩展区（U+3400 基本区之外）生僻字：扩展 A(U+3400-4DBF)/B+(U+20000+)
+        # 这些字符在干净语料中极少出现，混入词表会导致生成偏向生僻乱码汉字。
+        if 0x3400 <= o <= 0x4dbf:
+            return False  # CJK 扩展 A
+        if 0x20000 <= o <= 0x2fffd:
+            return False  # CJK 扩展 B/C/D/E/F/G/H 等增补汉字
         try:
             unicodedata.name(ch)
         except ValueError:
