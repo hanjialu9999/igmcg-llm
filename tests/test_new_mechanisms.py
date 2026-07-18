@@ -1086,3 +1086,32 @@ def test_hybrid_block_no_leak_attn_kwargs():
     out = blk(x)
     assert isinstance(out, tuple)
     assert out[0].shape == (2, 8, 64)
+
+
+def test_linear_attn_head_dim_reduces_projection():
+    """linear_attn_head_dim 可小于 dim//num_heads：qkv/proj 按 num_heads*head_dim 降维。
+
+    AMD 780M iGPU(DML) 扫描结论：head_dim=16 比默认 64 快 1.75x 且质量持平。
+    """
+    from models.transformer import LinearAttention, TransformerBlock
+    dim, nh = 64, 4
+    # 默认（head_dim=None → dim//nh = 16，此处与显式 16 等价）
+    a_def = LinearAttention(dim, nh, feature='relu')
+    assert a_def.head_dim == dim // nh
+    # 显式降维：head_dim=8 < dim//nh=16
+    a8 = LinearAttention(dim, nh, feature='relu', head_dim=8)
+    assert a8.head_dim == 8
+    assert a8.qkv.out_features == 3 * nh * 8      # 96 而非 192
+    assert a8.proj.in_features == nh * 8          # 32 而非 64
+    x = torch.randn(2, 8, dim)
+    out8, _ = a8(x)
+    assert out8.shape == (2, 8, dim)              # 输出仍映射回 dim
+    # hybrid block 透传 linear_attn_head_dim 且不泄漏到 attn
+    blk = TransformerBlock(
+        dim, nh, 128, block_type='attn', mixer='hybrid',
+        attn_kwargs={'window': 32, 'qk_norm': True, 'attn_temp': True,
+                     'linear_attn_feature': 'relu', 'linear_attn_head_dim': 8}
+    )
+    assert blk.linear_attn.head_dim == 8
+    assert blk.attn.head_dim == dim // nh          # 注意力的 head_dim 不受影响
+    assert blk(torch.randn(2, 8, dim))[0].shape == (2, 8, dim)

@@ -70,3 +70,6 @@ logs_cmp_selv2_full/
 .DS_Store
 Thumbs.db
 *.swp
+
+# opencode agent memory (local only, never commit)
+.opencode/

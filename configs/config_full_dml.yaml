@@ -1,0 +1,88 @@
+model:
+  vocab_size: 5000
+  embedding_dim: 256
+  num_heads: 4
+  num_layers: 4
+  hidden_dim: 512
+  max_seq_length: 64
+  dropout: 0
+  tie_weights: true
+  gradient_checkpointing: false
+  attn_window: 32
+  rope_max_len: 4096
+  char_merge: true
+  char_merge_kernel: 3
+  char_merge_dropout: 0.0
+  memory_size: 32
+  memory_comp_dim: 16
+  memory_retrieval: true
+  memory_sparse_topk: 16
+  memory_retrieval_full: false
+  memory_forget: true
+  ngram_fusion: true
+  mixer: hybrid
+  linear_attn_feature: relu
+  linear_attn_head_dim: 16
+  learn_window: true
+  layer_skip: false
+training:
+  batch_size: 8
+  epochs: 1
+  optimizer: sgd
+  learning_rate: 0.08
+  sgd_learning_rate: 0.08
+  momentum: 0.9
+  weight_decay: 0.01
+  gradient_clip: 1.0
+  warmup_steps: 0.05
+  lr_schedule: wsd
+  wsd_decay_frac: 0.1
+  early_stop_patience: 3
+  precision: fp32
+  grad_accum_steps: 1
+  compile: false
+  show_progress: true
+  enhancement_schedule:
+  - qk_norm: true
+    attn_temp: true
+    residual_gate: true
+    hybrid_gate: true
+  - qk_norm: false
+    attn_temp: false
+    residual_gate: false
+    hybrid_gate: false
+  - qk_norm: true
+    attn_temp: true
+    residual_gate: false
+    hybrid_gate: false
+  - qk_norm: false
+    attn_temp: true
+    residual_gate: true
+    hybrid_gate: false
+  - qk_norm: true
+    attn_temp: true
+    residual_gate: false
+    hybrid_gate: true
+  - qk_norm: false
+    attn_temp: true
+    residual_gate: true
+    hybrid_gate: false
+  - qk_norm: true
+    attn_temp: true
+    residual_gate: false
+    hybrid_gate: false
+  - qk_norm: false
+    attn_temp: false
+    residual_gate: false
+    hybrid_gate: false
+data:
+  train_file: data/pretrain_corpus/merged_sample.txt
+  vocab_size: 5000
+  max_seq_length: 64
+  num_workers: 0
+  test_split: 0.1
+paths:
+  checkpoint_dir: checkpoints_full_dml
+  log_dir: logs_full_dml
+device: auto
+seed: 42

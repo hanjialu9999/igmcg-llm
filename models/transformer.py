@@ -697,14 +697,15 @@ class LinearAttention(nn.Module):
     """
 
     def __init__(self, dim: int, num_heads: int, qk_norm: bool = True, attn_temp: bool = True,
-                 max_seq_length: int = 64, feature: str = 'relu'):
+                 max_seq_length: int = 64, feature: str = 'relu', head_dim: Optional[int] = None):
         super().__init__()
         self.num_heads = num_heads
-        self.head_dim = dim // num_heads
+        self.head_dim = head_dim or (dim // num_heads)
         self.max_seq_length = max_seq_length
         self.feature = feature
-        self.qkv = nn.Linear(dim, 3 * dim, bias=False)
-        self.proj = nn.Linear(dim, dim, bias=False)
+        # qkv 投影输出 3*num_heads*head_dim（head_dim 可小于 dim//num_heads 以省算力）
+        self.qkv = nn.Linear(dim, 3 * self.num_heads * self.head_dim, bias=False)
+        self.proj = nn.Linear(self.num_heads * self.head_dim, dim, bias=False)
         self.rope = RotaryEmbedding(self.head_dim)
         self.qk_norm_enabled = qk_norm
         if qk_norm:
@@ -978,16 +979,17 @@ class TransformerBlock(nn.Module):
                 self.linear_attn = None
             elif mixer == 'hybrid':
                 # 阶段7：attn + 线性注意力 两路并行，可学习 mixer_gate 自选择用多少
-                attn_only = {k: v for k, v in attn_kwargs.items() if k != 'linear_attn_feature'}
+                attn_only = {k: v for k, v in attn_kwargs.items() if k not in ('linear_attn_feature', 'linear_attn_head_dim')}
                 self.attn = SlidingWindowCausalSelfAttention(
                     dim, num_heads, max_seq_length=max_seq_length, **attn_only)
                 self.linear_attn = LinearAttention(dim, num_heads, max_seq_length=max_seq_length,
                                                    qk_norm=attn_kwargs.get('qk_norm', True),
                                                    attn_temp=attn_kwargs.get('attn_temp', True),
-                                                   feature=attn_kwargs.get('linear_attn_feature', 'relu'))
+                                                   feature=attn_kwargs.get('linear_attn_feature', 'relu'),
+                                                   head_dim=attn_kwargs.get('linear_attn_head_dim', None))
                 self.mixer_gate = nn.Parameter(torch.ones(1))  # init 1.0 → 偏 attn
             else:
-                attn_only = {k: v for k, v in attn_kwargs.items() if k != 'linear_attn_feature'}
+                attn_only = {k: v for k, v in attn_kwargs.items() if k not in ('linear_attn_feature', 'linear_attn_head_dim')}
                 self.attn = SlidingWindowCausalSelfAttention(
                     dim, num_heads, max_seq_length=max_seq_length, **attn_only)
                 self.linear_attn = None
@@ -1179,6 +1181,7 @@ class TransformerModel(nn.Module):
                    layer_skip: bool = False, learn_window: bool = False, window_base: int = 64,
                    mixer: str = 'attn',
                    linear_attn_feature: str = 'relu',
+                   linear_attn_head_dim: Optional[int] = None,
                    ngram_fusion: bool = False, ngram_model=None,
                    ngram_gate_scale: float = 1.0, igmcg: bool = False):
         super(TransformerModel, self).__init__()
@@ -1249,7 +1252,8 @@ class TransformerModel(nn.Module):
                            retrieval_full=memory_retrieval_full,
                            retrieval_topk=memory_retrieval_topk,
                            learn_window=learn_window, window_base=window_base,
-                           linear_attn_feature=linear_attn_feature)
+                           linear_attn_feature=linear_attn_feature,
+                           linear_attn_head_dim=linear_attn_head_dim)
         self.blocks = nn.ModuleList([
             TransformerBlock(embedding_dim, num_heads, hidden_dim, block_type=bt,
                              dropout=dropout, max_seq_length=rope_max_len,
