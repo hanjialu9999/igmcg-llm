@@ -14,6 +14,14 @@
 - exp: **20M 级大模型速度扫描**（最优基线 hd16/mem32/ngram+window 保持，仅放大 ed/nl）：ed512_nl6(14.8M/24.2k) / ed512_nl8(18.7M/18.2k) / **ed640_nl6(20.6M/20.9k tok/s，~20M 最快)** / ed768_nl6(27.2M/18.3k) / ed512_nl10(22.7M/15.7k)。结论：放大 embedding_dim 比加深层数更划算（nl10 仅 15.7k）；**ed640_nl6 为 20M 容量档推荐**。质量验证：ed640_nl6 单 epoch val_loss=8.98（4000 行小数据欠拟合），故 **4.3M 质量档仍是默认甜点**，20M 档需多 epoch/大数据。
 - chore: **清理旧 checkpoint 释放 ~415MB**——删除 `checkpoints_50mb_dml` / `checkpoints_baseline_dml` / `checkpoints_cmp_{enh,sel,selv2}_full` / `logs_dml` / `logs_smoke_8k`；保留 `checkpoints/`（默认）、`checkpoints_full_dml/`（当前最优配置产出）、`checkpoints_smoke_4k/`（pytest 依赖）。
 
+## `（本地，基于 `fb4e8e2`，待推送，第四轮训练超参扫描）
+
+- exp: **训练超参扫描**（4.3M 质量档，batch8/seq64/4000 行，val_loss）：**epochs 是质量第一杠杆**——ep1=8.02 → ep2=6.78 → ep3=5.21；lr 偏高更优（0.3=6.74 < 0.15=7.45 < 0.08=7.99，1 epoch）；warmup 几乎无影响（0.0≈0.05≈0.1）。
+- 组合最优（4.3M）：**ep3 + lr0.3 = val 2.80**（比 ep1 默认 8.0 暴降）。20M 容量档(mem0) ep3 = **3.61**（此前"20M 过拟合"为单 epoch 假象，多 epoch 下 20M 同样训好）。
+- config: `config_full_dml.yaml` 改 `epochs: 3` / `sgd_learning_rate: 0.3` / `warmup_steps: 0.0`（并修一处重复 batch_size 行）。
+- chore: 删 `checkpoints/final_model.pt`+`vocab.json`（7/11 架构 overhaul 前、无 config、与现代码不兼容，84MB）；保留 `checkpoints/`(空) / `checkpoints_full_dml/` / `checkpoints_smoke_4k/`(pytest 依赖)。
+- 验证：pytest 104 passed（1 skipped）。
+
 ## `（本地，基于 `fb4e8e2`，待推送，第三轮特性开关扫描 + rope bug 修复）
 
 - exp: **特性开关扫描**（4.3M 质量档基线，单 epoch val_loss + tok/s）：char_merge=true(vl5.96 vs 6.32 提质量)、complexity_reward=true(λ0.05, vl5.87 vs 6.09 提质量)、alibi=true(vl6.18 vs 6.51 略提)、ngram_fusion(true 中性略慢)、learn_window(true 质量略降但提速特性)。
