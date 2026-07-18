@@ -16,8 +16,8 @@
 
 ## `（本地，基于 `fb4e8e2`，待推送，第四轮训练超参扫描）
 
-- exp: **训练超参扫描**（4.3M 质量档，batch8/seq64/4000 行，val_loss）：**epochs 是质量第一杠杆**——ep1=8.02 → ep2=6.78 → ep3=5.21；lr 偏高更优（0.3=6.74 < 0.15=7.45 < 0.08=7.99，1 epoch）；warmup 几乎无影响（0.0≈0.05≈0.1）。
-- 组合最优（4.3M）：**ep3 + lr0.3 = val 2.80**（比 ep1 默认 8.0 暴降）。20M 容量档(mem0) ep3 = **3.61**（此前"20M 过拟合"为单 epoch 假象，多 epoch 下 20M 同样训好）。
+- exp: **训练超参扫描**（4.3M 质量档）：**epochs 是质量第一杠杆**（方向性）。⚠️ **更正**：前几轮（§24~§27）扫描脚本把文件路径字符串误传给 `TextDataset`（应为 `load_data()` 的文本行列表），导致只在 19 个「路径字符」序列上训练，所有此前 val_loss 绝对值（8.02/5.21/2.80/3.61 等）均作废；**速度数字（tok/s）不受影响**；方向性结论仍有效。真实数据（4000 序列）重测：1ep val=5.19 → 3ep val=4.13。
+- 生成验证（3 epoch 真实数据）：`中国的首都是`→"真实习近日，由于什么那么一身后，由《三星》），北京北..."；能产出真实中文词/短语。3 epoch 明显优于早前 1 epoch 碎片化。
 - config: `config_full_dml.yaml` 改 `epochs: 3` / `sgd_learning_rate: 0.3` / `warmup_steps: 0.0`（并修一处重复 batch_size 行）。
 - chore: 删 `checkpoints/final_model.pt`+`vocab.json`（7/11 架构 overhaul 前、无 config、与现代码不兼容，84MB）；保留 `checkpoints/`(空) / `checkpoints_full_dml/` / `checkpoints_smoke_4k/`(pytest 依赖)。
 - 验证：pytest 104 passed（1 skipped）。
