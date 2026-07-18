@@ -9,6 +9,11 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
+## `（本地，基于 `fb4e8e2`，待推送）
+
+- exp: **20M 级大模型速度扫描**（最优基线 hd16/mem32/ngram+window 保持，仅放大 ed/nl）：ed512_nl6(14.8M/24.2k) / ed512_nl8(18.7M/18.2k) / **ed640_nl6(20.6M/20.9k tok/s，~20M 最快)** / ed768_nl6(27.2M/18.3k) / ed512_nl10(22.7M/15.7k)。结论：放大 embedding_dim 比加深层数更划算（nl10 仅 15.7k）；**ed640_nl6 为 20M 容量档推荐**。质量验证：ed640_nl6 单 epoch val_loss=8.98（4000 行小数据欠拟合），故 **4.3M 质量档仍是默认甜点**，20M 档需多 epoch/大数据。
+- chore: **清理旧 checkpoint 释放 ~415MB**——删除 `checkpoints_50mb_dml` / `checkpoints_baseline_dml` / `checkpoints_cmp_{enh,sel,selv2}_full` / `logs_dml` / `logs_smoke_8k`；保留 `checkpoints/`（默认）、`checkpoints_full_dml/`（当前最优配置产出）、`checkpoints_smoke_4k/`（pytest 依赖）。
+
 ## `（本地，基于 `d941095`，待推送）
 
 - feat: **LinearAttention 可配置 head_dim**——新增 `linear_attn_head_dim` 参数（三级透传：LinearAttention / TransformerBlock / config_loader）；qkv 投影改为 `3*num_heads*head_dim`，proj 改为 `num_heads*head_dim→dim`。默认 `16`（AMD 780M iGPU DML 上比原默认 64 **快 1.75x** 且质量持平：中间张量 33.6MB→2MB 解除内存带宽瓶颈）。
