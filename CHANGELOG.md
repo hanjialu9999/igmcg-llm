@@ -14,6 +14,16 @@
 - exp: **20M 级大模型速度扫描**（最优基线 hd16/mem32/ngram+window 保持，仅放大 ed/nl）：ed512_nl6(14.8M/24.2k) / ed512_nl8(18.7M/18.2k) / **ed640_nl6(20.6M/20.9k tok/s，~20M 最快)** / ed768_nl6(27.2M/18.3k) / ed512_nl10(22.7M/15.7k)。结论：放大 embedding_dim 比加深层数更划算（nl10 仅 15.7k）；**ed640_nl6 为 20M 容量档推荐**。质量验证：ed640_nl6 单 epoch val_loss=8.98（4000 行小数据欠拟合），故 **4.3M 质量档仍是默认甜点**，20M 档需多 epoch/大数据。
 - chore: **清理旧 checkpoint 释放 ~415MB**——删除 `checkpoints_50mb_dml` / `checkpoints_baseline_dml` / `checkpoints_cmp_{enh,sel,selv2}_full` / `logs_dml` / `logs_smoke_8k`；保留 `checkpoints/`（默认）、`checkpoints_full_dml/`（当前最优配置产出）、`checkpoints_smoke_4k/`（pytest 依赖）。
 
+## `（本地，基于 `fb4e8e2`，待推送，第二轮 20M 维度扫描）
+
+- exp: **20M 维度扫描找新合适点**（固定 ed640_nl6，扫 head_dim/num_heads/memory/hidden_dim/window + 组合）：
+  - head_dim：16(17.3k/vl12.5) > 24 > 32(14.5k/12.7) → **hd16 仍最优**。
+  - num_heads：8(15.9k/vl12.4 最佳) > 16 > 4(17.2k/13.9 最差)，nh8 质量略优但慢 ~10%，不划算。
+  - **memory_size 关键反转**：mem0(20.4k/**vl8.5**) >> mem16≈mem32≈mem64(vl13.4~13.6)。→ **20M 大模型在 4000 行小数据下严重过拟合 memory 机制，关掉 memory 质量暴涨、速度也更快**；与 4.3M 档（mem32 最优）结论相反。
+  - hidden_dim 加大只增参减速、质量不升；window 下 w64 > w32 > w16。
+  - **20M 最优配置修正**：`ed640/nl6/num_heads=4/memory_size=0/hd16/w64` → 20.3M / ~21k tok/s / val ~8.7（比 mem32 版 13.6 大幅改善）。**核心：配置最优值随规模变化——小模型靠 memory，大模型有限数据下关 memory**。
+- docs: `config_full_dml.yaml` 注释更新 20M 容量档为 mem0 版。
+
 ## `（本地，基于 `d941095`，待推送）
 
 - feat: **LinearAttention 可配置 head_dim**——新增 `linear_attn_head_dim` 参数（三级透传：LinearAttention / TransformerBlock / config_loader）；qkv 投影改为 `3*num_heads*head_dim`，proj 改为 `num_heads*head_dim→dim`。默认 `16`（AMD 780M iGPU DML 上比原默认 64 **快 1.75x** 且质量持平：中间张量 33.6MB→2MB 解除内存带宽瓶颈）。

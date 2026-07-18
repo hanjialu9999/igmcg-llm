@@ -1,6 +1,8 @@
 model:
   # 本配置 = DML 扫描最优「质量档」（4.28M params / 91.6k tok/s / val 6.20）。
-  # 容量档（~20M）备选：embedding_dim: 640 / num_layers: 6 → 20.6M / 20.9k tok/s（需多 epoch 才训好）。
+  # 容量档（~20M）备选：embedding_dim: 640 / num_layers: 6 / num_heads: 4 /
+  #   memory_size: 0（关记忆！大模型在小数据下 memory 过拟合，关掉质量暴涨 13.6→8.7）/
+  #   linear_attn_head_dim: 16 / attn_window: 64 → 20.3M / ~21k tok/s / val ~8.7。
   vocab_size: 5000
   embedding_dim: 256
   num_heads: 4
