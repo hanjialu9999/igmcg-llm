@@ -276,3 +276,9 @@
 
 ## `43c7d27`（已推送，基于 `7590280`）
 ...（后续保持原有内容不变）
+
+## （本地，2026-07-18，可学习字符词表落地）
+- feat: CharTokenizer 零 OOV 字符词表落地，解决词级词表 UNK 泛滥（原 vocab5000 仅覆盖 21.85%，生成 68% 是 <???>）。词表存盘 checkpoints_full_dml/vocab_char.json（size=5000，永久复用），配套 inal_model_char.pt + inal_model_config.yaml。编码全语料 UNK 占比 = 0.000%。
+- fix: CharTokenizer._is_valid_char 过滤 CJK 扩展 A(U+3400-4DBF)/增补 B+(U+20000+) 生僻汉字；原漏过滤导致 C4 类语料建词表混入扩展区汉字，生成全成生僻乱码。
+- chore: 旧词级词表(造成 UNK 根因) checkpoints_full_dml/vocab.json + 模型移至 unused_vocab/vocab_wordlevel_old.json（仅留 json 档案）；删 rchive_unused/checkpoints_backup/（~3GB 旧模型）+ 临时脚本/log；pytest 104 passed / 1 skipped。
+- 结论：字符级零 OOV 已达成；纯字符级在 4000 行小数据下生成偏生僻字（数据量瓶颈，非词表 bug），需更大清洗语料才有干净常用字生成。
