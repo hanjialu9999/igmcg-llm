@@ -105,6 +105,9 @@ class MemoryBank(nn.Module):
         # 记忆槽以压缩空间零初始化（forward 首步由 reset 填充）
         self.register_buffer('slots', torch.zeros(1, self.num_slots, self.comp_dim),
                              persistent=False)
+        # K/V 缓存（slots 未变时复用，避免多块重复解压）
+        self._kv_cache = None
+        self._kv_cache_slots = None
 
     def reset(self, batch: int, device: torch.device, dtype: torch.dtype):
         """新建 batch 大小的记忆（每个样本独立槽）。
@@ -116,10 +119,16 @@ class MemoryBank(nn.Module):
         dev = self.compress.weight.device
         self.slots = torch.zeros(batch, self.num_slots, self.comp_dim,
                                  device=dev, dtype=dtype)
+        # slots 重建 → 缓存失效
+        self._kv_cache = None
+        self._kv_cache_slots = None
 
     def write(self, x: torch.Tensor) -> None:
         """x: (B, T, D) 当前层表示，soft 写入记忆。"""
         B, T, D = x.shape
+        # slots 即将变更 → 失效 K/V 缓存（get_kv 下次重算）
+        self._kv_cache = None
+        self._kv_cache_slots = None
         # 仅在 batch 变化或设备确实不一致时重建（正常训练每步同设备，不触发拷贝）
         if self.slots.shape[0] != B or self.slots.device != x.device:
             if self.slots.device != x.device:
@@ -166,10 +175,16 @@ class MemoryBank(nn.Module):
         """返回记忆的 K/V：(B, M, head_dim) 及检索元信息（门控/稀疏）。
 
         直接复用已对齐设备的 slots，不在热路径做 .to（避免 DML 设备别名导致的每步拷贝）。
+        slots 未变时复用缓存 K/V，避免多块重复解压（DML 小算子启动税显著）。
         """
-        decomp = self.decompress(self.slots)  # (B, M, D)
-        k = self.mem_k(decomp)
-        v = self.mem_v(decomp)
+        if getattr(self, '_kv_cache', None) is not None and self._kv_cache_slots is self.slots:
+            k, v = self._kv_cache
+        else:
+            decomp = self.decompress(self.slots)  # (B, M, D)
+            k = self.mem_k(decomp)
+            v = self.mem_v(decomp)
+            self._kv_cache = (k, v)
+            self._kv_cache_slots = self.slots
         meta = None
         if self.retrieval_enabled or self.sparse_topk > 0:
             meta = {
@@ -1020,17 +1035,19 @@ class TransformerBlock(nn.Module):
         sk = torch.sigmoid(self.skip_gate).to(x.device) if (self.skip_enabled and getattr(self, '_skip_active', True)) else None
 
         if self.block_type == 'attn':
+            # 阶段7：混合 mixer（attn + 线性注意力并行），两者共享同一 ln1(x) 避免重复 RMSNorm
+            xn = self.ln1(x)
             if ckpt and hasattr(self.attn, 'attend'):
                 # SlidingWindowCausalSelfAttention：拆分 project_and_norm / attend 以缩小检查点重算区
-                q, k, v = self.attn.project_and_norm(self.ln1(x), start_pos)
+                q, k, v = self.attn.project_and_norm(xn, start_pos)
                 h, present = checkpoint(self.attn.attend, q, k, v, attn_past_kv, use_cache, start_pos, mem_kv, use_reentrant=False)
             else:
                 # LinearAttention 等无 attend 接口的 mixer：直接对整层前向做检查点
-                h, present = checkpoint(self.attn, self.ln1(x), attn_past_kv, use_cache, start_pos, mem_kv, use_reentrant=False) if ckpt else \
-                    self.attn(self.ln1(x), attn_past_kv, use_cache, start_pos, memory_kv=mem_kv)
+                h, present = checkpoint(self.attn, xn, attn_past_kv, use_cache, start_pos, mem_kv, use_reentrant=False) if ckpt else \
+                    self.attn(xn, attn_past_kv, use_cache, start_pos, memory_kv=mem_kv)
             if self.linear_attn is not None:
                 # 阶段7：混合 mixer（attn + 线性注意力并行），mixer_gate 自选择比例
-                lh, lpresent = self.linear_attn(self.ln1(x), attn_past_kv, use_cache, start_pos, memory_kv=mem_kv)
+                lh, lpresent = self.linear_attn(xn, attn_past_kv, use_cache, start_pos, memory_kv=mem_kv)
                 mg = torch.sigmoid(self.mixer_gate).to(x.device)
                 h = mg * h + (1.0 - mg) * lh
                 if use_cache and lpresent is not None:
