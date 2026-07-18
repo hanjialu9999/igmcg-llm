@@ -241,51 +241,60 @@ class RotaryEmbedding(nn.Module):
 
     def _get_cos_sin(self, start_pos: int, seq_len: int, device: torch.device, dtype: torch.dtype, max_len: int = 2048) -> Tuple[torch.Tensor, torch.Tensor]:
         """按 (device, dtype, head_dim) 缓存整张位置表后按需切片。
-        
+
         实例级缓存避免多线程/多设备污染；可选共享缓存用于性能敏感场景。
+
+        注意（2026-07-18 修复 rope_learnable 训练崩溃）：缓存只存「无 grad 的基准表」
+        （由 inv_freq buffer 计算，scale=1）。可学习路径在此之上按 rope_log_scale
+        重新计算 cos/sin（带 grad），保证梯度回流到 rope_log_scale，且绝不跨 step
+        复用带 grad 图的张量（否则多步训练 backward 触发「graph freed」错误）。
         """
         key = (str(device), str(dtype), self.inv_freq.shape[0])
         need = start_pos + seq_len
-        
-        # 先尝试实例缓存
-        with self._cache_lock:
-            cached = self._cache.get(key)
-            if cached is not None and cached[0].size(2) >= need:
-                cos_full, sin_full = cached
-                return cos_full[:, :, start_pos:need, :].to(dtype), sin_full[:, :, start_pos:need, :].to(dtype)
-        
-        # 可选：尝试共享缓存
-        if self._use_shared_cache:
-            with self._shared_cache_lock:
-                cached = self._shared_cache.get(key)
+
+        # 非可学：直接返回缓存（基准表本身无 grad，可安全复用）
+        if not self.learnable:
+            with self._cache_lock:
+                cached = self._cache.get(key)
                 if cached is not None and cached[0].size(2) >= need:
                     cos_full, sin_full = cached
                     return cos_full[:, :, start_pos:need, :].to(dtype), sin_full[:, :, start_pos:need, :].to(dtype)
+            if self._use_shared_cache:
+                with self._shared_cache_lock:
+                    cached = self._shared_cache.get(key)
+                    if cached is not None and cached[0].size(2) >= need:
+                        cos_full, sin_full = cached
+                        return cos_full[:, :, start_pos:need, :].to(dtype), sin_full[:, :, start_pos:need, :].to(dtype)
 
-        # 计算新缓存；L 不超过 max_len，防止缓存无限增长
+        # 计算新缓存（基准表，由 inv_freq buffer 算，detach 确保无 grad 历史）
         L = min(max(need, 128), max_len)
         if need > max_len:
             import warnings
             warnings.warn(f'RoPE: need={need} > max_len={max_len}，位置将被 clamp，'
                           '可能影响长序列质量。建议增大 rope_max_len。')
         t = torch.arange(0, L, device=device).type_as(self.inv_freq)
-        inv_freq = self.inv_freq
-        if self.learnable:
-            # 可学习频率缩放：inv_freq_eff = inv_freq * exp(log_scale)（per-dim 可学）
-            inv_freq = inv_freq * torch.exp(self.rope_log_scale).to(inv_freq.device)
-        freqs = torch.outer(t, inv_freq)
+        # 基准频率表（无 grad，inv_freq 为 buffer）
+        freqs = torch.outer(t, self.inv_freq)
         emb = torch.cat((freqs, freqs), dim=-1)
-        cos_full = emb.cos()[None, None, :, :].to(dtype)
-        sin_full = emb.sin()[None, None, :, :].to(dtype)
+        cos_full = emb.cos()[None, None, :, :].to(dtype).detach()
+        sin_full = emb.sin()[None, None, :, :].to(dtype).detach()
 
-        # 存入实例缓存
+        # 存入实例缓存（仅非可学路径后续会命中；可学路径每步重算，不依赖此缓存）
         with self._cache_lock:
             self._cache[key] = (cos_full, sin_full)
-        
-        # 可选：存入共享缓存
         if self._use_shared_cache:
             with self._shared_cache_lock:
                 self._shared_cache[key] = (cos_full, sin_full)
+
+        # 可学习路径：按 rope_log_scale 重新计算 cos/sin（带 grad，梯度回流 rope_log_scale）
+        if self.learnable:
+            t_eff = torch.arange(start_pos, need, device=device).type_as(self.inv_freq)
+            inv_freq_eff = self.inv_freq * torch.exp(self.rope_log_scale).to(self.inv_freq.device)
+            freqs_eff = torch.outer(t_eff, inv_freq_eff)
+            emb_eff = torch.cat((freqs_eff, freqs_eff), dim=-1)
+            cos = emb_eff.cos()[None, None, :, :].to(dtype)
+            sin = emb_eff.sin()[None, None, :, :].to(dtype)
+            return cos, sin
 
         return cos_full[:, :, start_pos:need, :].to(dtype), sin_full[:, :, start_pos:need, :].to(dtype)
 

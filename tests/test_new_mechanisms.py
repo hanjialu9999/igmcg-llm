@@ -51,6 +51,33 @@ def test_learnable_rope_param():
     assert p.shape[0] == 8
 
 
+def test_learnable_rope_multistep_training_no_graph_reuse():
+    """rope_learnable=True 多步训练不得崩溃（修复：cos/sin 缓存须与 autograd 图隔离）。
+
+    历史 bug：RoPE 把带 grad 的 cos/sin 张量存入实例缓存，第二步 backward 时
+    复用第一步已释放的图 → 'backward through the graph a second time'。
+    修复后缓存只存无 grad 基准表，可学路径每步重算 cos/sin（梯度回流 rope_log_scale）。
+    """
+    m = _small(rope_learnable=True, memory_size=0)
+    m.train()
+    opt = torch.optim.SGD(m.parameters(), lr=0.1, momentum=0.9)
+    crit = torch.nn.CrossEntropyLoss(ignore_index=0)
+    dl = DataLoader(_TinyDS(), batch_size=4, shuffle=True)
+    # 跑多步训练，验证不抛 'backward twice' 异常
+    for i, b in enumerate(dl):
+        if i >= 6:
+            break
+        opt.zero_grad()
+        logits = m(b['input_ids'])
+        loss = crit(logits.view(-1, m.vocab_size), b['target_ids'].view(-1))
+        loss.backward()
+        opt.step()
+    # 梯度必须回流到 rope_log_scale（可学参数真正被训练）
+    g = m.blocks[0].attn.rope.rope_log_scale.grad
+    assert g is not None, 'rope_log_scale 未收到梯度'
+    assert g.abs().sum().item() > 0, 'rope_log_scale 梯度应为非零'
+
+
 def test_alibi_bias_present():
     """ALiBi 应注册斜率缓冲，且 attend 注入偏置不改变输出形状。"""
     m = _small(alibi=True)
