@@ -32,6 +32,7 @@ model:
   # DML 扫描（2026-07-18）确认有益的开关：
   alibi: true                       # 位置偏置，单 epoch val 略降（6.51→6.18）
   complexity_reward: true           # 复杂度预算正则，val 略降（6.09→5.87）；需配 complexity_lambda
+  rope_learnable: true              # 可学 RoPE 频率（bug 已修复 2026-07-18：cos/sin 缓存隔离 autograd 图）
 training:
   complexity_lambda: 0.05           # 复杂度奖励系数（hinge 预算约束）
   batch_size: 8

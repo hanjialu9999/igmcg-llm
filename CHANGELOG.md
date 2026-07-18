@@ -14,13 +14,14 @@
 - exp: **20M 级大模型速度扫描**（最优基线 hd16/mem32/ngram+window 保持，仅放大 ed/nl）：ed512_nl6(14.8M/24.2k) / ed512_nl8(18.7M/18.2k) / **ed640_nl6(20.6M/20.9k tok/s，~20M 最快)** / ed768_nl6(27.2M/18.3k) / ed512_nl10(22.7M/15.7k)。结论：放大 embedding_dim 比加深层数更划算（nl10 仅 15.7k）；**ed640_nl6 为 20M 容量档推荐**。质量验证：ed640_nl6 单 epoch val_loss=8.98（4000 行小数据欠拟合），故 **4.3M 质量档仍是默认甜点**，20M 档需多 epoch/大数据。
 - chore: **清理旧 checkpoint 释放 ~415MB**——删除 `checkpoints_50mb_dml` / `checkpoints_baseline_dml` / `checkpoints_cmp_{enh,sel,selv2}_full` / `logs_dml` / `logs_smoke_8k`；保留 `checkpoints/`（默认）、`checkpoints_full_dml/`（当前最优配置产出）、`checkpoints_smoke_4k/`（pytest 依赖）。
 
-## `（本地，基于 `fb4e8e2`，待推送，第三轮特性开关扫描）
+## `（本地，基于 `fb4e8e2`，待推送，第三轮特性开关扫描 + rope bug 修复）
 
 - exp: **特性开关扫描**（4.3M 质量档基线，单 epoch val_loss + tok/s）：char_merge=true(vl5.96 vs 6.32 提质量)、complexity_reward=true(λ0.05, vl5.87 vs 6.09 提质量)、alibi=true(vl6.18 vs 6.51 略提)、ngram_fusion(true 中性略慢)、learn_window(true 质量略降但提速特性)。
-- **BUG 发现**：`rope_learnable=true` 训练崩溃 `RuntimeError: backward through graph a second time`——RoPE cos/sin 缓存张量带 grad 图且跨 step 复用（rope_log_scale 参与），多步训练必崩（推理/单步不触发）。真实 training bug，保持关；建议 cos/sin 缓存 detach 或 per-step 重算。
+- **BUG 修复：`rope_learnable=true` 多步训练崩溃**（`RuntimeError: backward through graph a second time`）。根因：`RotaryEmbedding._get_cos_sin` 把带 grad 的 cos/sin 张量存入实例缓存，第二步 backward 复用第一步已释放的图。修复：缓存只存「无 grad 基准表」（inv_freq buffer 算 + detach），可学路径每步按 `rope_log_scale` 重算 cos/sin（梯度回流已验证非零）。修复后 `rope_learnable=true` 多步训练不崩、参数真正被训练。
+- test: 新增 `test_learnable_rope_multistep_training_no_graph_reuse`（多步训练不崩 + rope_log_scale 收到非零梯度）。pytest 105 passed。
 - 组合：20M(mem0) 全开安全增强(alibi+complexity+char_merge+ngram) val 9.90→8.83 明确改善。
-- config: `config_full_dml.yaml` 新增 `alibi: true` + `complexity_reward: true`（配 `training.complexity_lambda: 0.05`）；`rope_learnable` 保持关。
-- 验证：pytest 104 passed。
+- config: `config_full_dml.yaml` 新增 `alibi: true` + `complexity_reward: true`（配 `training.complexity_lambda: 0.05`）+ `rope_learnable: true`（bug 修复后开启）。
+- 验证：pytest 105 passed + Python 编译。
 
 ## `（本地，基于 `fb4e8e2`，待推送，第二轮 20M 维度扫描）
 
