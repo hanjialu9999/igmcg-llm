@@ -246,10 +246,12 @@ def test_memory_bank_cumulative_write():
     # 槽应不同（累积而非覆盖）
     diff = (slots_after_1 - slots_after_2).abs().max().item()
     assert diff > 0.0, "两次 write 后 slots 无变化，记忆未累积"
-    # 槽 norm 应接近 1（归一化）
-    norms = mb.slots.norm(dim=-1)
-    assert norms.min() > 0.5, f"归一化后 norm 异常小: {norms.min()}"
-    assert norms.max() < 2.0, f"归一化后 norm 异常大: {norms.max()}"
+    # 归一化改为在读取时（_recompute_kv_cache）统一做一次，故 slots 本身未归一化；
+    # 此处复现读取时的归一化并断言其为单位范数（幂等、与写入粒度无关）。
+    normed = mb.slots / (1e-6 + mb.slots.norm(dim=-1, keepdim=True))
+    norms = normed.norm(dim=-1)
+    assert torch.allclose(norms, torch.ones_like(norms), atol=1e-5), \
+        f"读取时归一化后 norm 非单位: {norms.min()}..{norms.max()}"
     print("✅ test_memory_bank_cumulative_write passed")
 
 

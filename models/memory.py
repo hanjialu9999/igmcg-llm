@@ -119,15 +119,20 @@ class MemoryBank(nn.Module):
             # 按 gate 把压缩表示累加到槽（加权求和，可微）
             update = torch.einsum('btm,btc->bmc', gate, comp)  # (B, M, comp_dim)
             # 移动平均式软写入（保留历史记忆，新信息按 gate 权重叠加）
+            # 关键：此处【不】对 slots 做逐写归一化。原实现每次 write 后都 L2 归一化，
+            # 导致全量前向（一次写 T 个 token，归一化 1 次）与增量解码（逐 token 写，
+            # 每次归一化）的累加结果不一致（norm(a+b) ≠ norm(norm(a)+b)），产生训练-推理
+            # 记忆 divergence（slots 差 ~0.6）。归一化改为在读取时（_recompute_kv_cache）
+            # 统一做一次，与写入粒度无关，保证全量/增量记忆槽逐位一致。
             self.slots = self.slots + update
-            # 归一化防止数值膨胀
-            self.slots = self.slots / (1e-6 + self.slots.norm(dim=-1, keepdim=True))
         # write 已更新 slots → 立即解压并重算 K/V 缓存（而非延迟到下次 get_kv 时重算），
         # 每个 block 调 get_kv 直接命中缓存，避免跨层重复解压（DML 小算子启动税显著）。
         self._recompute_kv_cache()
 
     def _recompute_kv_cache(self):
-        decomp = self.decompress(self.slots)  # (B, M, D)
+        # 读取时统一 L2 归一化（与写入粒度无关，保证全量/增量记忆一致；幂等于已归一化情形）
+        normed = self.slots / (1e-6 + self.slots.norm(dim=-1, keepdim=True))
+        decomp = self.decompress(normed)  # (B, M, D)
         self._kv_cache = (self.mem_k(decomp), self.mem_v(decomp))
         self._kv_cache_slots = self.slots
 
