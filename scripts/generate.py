@@ -3,10 +3,16 @@ import torch.nn.functional as F
 import json
 import argparse
 import os
+import contextlib
 from pathlib import Path
 import sys
 from typing import Dict
 from collections import defaultdict, Counter
+
+# 推理精度上下文：bf16 时用 torch.autocast 包住前向/生成调用（与 train.py 一致），
+# 不用全局 set_autocast_enabled（会泄漏到采样算子且永不关闭，污染后续所有 op）。
+# DML/其他后端 dtype 落 fp32 时退化为 nullcontext。
+AMP_CTX = contextlib.nullcontext()
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
@@ -27,13 +33,14 @@ def generate_text(model, vocab, prompt, max_length=30, temperature=0.8,
     tokens = vocab.encode(prompt)
     if tokens[-1] == vocab.eos_idx:
         tokens = tokens[:-1]
-    generated = model.generate(tokens, max_length=max_length,
-                              temperature=temperature, top_k=top_k,
-                              device=device, repetition_penalty=repetition_penalty,
-                              ngram_fn=(ngram.logprob_vector if ngram else None),
-                              ngram_weight=ngram_weight,
-                              min_length=min_length,
-                              eos_penalty=eos_penalty)
+    with AMP_CTX:
+        generated = model.generate(tokens, max_length=max_length,
+                                  temperature=temperature, top_k=top_k,
+                                  device=device, repetition_penalty=repetition_penalty,
+                                  ngram_fn=(ngram.logprob_vector if ngram else None),
+                                  ngram_weight=ngram_weight,
+                                  min_length=min_length,
+                                  eos_penalty=eos_penalty)
     text = vocab.decode(generated)
     return text.strip()
 
@@ -180,11 +187,13 @@ def _generate_candidates_batch(model, ids, temps, max_length, top_k, rep_penalty
         # 阶段8.9：各候选温度可能不同，批量前向以 (N,) 温度张量传入，forward 内对主干
         # logits 逐候选做 log_softmax(z_n/τ_n)；n-gram 先验不被温度缩放。
         _temps = torch.tensor(temps, dtype=torch.float32, device=device)
-        _temp_applied = getattr(model, 'ngram_fusion_enabled', False)
+        _temp_applied = getattr(model, 'ngram_fusion_enabled', False) and \
+            getattr(model, '_ngram_fusion_active', True)
         # 初始前向：所有候选共享同一输入，得到 batched past（batch 维 = N）
         inp = torch.tensor([ids] * N, dtype=torch.long, device=device)
-        logits, past = model.forward(inp, past_key_values=None, use_cache=True,
-                                     intuition=intu_batch, temperature=_temps)
+        with AMP_CTX:
+            logits, past = model.forward(inp, past_key_values=None, use_cache=True,
+                                         intuition=intu_batch, temperature=_temps)
 
         for step in range(max_length):
             if all(done):
@@ -218,8 +227,9 @@ def _generate_candidates_batch(model, ids, temps, max_length, top_k, rep_penalty
             # batched forward 而非逐序列调用 _decode_one_step（逐序列会破坏 batch 对齐
             # 且无法共享单次前向）。_decode_one_step 的语义等价于单次 [[tok]] forward。
             feed = torch.tensor(nt, dtype=torch.long, device=device).unsqueeze(1)
-            logits, past = model.forward(feed, past_key_values=past, use_cache=True,
-                                         intuition=intu_batch, temperature=_temps)
+            with AMP_CTX:
+                logits, past = model.forward(feed, past_key_values=past, use_cache=True,
+                                             intuition=intu_batch, temperature=_temps)
             for n in range(N):
                 if not done[n]:
                     generated[n].append(nt[n])
@@ -241,11 +251,16 @@ def _fluency_batch(model, seqs, device, pad_id):
             batch[n, :len(s)] = torch.tensor(s, dtype=torch.long, device=device)
     out = []
     with torch.no_grad():
-        logits = model.forward(batch)
+        with AMP_CTX:
+            logits = model.forward(batch)
         for n, s in enumerate(seqs):
             if len(s) < 2:
                 out.append(0.0)
                 continue
+            # 注意：融合开启时 forward 返回 fused = log_softmax(z)+prior（prior 在 log_softmax 之后
+            # 相加，故并非已归一化的对数概率，而是被逐行常数偏移的"对数概率空间"量）。此处必须再做一次
+            # F.log_softmax 才能抵消该偏移、得到正确的组合分布 log_softmax(z+prior)。切勿误删——
+            # 删除会令流畅度被逐行常数偏移、候选排序失真（已证伪"双重归一化"假设）。
             lp = F.log_softmax(logits[n, :len(s) - 1].float(), dim=-1)
             tgt = torch.tensor(s[1:], dtype=torch.long, device=device).unsqueeze(1)
             out.append(lp.gather(1, tgt).mean().item())
@@ -432,13 +447,14 @@ def main():
             if not torch.cuda.is_bf16_supported():
                 dtype = 'fp32'
         # CPU 下 torch>=2.0 默认支持 bf16 自动混合精度，无需额外探测
+    global AMP_CTX
     if dtype == 'bf16' and device.type in ('cpu', 'cuda'):
-        # 在对应后端启用 bf16 自动混合精度（注意必须按实际 device.type 开启，
-        # 原实现只开了 'cpu' autocast，导致 CUDA 下 bf16 实际未生效）
-        torch.set_autocast_enabled(device.type, True)
-        torch.set_autocast_dtype(device.type, torch.bfloat16)
+        # 用上下文管理器（而非全局 set_autocast_enabled）限定 bf16 自动混合精度的作用域，
+        # 只包住前向/生成调用，避免泄漏到采样算子（log_softmax/topk/multinomial）且永不关闭。
+        AMP_CTX = torch.autocast(device.type, dtype=torch.bfloat16)
         print("推理精度: bf16（%s autocast，约 1.5~1.8x 提速）" % ("CPU" if device.type == 'cpu' else "CUDA"))
     else:
+        AMP_CTX = contextlib.nullcontext()
         print("推理精度: fp32")
     
     # 构建 n-gram 统计模型（解码期双轨）
