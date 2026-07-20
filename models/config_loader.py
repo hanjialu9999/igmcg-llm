@@ -65,7 +65,9 @@ def build_model(config: Dict[str, Any], device: Optional[torch.device] = None,
         attn_window=mc.get('attn_window', 0),
         attn_rel_bias=mc.get('attn_rel_bias', False),
         rope_base=mc.get('rope_base', 10000.0),
-        rope_max_len=mc.get('rope_max_len', 4096),
+        # RoPE/注意力缓冲区长度：默认与 max_seq_length 一致（指向同一"模型最大序列长"概念），
+        # 仅当显式配置 rope_max_len 时才覆盖——避免未配置时悄悄用 4096 而与 max_seq_length 发散。
+        rope_max_len=mc.get('rope_max_len', mc['max_seq_length']),
         mask_fill_value=mc.get('mask_fill_value', -1e9),
         # 阶段5：可学习 RoPE 频率 + ALiBi 线性位置偏置（默认关，向后兼容）
         rope_learnable=mc.get('rope_learnable', False),
@@ -75,8 +77,9 @@ def build_model(config: Dict[str, Any], device: Optional[torch.device] = None,
         # 阶段6：可学习滑动窗口（默认关，向后兼容；开启需重训）
         learn_window=mc.get('learn_window', False),
         window_base=mc.get('window_base', 64),
-        # 阶段7：token mixer 选择（attn | linear | hybrid，默认 attn 向后兼容）
-        mixer=mc.get('mixer', 'attn'),
+        # 阶段7：token mixer 选择（attn | linear | attn_linear，默认 attn 向后兼容）。
+        # 旧字符串 'hybrid' 等价于 'attn_linear'（attn+线性注意力并行），由 TransformerBlock 归一。
+        mixer=('attn_linear' if mc.get('mixer', 'attn') == 'hybrid' else mc.get('mixer', 'attn')),
         linear_attn_feature=mc.get('linear_attn_feature', 'relu'),
         linear_attn_head_dim=mc.get('linear_attn_head_dim', None),
         # 架构增强（默认全开：2026-07-14 起；旧权重门控 init=1.0 仍兼容，但开启后需重新训练以生效）
@@ -103,10 +106,11 @@ def build_model(config: Dict[str, Any], device: Optional[torch.device] = None,
         ngram_gate_scale=float(mc.get('ngram_gate_scale', 1.0)),
         igmcg=bool(mc.get('igmcg', False)),
     )
-    # 机制组合校验：mixer='hybrid' 仅在 block_type='attn' 的层真正融合线性注意力；
-    # 若 layer_plan 含 'hybrid'（SSM×注意力混合块），该块不会调用 linear_attn/mixer_gate，
-    # 导致二者成为永不更新的死参数（占显存与 checkpoint 体积）。发出告警避免静默无效训练。
-    if mc.get('mixer', 'attn') == 'hybrid' and mc.get('layer_plan', None) is not None:
+    # 机制组合校验：mixer='attn_linear'（旧名 'hybrid'，attn+线性注意力并行）仅在
+    # block_type='attn' 的层真正融合线性注意力；若 layer_plan 含 'hybrid'（SSM×注意力混合块），
+    # 该块不会调用 linear_attn/mixer_gate，导致二者成为永不更新的死参数（占显存与 checkpoint 体积）。
+    # 发出告警避免静默无效训练。
+    if mc.get('mixer', 'attn') in ('hybrid', 'attn_linear') and mc.get('layer_plan', None) is not None:
         layer_plan = mc.get('layer_plan', None)
         hybrid_blocks = [p for p in layer_plan.replace(',', ' ').split() if p == 'hybrid']
         if hybrid_blocks:

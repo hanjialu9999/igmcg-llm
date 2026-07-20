@@ -353,19 +353,9 @@ def main(config_path='configs/pretrain.yaml', resume=False):
     print("Creating model...")
     # 阶段8.1：n-gram 神经融合——用训练语料（与模型训练同一份分布）构建统计 n-gram 缓冲，
     # 传入 build_model 供可学习门控融合（缺省关；开启时 ngram_fusion=True 且 ngram_corpus 指向语料）。
-    _ngram_model = None
-    if config['model'].get('ngram_fusion', False):
-        try:
-            from scripts.generate import NGramModel
-            _ngram_corpus = config['model'].get('ngram_corpus', 'data/pretrain_corpus/merged.txt')
-            # vocab_size 对齐模型词表（config 里可能远大于语料实际覆盖的 token 数），
-            # 否则 logprob_matrix 维度与 output_head 不匹配会广播失败。
-            _ngram_vocab_size = config['model'].get('vocab_size', getattr(vocab, 'vocab_size', None))
-            _ngram_model = NGramModel(vocab, _ngram_corpus, max_order=10, smoothing=1.0,
-                                      vocab_size=_ngram_vocab_size)
-            print(f"[n-gram 融合] 已从 {_ngram_corpus} 构建统计 n-gram 缓冲（与训练分布对齐）")
-        except Exception as e:
-            print(f"[n-gram 融合] 构建失败，已跳过：{e}")
+    # 构建逻辑统一收敛到 models.checkpoint.build_ngram_model，避免与 generate.py 重复实现。
+    from models.checkpoint import build_ngram_model
+    _ngram_model = build_ngram_model(vocab, config['model'])
     model = build_model(config, device=device, ngram_model=_ngram_model)
 
     # 可选：torch.compile 加速（仅 CPU/CUDA 支持；与梯度检查点易冲突，自动关闭后者）
@@ -530,7 +520,7 @@ def main(config_path='configs/pretrain.yaml', resume=False):
     enhancement_schedule = config['training'].get('enhancement_schedule')
     enhancement_off_prob = config['training'].get('enhancement_off_prob', 0.0)
     if enhancement_schedule is not None:
-        _full_keys = ["qk_norm", "attn_temp", "residual_gate", "hybrid_gate"]
+        _full_keys = list(TransformerModel.ENHANCEMENT_KEYS)
         enhancement_schedule = [{**{k: True for k in _full_keys}, **m}
                                 for m in enhancement_schedule]
         print(f"  Enhancement schedule: {len(enhancement_schedule)} 段分段（按开关粒度交替）")

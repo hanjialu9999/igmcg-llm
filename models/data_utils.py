@@ -283,13 +283,12 @@ def split_dataset(dataset: TextDataset, train_ratio: float = 0.9, seed: int = 42
     return train_dataset, val_dataset
 
 
-class BPETokenizer:
-    """自研轻量 BPE（Byte-Pair Encoding）分词器，接口对齐 Vocabulary。
+class BaseTokenizer:
+    """分词器基类（BPE 与字符级共用的共享实现，D 项去误继承）。
 
-    与 Vocabulary 的差异：
-    - 词表由训练语料的字节对合并生成（子词），而非纯频率截断；
-    - 中文以单字为最小单元起步，高频相邻字/词逐步合并为子词，OOV 趋近 0；
-    - encode/decode 走 BPE 合并规则，导出格式兼容 load_vocab（含 merges 键）。
+    统一提供：特殊 token + 256 字节级 fallback 的词表初始化、字符有效性过滤、
+    BPE 预分词、符号→id 查表（含 UTF-8 字节回退，OOV=0）、通用 encode/decode。
+    具体分词策略（BPE 合并 / 纯字符）由子类 BPETokenizer / CharTokenizer 各自实现。
     """
 
     BYTE_PREFIX = 'bytes:'  # 字节级 token 前缀，如 bytes:0 ~ bytes:255
@@ -593,7 +592,16 @@ class BPETokenizer:
             }, f, ensure_ascii=False, indent=2)
 
 
-class CharTokenizer(BPETokenizer):
+class BPETokenizer(BaseTokenizer):
+    """BPE（Byte-pair Encoding）子词分词器。
+
+    继承 BaseTokenizer 的共享词表/编码基础设施，BPE 特有的训练、字节对合并、
+    合并后 tokenize 逻辑直接复用基类实现（train / _merge_word / tokenize 定义在基类）。
+    单独成类仅为语义清晰：字符级 CharTokenizer 不再"误继承"BPE 分词器。
+    """
+
+
+class CharTokenizer(BaseTokenizer):
     """字符级分词器（学习型分词的词表基座）。
 
     与 BPETokenizer 差异：不做 BPE 合并，词表 = 单字 + 256 byte token；
