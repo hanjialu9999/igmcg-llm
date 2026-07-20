@@ -12,7 +12,7 @@ from collections import defaultdict, Counter
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from models.transformer import TransformerModel, apply_repetition_penalty
+from models.transformer import TransformerModel, apply_repetition_penalty, sample_next_token
 from models.data_utils import Vocabulary
 from models.config_loader import load_vocab
 from models.device import get_device
@@ -193,25 +193,21 @@ def _generate_candidates_batch(model, ids, temps, max_length, top_k, rep_penalty
                 if done[n]:
                     nt.append(pad_id)
                     continue
-                lt = logits[n, -1, :] / temps[n]
-                # 阶段8.9：加性频率惩罚替代乘性重复惩罚（INT-1：与 model.generate 共用
-                # apply_repetition_penalty，避免两套惩罚公式漂移）
-                apply_repetition_penalty(lt, generated[n], rep_penalty, device)
-                if ngram_fn is not None and ngram_weight != 0.0:
-                    lt = lt + ngram_weight * ngram_fn(generated[n], device)
-                lt[pad_id] = float('-inf')
-                lt[sep_id] = float('-inf')
-                if len(generated[n]) - len(ids) < min_length:
-                    lt[eos_id] = float('-inf')
+                # INT-2：单步采样统一走 sample_next_token（与 model.generate 共用单一事实来源）
+                tok = sample_next_token(
+                    logits[n, -1, :], temperature=temps[n], repetition_penalty=rep_penalty,
+                    generated_ids=generated[n], ngram_fn=ngram_fn, ngram_weight=ngram_weight,
+                    device=device, pad_id=pad_id, sep_id=sep_id, eos_id=eos_id,
+                    generated_len=len(generated[n]) - len(ids), min_length=min_length,
+                    eos_penalty=eos_penalty, top_k=top_k, vocab_size=logits[n, -1, :].shape[0],
+                    raw_logits=logits[n, -1, :],
+                )
+                if tok is None:
+                    # 低置信提前终止：填 pad 占位保持 batch 对齐并标记完成
+                    nt.append(pad_id)
+                    done[n] = True
                 else:
-                    lt[eos_id] = lt[eos_id] + eos_penalty
-                if top_k > 0 and top_k < lt.shape[0]:
-                    thr = torch.topk(lt, min(top_k, lt.shape[0]))[0][-1]
-                    lt[lt < thr] = float('-inf')
-                if torch.isinf(lt).all():
-                    lt = logits[n, -1, :] / temps[n]
-                    lt[pad_id] = float('-inf')
-                nt.append(int(torch.multinomial(torch.softmax(lt, 0), 1).item()))
+                    nt.append(tok)
             # 单次 batched 前向：feed 形状 (N,1)，past 为 batched（batch 维 = N）
             feed = torch.tensor(nt, dtype=torch.long, device=device).unsqueeze(1)
             logits, past = model.forward(feed, past_key_values=past, use_cache=True,

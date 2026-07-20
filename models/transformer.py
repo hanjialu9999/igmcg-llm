@@ -284,6 +284,45 @@ def apply_repetition_penalty(logits: torch.Tensor, generated_ids: List[int],
     return logits
 
 
+def sample_next_token(logits_t: torch.Tensor, *, temperature: float,
+                      repetition_penalty: float, generated_ids: List[int],
+                      ngram_fn: Optional[Callable[[List[int], str], torch.Tensor]],
+                      ngram_weight: float, device: str,
+                      pad_id: int, sep_id: int, eos_id: int,
+                      generated_len: int, min_length: int, eos_penalty: float,
+                      top_k: int, vocab_size: int,
+                      raw_logits: Optional[torch.Tensor] = None) -> Optional[int]:
+    """INT-2：单步采样单一事实来源——model.generate（单序列）与 generate.py 批量候选
+    解码（_generate_candidates_batch）共用，消除两套采样循环公式漂移。
+
+    流程：温度缩放 → 加性重复惩罚 → n-gram 先验叠加 → pad/sep 屏蔽 → min_length/eos 处理
+    → top_k 截断 → 全 -inf 回退 → softmax → multinomial。低置信（probs.max()<0.01）返回
+    None 表示提前终止。返回的是 token id（或 None）。"""
+    lt = logits_t / temperature
+    apply_repetition_penalty(lt, generated_ids, repetition_penalty, device)
+    if ngram_fn is not None and ngram_weight != 0.0:
+        lt = lt + ngram_weight * ngram_fn(generated_ids, device)
+    lt[pad_id] = float('-inf')
+    lt[sep_id] = float('-inf')
+    if generated_len < min_length:
+        lt[eos_id] = float('-inf')
+    else:
+        lt[eos_id] = lt[eos_id] + eos_penalty
+    if top_k > 0 and top_k < vocab_size:
+        top_k_vals = torch.topk(lt, min(top_k, vocab_size))[0]
+        threshold = top_k_vals[..., -1]
+        lt[lt < threshold] = float('-inf')
+    if torch.isinf(lt).all():
+        # 全 -inf 回退：恢复原始温度缩放（仅屏蔽 pad，保留 ngram/惩罚外的合法分布）
+        rb = (raw_logits if raw_logits is not None else logits_t) / temperature
+        rb[pad_id] = float('-inf')
+        lt = rb
+    probs = torch.softmax(lt, dim=-1)
+    if probs.max() < 0.01:
+        return None
+    return torch.multinomial(probs, num_samples=1).item()
+
+
 
 
 
@@ -1667,32 +1706,15 @@ class TransformerModel(nn.Module):
         use_cache = True
 
         def sample_step(logits_t: torch.Tensor) -> Optional[int]:
-            next_token_logits = logits_t / temperature
-            # 加性频率惩罚（INT-1：与 IGMCG 批量解码路径共用 apply_repetition_penalty）
-            apply_repetition_penalty(next_token_logits, generated, repetition_penalty, device)
-            if ngram_fn is not None and ngram_weight != 0.0:
-                next_token_logits = next_token_logits + ngram_weight * ngram_fn(generated, device)
-            next_token_logits[pad_token_id] = float('-inf')
-            next_token_logits[sep_token_id] = float('-inf')
-            # min_length: 最小生成长度（不含 prompt），默认 3
-            if len(generated) - len(token_ids) < min_length:
-                next_token_logits[eos_token_id] = float('-inf')
-            else:
-                # eos_penalty: EOS 惩罚值，默认 -5.0（抑制 EOS）
-                next_token_logits[eos_token_id] = next_token_logits[eos_token_id] + eos_penalty
-            # top_k: <=0 禁用，>=vocab_size 视为全词表
-            vocab_size = next_token_logits.shape[0]
-            if top_k > 0 and top_k < vocab_size:
-                top_k_vals = torch.topk(next_token_logits, min(top_k, vocab_size))[0]
-                threshold = top_k_vals[..., -1]
-                next_token_logits[next_token_logits < threshold] = float('-inf')
-            if torch.isinf(next_token_logits).all():
-                next_token_logits = logits_t / temperature
-                next_token_logits[pad_token_id] = float('-inf')
-            probs = torch.softmax(next_token_logits, dim=-1)
-            if probs.max() < 0.01:
-                return None
-            return torch.multinomial(probs, num_samples=1).item()
+            # INT-2：单步采样统一走 sample_next_token（与 IGMCG 批量解码共用单一事实来源）
+            return sample_next_token(
+                logits_t, temperature=temperature, repetition_penalty=repetition_penalty,
+                generated_ids=generated, ngram_fn=ngram_fn, ngram_weight=ngram_weight,
+                device=device, pad_id=pad_token_id, sep_id=sep_token_id, eos_id=eos_token_id,
+                generated_len=len(generated) - len(token_ids), min_length=min_length,
+                eos_penalty=eos_penalty, top_k=top_k, vocab_size=logits_t.shape[0],
+                raw_logits=logits_t,
+            )
 
         with torch.no_grad():
             past = None
