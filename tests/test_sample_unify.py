@@ -60,3 +60,20 @@ def test_two_paths_unified_no_drift():
         min_length=3, eos_penalty=-5.0)
     assert seq_batch[0] == seq_single, (
         f"两采样路径漂移: single={seq_single} batch={seq_batch[0]}")
+
+
+def test_reset_ngram_state_centralized():
+    """INT 后续整合：_ngram_last_ids 滚动缓冲由模型自身 reset_ngram_state() 管理，
+    调用方不直接戳实例变量。验证方法存在且把缓冲清空为 None。"""
+    model = _tiny_model()
+    model._ngram_last_ids = torch.zeros((1, 3), dtype=torch.long)
+    model.reset_ngram_state()
+    assert model._ngram_last_ids is None
+    # generate 调用 reset_ngram_state 后（跨调用）结果稳定，无跨序列串味
+    torch.manual_seed(7)
+    s1 = model.generate([1, 2, 3], max_length=10, temperature=1.0, top_k=0,
+                        eos_id=3, pad_id=0, sep_id=4, min_length=1)
+    torch.manual_seed(7)
+    s2 = model.generate([1, 2, 3], max_length=10, temperature=1.0, top_k=0,
+                        eos_id=3, pad_id=0, sep_id=4, min_length=1)
+    assert s1 == s2, "reset_ngram_state 未消除跨 generate 调用串味"
