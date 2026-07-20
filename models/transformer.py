@@ -1674,6 +1674,13 @@ class TransformerModel(nn.Module):
             return self.output_head(x), presents
         return self.output_head(x)
 
+    def reset_ngram_state(self) -> None:
+        """集中管理增量解码 n-gram 滚动缓冲（_ngram_last_ids）的重置。
+
+        避免调用方（generate.py / model.generate）直接戳实例变量，统一由模型拥有者
+        管理状态（INT 后续整合：消除跨模块直接改模型内部状态的隐患）。"""
+        self._ngram_last_ids = None
+
     def generate(self, token_ids: List[int], max_length: int = 50, temperature: float = 1.0, top_k: int = 50,
                   device: str = 'cpu', repetition_penalty: float = 1.2,
                   ngram_fn: Optional[Callable[[List[int], str], torch.Tensor]] = None, ngram_weight: float = 0.0,
@@ -1698,7 +1705,7 @@ class TransformerModel(nn.Module):
         """
         self.eval()
         # 增量解码 n-gram 滚动缓冲在每次新序列开头清空，避免跨序列串味。
-        self._ngram_last_ids = None
+        self.reset_ngram_state()
         generated = list(token_ids)
         max_seq_length = self.max_seq_length
         eos_token_id = eos_id
