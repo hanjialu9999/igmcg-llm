@@ -319,13 +319,13 @@ def test_compute_complexity_linear_discount():
 # ---------------------------------------------------------------------------
 
 def _small_ngram(vocab_size=200):
-    """构建一个小型 Vocabulary + 统计 NGramModel，供 n-gram 融合测试。
+    """构建一个小型 BaseTokenizer（字符级 CharTokenizer）+ 统计 NGramModel，供 n-gram 融合测试。
 
-    走 Vocabulary 的标准 build_vocab 路径（而非伪造 encode），保证 vocab 长度、
+    走 CharTokenizer 的 train 路径（而非伪造 encode），保证 vocab 长度、
     pad_idx、encode 行为均与生产一致；ngram 统计表由此真实 vocab 派生。
     """
     import tempfile, os
-    from models.data_utils import Vocabulary
+    from models.data_utils import CharTokenizer
     from scripts.generate import NGramModel
     corpus_texts = [
         "中 国 人 民 生 活 幸 福",
@@ -333,8 +333,8 @@ def _small_ngram(vocab_size=200):
         "人 民 当 家 作 主 权 利",
         "中 国 人 民 共 和 国 万 岁",
     ]
-    v = Vocabulary(vocab_size)
-    v.build_vocab(corpus_texts)  # 真实构建：len(v)≈vocab_size，encode 产出合法 id
+    v = CharTokenizer(vocab_size=vocab_size)
+    v.train(corpus_texts)  # 真实构建：len(v)≈vocab_size，encode 产出合法 id
     corpus = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
     corpus.write("\n".join(corpus_texts) + "\n")
     corpus.close()
@@ -1107,16 +1107,13 @@ def test_cached_causal_mask_matches_inline():
 
 def test_shared_constants_consistent():
     # §整合：特殊 token / 掩码填充 / RoPE 基频集中到 models/constants.py 单一来源，
-    # Vocabulary 与 BaseTokenizer 的索引须与常量一致（防止改一处漏一处）。
+    # BaseTokenizer 的索引须与常量一致（防止改一处漏一处）。
     from models.constants import (SPECIAL_TOKENS, PAD_IDX, UNK_IDX, BOS_IDX,
                                   EOS_IDX, SEP_IDX, MASK_FILL_VALUE, ROPE_BASE)
-    from models.data_utils import Vocabulary, BaseTokenizer
-    v = Vocabulary()
-    assert v.pad_idx == PAD_IDX and v.unk_idx == UNK_IDX and v.bos_idx == BOS_IDX
-    assert v.eos_idx == EOS_IDX and v.sep_idx == SEP_IDX
-    assert list(v.special_tokens) == list(SPECIAL_TOKENS)
+    from models.data_utils import BaseTokenizer
     t = BaseTokenizer()
-    assert t.pad_idx == PAD_IDX and t.eos_idx == EOS_IDX and t.sep_idx == SEP_IDX
+    assert t.pad_idx == PAD_IDX and t.unk_idx == UNK_IDX and t.bos_idx == BOS_IDX
+    assert t.eos_idx == EOS_IDX and t.sep_idx == SEP_IDX
     assert list(t.special_tokens) == list(SPECIAL_TOKENS)
     # 魔数常量值正确
     assert MASK_FILL_VALUE == -1e9

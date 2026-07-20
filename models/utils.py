@@ -192,8 +192,8 @@ def save_final_model(model: torch.nn.Module,
         'word2idx': vocab.word2idx,
         'idx2word': {str(k): v for k, v in vocab.idx2word.items()},
     }
-    # 可选增强：写出 special_tokens，供 load_vocab 的 Vocabulary 分支恢复（旧 vocab.json
-    # 无此键仍可被旧逻辑按 Vocabulary 加载，向后兼容；不写 bpe/char 标志以免误判为 BaseTokenizer）。
+    # 可选增强：写出 special_tokens，供 load_vocab 恢复（单一 BaseTokenizer 系，
+    # 带 bpe/char 标志的 vocab.json 由 BaseTokenizer.save() 产出；此处兜底兼容手写 vocab）。
     _st = getattr(vocab, 'special_tokens', None)
     if _st is not None:
         vocab_data['special_tokens'] = list(_st)
@@ -202,5 +202,5 @@ def save_final_model(model: torch.nn.Module,
 
     print(f"\nTraining completed!")
     print(f"Final model saved at {final_model_path}")
-    print(f"Vocabulary saved at {vocab_path}")
+    print(f"Vocab saved at {vocab_path}")
     return final_model_path, vocab_path

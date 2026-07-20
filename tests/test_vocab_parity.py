@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from models.data_utils import Vocabulary, BaseTokenizer, CharTokenizer
+from models.data_utils import BaseTokenizer, CharTokenizer
 
 
 def _mini_corpus():
@@ -16,36 +16,16 @@ def _mini_corpus():
     ]
 
 
-def test_vocabulary_oov_goes_to_unk():
-    # Vocabulary 契约：未知词必落 unk_idx（非字节回退），OOV 行为确定
-    v = Vocabulary()
-    v.build_vocab(_mini_corpus())
-    # 一个语料外的稀有字应映射到 unk
-    out = v.encode("龘龘龘")
-    assert all(t == v.unk_idx for t in out if t not in (v.bos_idx, v.eos_idx))
-
-
 def test_basetokenizer_oov_goes_to_byte_token():
-    # BaseTokenizer（char）契约：OOV 必落字节级 token，零 OOV，id 在 special 之后 256 区间
+    # 单一 BaseTokenizer（char）契约：OOV 必落字节级 token，零 OOV，id 在 special 之后 256 区间
     t = CharTokenizer()
     t.train(_mini_corpus())
     out = t.encode("龘龘龘")
     assert out, "字节回退应产生 token"
     # 字节级 token 的 id 落在 special 之后、special+256 区间内
-    assert all(t.unk_idx <= tid < t.unk_idx + 256 or tid in (t.bos_idx, t.eos_idx)
+    assert all(t.unk_idx < tid < t.unk_idx + 256 or tid in (t.bos_idx, t.eos_idx)
                for tid in out if tid not in (t.bos_idx, t.eos_idx)), \
         "BaseTokenizer OOV 应回退到字节 token，而非 unk"
-
-
-def test_vocabulary_roundtrip():
-    v = Vocabulary()
-    v.build_vocab(_mini_corpus())
-    text = _mini_corpus()[0]
-    ids = v.encode(text)
-    back = v.decode(ids)
-    # 往返重建：去掉特殊 token 后文本核心应保留（空格切词语义）
-    assert isinstance(back, str)
-    assert v.bos_idx in ids and v.eos_idx in ids
 
 
 def test_basetokenizer_roundtrip():
@@ -59,12 +39,21 @@ def test_basetokenizer_roundtrip():
     assert t.bos_idx in ids and t.eos_idx in ids
 
 
-def test_dual_track_special_tokens_consistent():
-    # 双轨共享特殊 token 常量（models.constants），索引一致
-    from models.constants import SPECIAL_TOKENS, PAD_IDX, UNK_IDX, BOS_IDX, EOS_IDX, SEP_IDX
-    v = Vocabulary()
+def test_basetokenizer_in_vocab_char_needs_no_byte_fallback():
+    # 语料内的常见字符应直接映射到单字 token（非字节回退），OOV 占比为 0
     t = CharTokenizer()
-    for tok in (v, t):
-        assert tok.pad_idx == PAD_IDX and tok.unk_idx == UNK_IDX
-        assert tok.bos_idx == BOS_IDX and tok.eos_idx == EOS_IDX and tok.sep_idx == SEP_IDX
-        assert list(tok.special_tokens) == list(SPECIAL_TOKENS)
+    t.train(_mini_corpus())
+    text = _mini_corpus()[0]
+    ids = t.encode(text, add_special_tokens=False)
+    assert all(tid >= len(t.special_tokens) + 256 or tid in range(len(t.special_tokens))
+               for tid in ids), \
+        "语料内字符不应走字节回退（零 OOV）"
+
+
+def test_single_track_special_tokens_consistent():
+    # 单一 BaseTokenizer 与特殊 token 常量（models.constants）索引一致
+    from models.constants import SPECIAL_TOKENS, PAD_IDX, UNK_IDX, BOS_IDX, EOS_IDX, SEP_IDX
+    t = CharTokenizer()
+    assert t.pad_idx == PAD_IDX and t.unk_idx == UNK_IDX
+    assert t.bos_idx == BOS_IDX and t.eos_idx == EOS_IDX and t.sep_idx == SEP_IDX
+    assert list(t.special_tokens) == list(SPECIAL_TOKENS)

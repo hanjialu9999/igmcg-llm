@@ -7,7 +7,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from models.data_utils import Vocabulary
+from models.data_utils import CharTokenizer
 from models.ngram import NGramModel
 
 
@@ -20,8 +20,8 @@ CORPUS = [
 
 
 def _make_ngram(max_order=10, smoothing=1.0, l1=0.1, l2=0.3, l3=0.6, vocab_size=None):
-    v = Vocabulary(200)
-    v.build_vocab(CORPUS)
+    v = CharTokenizer(vocab_size=200)
+    v.train(CORPUS)
     f = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
     f.write("\n".join(CORPUS) + "\n")
     f.close()

@@ -25,7 +25,7 @@ from typing import List, Optional, Set
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from models.data_utils import Vocabulary
+from models.data_utils import CharTokenizer
 
 
 # --------------------------------------------------------------------------
@@ -110,19 +110,13 @@ def build_vocabulary(data_file: str, vocab_size: int, min_freq: int, vocab_outpu
     print('=' * 60)
     with open(data_file, 'r', encoding='utf-8') as f:
         texts = [line.strip() for line in f if line.strip()]
-    vocab = Vocabulary(vocab_size=vocab_size, min_freq=min_freq)
-    vocab.build_vocab(texts)
+    # 统一走字符级 BaseTokenizer（零 OOV），输出标准 vocab.json（带 char 标志，
+    # 可被 load_vocab 直接加载）。
+    vocab = CharTokenizer(vocab_size=vocab_size)
+    vocab.train(texts, min_freq=min_freq)
     vocab_path = Path(vocab_output)
     vocab_path.parent.mkdir(parents=True, exist_ok=True)
-    vocab_data = {
-        'word2idx': vocab.word2idx,
-        'idx2word': {str(k): v for k, v in vocab.idx2word.items()},
-        'special_tokens': vocab.special_tokens,
-        'vocab_size': vocab.vocab_size,
-        'min_freq': vocab.min_freq,
-    }
-    with open(vocab_path, 'w', encoding='utf-8') as f:
-        json.dump(vocab_data, f, ensure_ascii=False, indent=2)
+    vocab.save(str(vocab_path))
     print(f'\n词汇表已保存: {vocab_output}')
     print('=' * 60)
     return vocab

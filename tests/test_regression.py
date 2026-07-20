@@ -23,7 +23,7 @@ from models.transformer import (
     MambaSSM,
 )
 from models.config_loader import load_config, build_model
-from models.data_utils import Vocabulary
+from models.data_utils import CharTokenizer
 
 
 # ============================================================
@@ -341,7 +341,7 @@ def test_char_merge_causality():
 
 def test_bos_consistency_generate_text():
     """generate_text 路径：vocab.encode(prompt) 默认加 BOS，不重复。"""
-    vocab = Vocabulary(vocab_size=100)
+    vocab = CharTokenizer(vocab_size=100)
     # 模拟 encode 行为
     tokens = vocab.encode("hello", add_special_tokens=True)
     assert tokens[0] == vocab.bos_idx, f"首 token 应为 BOS: {tokens[0]}"
@@ -352,7 +352,7 @@ def test_bos_consistency_generate_text():
 
 def test_bos_consistency_generate_igmcg():
     """generate_igmcg 路径：手动加 BOS + encode(add_special_tokens=False)。"""
-    vocab = Vocabulary(vocab_size=100)
+    vocab = CharTokenizer(vocab_size=100)
     ids = [vocab.bos_idx] + vocab.encode("hello", add_special_tokens=False)
     assert ids[0] == vocab.bos_idx, f"首 token 应为 BOS: {ids[0]}"
     # 不应有连续两个 BOS

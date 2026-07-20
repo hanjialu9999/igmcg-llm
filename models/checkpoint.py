@@ -80,7 +80,7 @@ def load_model(model_path, vocab_path, device: str = 'cpu',
     算子在自回归解码上通常带来 1.5~3× 吞吐提升；DML 设备自动跳过。
     """
     # Load vocabulary（复用 config_loader.load_vocab，正确处理 BPE/char 词表的 merges 等字段，
-    # 与训练期保存逻辑对称；避免手写 Vocabulary() 重建丢失 bpe/char 信息导致分布错位）
+    # 与训练期保存逻辑对称；统一走 BaseTokenizer 单一分词事实来源）
     from models.config_loader import load_vocab, build_model
     vocab = load_vocab(vocab_path)
 

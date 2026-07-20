@@ -11,41 +11,45 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from models.config_loader import load_config, build_model
 from models.transformer import TransformerModel
-from models.data_utils import Vocabulary
+from models.data_utils import CharTokenizer
 from models.device import get_device
 from scripts.generate import generate_igmcg, generate_text, NGramModel, load_model
 from scripts.train import compute_lr
 
 
 # ---------------------------------------------------------------------------
-# data_utils 边界
+# data_utils 边界（单一 BaseTokenizer 契约）
 # ---------------------------------------------------------------------------
-def test_vocab_empty_corpus_no_divzero():
-    """空语料（word_freq 为空）时 get_vocab_stats 的 coverage 不除零，返回 0。"""
-    v = Vocabulary()
-    stats = v.get_vocab_stats()
-    assert stats['coverage'] == 0
-    # 未 build_vocab 时 word2idx 为空，vocab_size 为 0
-    assert stats['vocab_size'] == 0
+def _char_vocab():
+    tok = CharTokenizer()
+    tok.train(['你好世界', '机器学习很有趣', '今天天气真好', '中国的首都是北京'])
+    return tok
 
 
-def test_vocab_encode_decode_roundtrip():
+def test_tokenizer_zero_oov():
+    """字符级 BaseTokenizer 对训练语料内字符零 OOV（均落单字 token，非字节回退）。"""
+    tok = _char_vocab()
+    for ch in '你好世界机器学习很有趣今天天气真中国的首都北京':
+        tid = tok._sym_to_id(ch)
+        assert isinstance(tid, int) and tid >= len(tok.special_tokens) + 256, \
+            f"字符 {ch} 不应走字节回退"
+
+
+def test_tokenizer_encode_decode_roundtrip():
     """中文字符级编码/解码可无损往返。"""
-    v = Vocabulary()
-    v.build_vocab(['你好世界', '机器学习很有趣'])
+    tok = _char_vocab()
     text = '你好世界'
-    ids = v.encode(text)
-    assert ids[0] == v.bos_idx and ids[-1] == v.eos_idx
-    # decode 以空格连接各 token（CJK 逐字），去空格后与原文一致
-    assert v.decode(ids).replace(' ', '') == text
+    ids = tok.encode(text)
+    assert ids[0] == tok.bos_idx and ids[-1] == tok.eos_idx
+    assert tok.decode(ids) == text
 
 
-def test_vocab_coverage_positive():
-    """正常语料覆盖率应为正有限数。"""
-    v = Vocabulary()
-    v.build_vocab(['人工智能改变世界', '世界很大', '人工智能很有用'])
-    cov = v.get_vocab_stats()['coverage']
-    assert 0 < cov < 1000
+def test_tokenizer_oov_byte_fallback():
+    """未登录稀有字走字节回退，decode 还原一致（零 OOV 契约）。"""
+    tok = _char_vocab()
+    text = '龘龘龘'
+    ids = tok.encode(text, add_special_tokens=False)
+    assert tok.decode(ids) == text
 
 
 # ---------------------------------------------------------------------------
@@ -56,8 +60,7 @@ def test_igmcg_generation():
     cfg = load_config('configs/pretrain.yaml')
     model = build_model(cfg, device='cpu')
     model.eval()
-    vocab = Vocabulary()
-    vocab.build_vocab(['你好世界', '机器学习很有趣', '今天天气真好', '中国的首都是北京'])
+    vocab = _char_vocab()
     text, cands = generate_igmcg(model, vocab, '你好', num_candidates=4,
                                  max_length=15, base_temp=0.8, top_k=30, device='cpu')
     assert isinstance(text, str)
@@ -72,9 +75,9 @@ def test_igmcg_generation():
 # ---------------------------------------------------------------------------
 def test_ngram_logprob_vector_and_cache():
     """NGramModel.logprob_vector 返回形状 (V,) 且有限；相同上下文命中缓存。"""
-    vocab = Vocabulary()
+    vocab = CharTokenizer()
     corpus = ['人工智能改变世界', '世界很大', '人工智能很有用', '机器学习很有趣']
-    vocab.build_vocab(corpus)
+    vocab.train(corpus)
     with tempfile.NamedTemporaryFile('w', suffix='.txt', encoding='utf-8', delete=False) as f:
         f.write('\n'.join(corpus))
         path = f.name
@@ -219,8 +222,8 @@ def test_arch_options_enabled_build_and_forward():
 
 def test_ngram_last_ids_reset_across_candidates():
     """回归测试：_generate_candidates_batch 必须重置 _ngram_last_ids，否则跨调用残留污染 n-gram 上下文。"""
-    vocab = Vocabulary(200)
-    vocab.build_vocab(['中 国 人 民', '中 国 梦 想'])
+    vocab = CharTokenizer(vocab_size=200)
+    vocab.train(['中 国 人 民', '中 国 梦 想'])
     V = len(vocab)
     from models.transformer import TransformerModel
     m = TransformerModel(V, 64, 4, 2, 128, 32)

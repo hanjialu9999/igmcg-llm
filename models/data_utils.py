@@ -13,156 +13,14 @@ from models.constants import (SPECIAL_TOKENS, PAD_IDX, UNK_IDX, BOS_IDX,
                               EOS_IDX, SEP_IDX)
 
 
-class Vocabulary:
-    """[已弃用] 词表类，仅训练期 `load_data` / `train.py` 使用；推理统一走 `BaseTokenizer` 系（`load_vocab`）。
-
-    与 `BaseTokenizer` 语义刻意不同（空格切词 + OOV→unk，而非字节回退零 OOV），强行统一会
-    改变训练期 encode 分布、破坏已训练权重（embedding 行索引错位）。故保留双轨为合理历史遗留，
-    仅共享特殊 token 常量（models.constants）。请勿在训练链以外使用，也不要往此类加 byte-fallback。
-    """
-    
-    def __init__(self, vocab_size: int = 5000, min_freq: int = 1, special_tokens: Optional[List[str]] = None):
-        """
-        Args:
-            vocab_size: Maximum vocabulary size
-            min_freq: Minimum word frequency to include
-            special_tokens: Custom special tokens
-        """
-        self.vocab_size = vocab_size
-        self.min_freq = min_freq
-        self.word2idx: Dict[str, int] = {}
-        self.idx2word: Dict[int, str] = {}
-        self.word_freq = Counter()
-        
-        # Define special tokens (including [SEP] for question-answer separation)
-        if special_tokens is None:
-            special_tokens = list(SPECIAL_TOKENS)
-        
-        self.special_tokens = special_tokens
-        self.pad_idx = PAD_IDX
-        self.unk_idx = UNK_IDX
-        self.bos_idx = BOS_IDX
-        self.eos_idx = EOS_IDX
-        self.sep_idx = SEP_IDX
-        
-    def build_vocab(self, texts: List[str]) -> None:
-        """Build vocabulary from texts with better filtering"""
-        # Count word frequencies with improved tokenization
-        for text in texts:
-            words = self.tokenize(text)
-            self.word_freq.update(words)
-        
-        # Create word2idx mapping with special tokens
-        for idx, token in enumerate(self.special_tokens):
-            self.word2idx[token] = idx
-        
-        # Add most frequent words with minimum frequency threshold
-        # Only add words that appear at least min_freq times
-        added = 0
-        for word, freq in self.word_freq.most_common():
-            if freq < self.min_freq:
-                break  # Stop if frequency too low
-            if added >= self.vocab_size - len(self.special_tokens):
-                break  # Stop if vocab size reached
-            
-            self.word2idx[word] = len(self.word2idx)
-            added += 1
-        
-        # Create idx2word mapping
-        self.idx2word = {idx: word for word, idx in self.word2idx.items()}
-        
-        # Print statistics
-        coverage = len(self.word2idx) / len(self.word_freq) * 100 if self.word_freq else 0
-        print(f"\nVocabulary Statistics:")
-        print(f"  Special tokens: {len(self.special_tokens)}")
-        print(f"  Regular words: {len(self.word2idx) - len(self.special_tokens)}")
-        print(f"  Total vocab size: {len(self.word2idx)}")
-        print(f"  Unique words in corpus: {len(self.word_freq)}")
-        print(f"  Coverage: {coverage:.2f}%")
-    
-    def tokenize(self, text: str) -> List[str]:
-        """支持中英文混合的分词：
-        - 中日韩(CJK)字符逐字切分（中文无词边界，按字建模）
-        - 其它文本按空格/标点切分
-        """
-        # Clean text: remove extra spaces
-        text = ' '.join(text.split())
-        text = text.lower()
-
-        # 先把每个 CJK 字符用空格隔开，非 CJK 片段保持原样
-        # 这样后续统一按空格切分时，CJK 会逐字成 token
-        text = re.sub(r'([\u3400-\u9fff\uf900-\ufaff\uff00-\uffef])', r' \1 ', text)
-
-        # 常见标点也单独成 token
-        text = re.sub(r'([.!?,;:-])', r' \1 ', text)
-        words = text.split()
-
-        # Filter empty strings
-        words = [w for w in words if w]
-        return words
-    
-    def encode(self, text: str, add_special_tokens: bool = True) -> List[int]:
-        """Convert text to token indices"""
-        words = self.tokenize(text)
-        tokens: List[int] = []
-        
-        if add_special_tokens:
-            tokens.append(self.bos_idx)
-        
-        for word in words:
-            token = self.word2idx.get(word, self.unk_idx)
-            tokens.append(token)
-        
-        if add_special_tokens:
-            tokens.append(self.eos_idx)
-        
-        return tokens
-    
-    def decode(self, token_ids: List[int], skip_special: bool = True) -> str:
-        """Convert token indices to text"""
-        words: List[str] = []
-        for token_id in token_ids:
-            if skip_special:
-                # Skip special tokens: pad, bos, eos, sep（用类属性而非硬编码）
-                if token_id in {self.pad_idx, self.bos_idx, self.eos_idx, self.sep_idx}:
-                    continue
-            
-            # idx2word 以 int 为键；直接按 int 查找（兼容 vocab.json 中字符串键的情况）
-            word = self.idx2word.get(token_id, self.idx2word.get(str(token_id), '<?>'))
-            words.append(word)
-        
-        text = ' '.join(words)
-        
-        # Remove literal [SEP] or [sep] text markers (from training data)
-        text = text.replace('[SEP]', '').replace('[sep]', '')
-        
-        # Clean up extra spaces
-        text = ' '.join(text.split())
-        
-        return text
-    
-    def get_vocab_stats(self) -> Dict[str, Union[int, float]]:
-        """Get vocabulary statistics"""
-        return {
-            'vocab_size': len(self.word2idx),
-            'special_tokens': len(self.special_tokens),
-            'regular_words': len(self.word2idx) - len(self.special_tokens),
-            'unique_words_in_corpus': len(self.word_freq),
-            'coverage': (len(self.word2idx) / len(self.word_freq) * 100) if self.word_freq else 0
-        }
-    
-    def __len__(self) -> int:
-        return len(self.word2idx)
-
-
 class TextDataset(Dataset):
     """Improved dataset with lazy loading and better preprocessing"""
     
-    def __init__(self, texts: List[str], vocab: Vocabulary, max_seq_length: int = 32, preprocess: bool = True):
+    def __init__(self, texts: List[str], vocab: 'BaseTokenizer', max_seq_length: int = 32, preprocess: bool = True):
         """
         Args:
             texts: List of text strings
-            vocab: Vocabulary object
+            vocab: BaseTokenizer object (统一分词，训练/推理共用)
             max_seq_length: Maximum sequence length
             preprocess: Whether to preprocess texts (clean, deduplicate)
         """
@@ -224,8 +82,13 @@ class TextDataset(Dataset):
         return item
 
 
-def load_data(data_file: str, vocab_size: int = 5000, max_seq_length: int = 32, min_freq: int = 1) -> Tuple[TextDataset, Vocabulary]:
-    """Load data from file with validation"""
+def load_data(data_file: str, vocab_size: int = 5000, max_seq_length: int = 32,
+              min_freq: int = 1, vocab: Optional['BaseTokenizer'] = None) -> Tuple[TextDataset, 'BaseTokenizer']:
+    """Load data from file with validation.
+
+    统一走 `BaseTokenizer`（字符级 `CharTokenizer` 适配字符级 LM）；旧的 `Vocabulary`
+    双轨已删除。若未传入 vocab，则按字符级构建（CharTokenizer().train(texts)）。
+    """
     print(f"Loading data from {data_file}...")
     
     with open(data_file, 'r', encoding='utf-8', errors='replace') as f:
@@ -233,9 +96,10 @@ def load_data(data_file: str, vocab_size: int = 5000, max_seq_length: int = 32, 
     
     print(f"Loaded {len(texts)} lines")
     
-    # Build vocabulary
-    vocab = Vocabulary(vocab_size=vocab_size, min_freq=min_freq)
-    vocab.build_vocab(texts)
+    # 构建字符级词表（零 OOV，与推理 load_vocab 同一套分词语义）
+    if vocab is None:
+        vocab = CharTokenizer(vocab_size=vocab_size)
+        vocab.train(texts, min_freq=min_freq)
     
     # Create dataset
     dataset = TextDataset(texts, vocab, max_seq_length, preprocess=True)
@@ -246,13 +110,10 @@ def load_data(data_file: str, vocab_size: int = 5000, max_seq_length: int = 32, 
     print(f"  Total samples: {len(dataset)}")
     print(f"  Max sequence length: {max_seq_length}")
     
-    vocab_stats = vocab.get_vocab_stats()
     print(f"\nVocabulary Statistics:")
-    for key, value in vocab_stats.items():
-        if isinstance(value, float):
-            print(f"  {key}: {value:.2f}")
-        else:
-            print(f"  {key}: {value}")
+    print(f"  vocab_size: {len(vocab)}")
+    print(f"  special_tokens: {len(vocab.special_tokens)}")
+    print(f"  regular symbols: {len(vocab.word2idx) - len(vocab.special_tokens)}")
     
     return dataset, vocab
 

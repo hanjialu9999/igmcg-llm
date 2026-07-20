@@ -10,7 +10,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from models.data_utils import Vocabulary
+from models.config_loader import load_vocab
 from models.device import get_device
 from scripts.generate import load_model
 
@@ -28,13 +28,8 @@ print(f"Device: {device}")
 model_path = args.model
 vocab_path = args.vocab
 
-# Load vocab
-with open(vocab_path, 'r', encoding='utf-8') as f:
-    vocab_data = json.load(f)
-
-vocab = Vocabulary()
-vocab.word2idx = vocab_data['word2idx']
-vocab.idx2word = {int(k): v for k, v in vocab_data['idx2word'].items()}
+# Load vocab（统一走 BaseTokenizer 系，与推理 load_vocab 一致）
+vocab = load_vocab(vocab_path)
 
 # Load model（复用 generate.load_model：统一安全加载 weights_only=True +
 # 白名单全局放行，且自动从 *_config.yaml 透传 qk_norm/attn_temp/residual_gate/
