@@ -81,6 +81,18 @@ class NGramModel:
                 ctx: sum(c.values()) + self.smoothing * V
                 for ctx, c in self.ngrams[order].items()
             }
+        # 构建期预存张量化计数（idx + 已平滑概率 p=(count+smooth)/total），避免训练/解码期
+        # 每次 _compute_logprob_orders 都把 Counter 现转张量 + 做除法；运行时仅 .to(device) +
+        # 一次 scatter，省去 Python 层 torch.tensor(list(...)) 转换与浮点除法开销（DML 小 kernel 友好）。
+        self._ngram_tensors: Dict = {}
+        for order in range(2, self.max_order + 1):
+            self._ngram_tensors[order] = {}
+            for ctx, c in self.ngrams[order].items():
+                total = self.ngram_totals[order][ctx]
+                idx = torch.tensor(list(c.keys()), dtype=torch.long)
+                counts = torch.tensor(list(c.values()), dtype=torch.float32)
+                p = (counts + self.smoothing) / total
+                self._ngram_tensors[order][ctx] = (idx, p)
         u = torch.full((V,), self.smoothing)
         for t, c in self.uni.items():
             if 0 <= t < V:
@@ -107,32 +119,34 @@ class NGramModel:
         ctx_tokens: 完整上下文 token 列表（最近 order-1 个 token），长度 >= max_order-1。
         order 0 = unigram，order k (k>=1) = 用 ctx_tokens[-k:] 作为上下文的 k+1 gram。
         各阶独立返回，由模型学 order 权重（自选 n 的数量/占比）做可微混合，
-        替代固定 l1/l2/l3 插值。无对应上下文的阶用 unigram 兜底。"""
+        替代固定 l1/l2/l3 插值。无对应上下文的阶用 unigram 兜底。
+
+        性能：计数已在 _build 期预存为 (idx_tensor, p_tensor)，运行时仅 .to(device) +
+        一次 scatter；各阶并行叠加到 (K-1, V) 背景矩阵后统一归一化，避免逐阶
+        vec.clone()/vec.sum() 的重复全 V 设备 reduce。"""
         K = self.max_order
-        out = torch.empty(V, K, device=device)
         uni = self.uni_prob.to(device)           # (V,) 已归一化 unigram
-        out[:, 0] = torch.log(uni + 1e-10)     # unigram 兜底
-        # 泛化：order 1..K-1 对应 2-gram .. K-gram
+        # (K-1, V) 背景：各高阶阶从 unigram 起步，逐阶独立叠加自身命中修正
+        base = uni.unsqueeze(0).expand(K - 1, V).clone()   # (K-1, V)
         for k in range(1, K):
             order = k + 1  # n-gram 阶数
-            vec = uni.clone()
-            # 获取该阶所需的上下文 (order-1) 个 token
             if len(ctx_tokens) >= order - 1:
                 ctx = tuple(ctx_tokens[-(order - 1):])  # 最近 order-1 个 token
             else:
                 ctx = None
-            if ctx is not None and ctx in self.ngrams.get(order, {}):
-                counter = self.ngrams[order][ctx]
-                total = self.ngram_totals.get(order, {}).get(ctx, self.smoothing * V)
-                idx = torch.tensor(list(counter.keys()), dtype=torch.long, device=device)
-                if idx.numel():
-                    counts = torch.tensor(list(counter.values()), device=device)
-                    p_order = (counts + self.smoothing) / total
-                    # 低阶混合（简化：用 unigram 兜底）
-                    ws = self._interp_weights(order)
-                    vec[idx] = ws[-1] * p_order + (1 - ws[-1]) * uni[idx]
-                    vec = vec / vec.sum()
-            out[:, k] = torch.log(vec + 1e-10)
+            if ctx is not None and ctx in self._ngram_tensors.get(order, {}):
+                idx, p = self._ngram_tensors[order][ctx]
+                idx = idx.to(device)
+                p = p.to(device)
+                ws = self._interp_weights(order)
+                w = ws[-1]
+                # vec[idx] = w*p + (1-w)*uni[idx]，其余位置保持 uni
+                base[k - 1, idx] = w * p + (1.0 - w) * uni[idx]
+        # 逐阶归一化后取 log（每阶独立归一，与逐阶 vec/vec.sum() 完全等价）
+        base = torch.log(base / base.sum(dim=-1, keepdim=True) + 1e-10)  # (K-1, V)
+        out = torch.empty(V, K, device=device)
+        out[:, 0] = torch.log(uni + 1e-10)       # unigram 兜底（order 0）
+        out[:, 1:] = base.T                      # (V, K-1) -> (V, K) 高阶
         return out
 
     @property

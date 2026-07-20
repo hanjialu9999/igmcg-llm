@@ -1,4 +1,4 @@
-model:
+﻿model:
   # 训练冒烟配置：验证最新架构（统一分词+模块化后）端到端跑通。尽量开启架构特性。
   vocab_size: 5000
   embedding_dim: 96
@@ -22,7 +22,7 @@ model:
   memory_forget: true
   ngram_fusion: true
   ngram_corpus: data/pretrain_corpus/smoke_4000.txt
-  ngram_max_order: 4
+  ngram_max_order: 3
   ngram_min_count: 2
   mixer: hybrid
   linear_attn_feature: relu
