@@ -190,8 +190,13 @@ def save_final_model(model: torch.nn.Module,
     vocab_path = os.path.join(checkpoint_dir, 'vocab.json')
     vocab_data = {
         'word2idx': vocab.word2idx,
-        'idx2word': {str(k): v for k, v in vocab.idx2word.items()}
+        'idx2word': {str(k): v for k, v in vocab.idx2word.items()},
     }
+    # 可选增强：写出 special_tokens，供 load_vocab 的 Vocabulary 分支恢复（旧 vocab.json
+    # 无此键仍可被旧逻辑按 Vocabulary 加载，向后兼容；不写 bpe/char 标志以免误判为 BaseTokenizer）。
+    _st = getattr(vocab, 'special_tokens', None)
+    if _st is not None:
+        vocab_data['special_tokens'] = list(_st)
     with open(vocab_path, 'w', encoding='utf-8') as f:
         json.dump(vocab_data, f, ensure_ascii=False, indent=2)
 

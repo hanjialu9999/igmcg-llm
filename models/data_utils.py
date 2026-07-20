@@ -14,7 +14,12 @@ from models.constants import (SPECIAL_TOKENS, PAD_IDX, UNK_IDX, BOS_IDX,
 
 
 class Vocabulary:
-    """Vocabulary class with improved tokenization and filtering"""
+    """[已弃用] 词表类，仅训练期 `load_data` / `train.py` 使用；推理统一走 `BaseTokenizer` 系（`load_vocab`）。
+
+    与 `BaseTokenizer` 语义刻意不同（空格切词 + OOV→unk，而非字节回退零 OOV），强行统一会
+    改变训练期 encode 分布、破坏已训练权重（embedding 行索引错位）。故保留双轨为合理历史遗留，
+    仅共享特殊 token 常量（models.constants）。请勿在训练链以外使用，也不要往此类加 byte-fallback。
+    """
     
     def __init__(self, vocab_size: int = 5000, min_freq: int = 1, special_tokens: Optional[List[str]] = None):
         """
