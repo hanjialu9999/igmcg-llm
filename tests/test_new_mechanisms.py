@@ -1060,3 +1060,22 @@ def test_apply_repetition_penalty_matches_formula():
     # 越界 token 被 valid 掩码过滤，不越界报错（仅 token 3 受罚）
     out2 = apply_repetition_penalty(logits.clone(), [3, 999], 0.5, dev)
     assert out2[3].item() == -0.5
+
+
+def test_attn_linear_rope_config_consistent():
+    # §4.2 回归：attn_linear 混合块内 attn 与 linear_attn 两路的 RoPE 必须同源
+    # （rope_learnable 一致），否则可学习 RoPE 训练时两路位置编码静默分叉。
+    m = _small(mixer='attn_linear', rope_learnable=True, num_layers=1)
+    blk = m.blocks[0]
+    assert blk.attn is not None and blk.linear_attn is not None
+    # 两路 RoPE 的 learnable 标志一致
+    assert blk.attn.rope.learnable is True
+    assert blk.linear_attn.rope.learnable is True
+    # 默认路径（rope_learnable=False）两路也都应为非可学习
+    m2 = _small(mixer='attn_linear', num_layers=1)
+    assert m2.blocks[0].attn.rope.learnable is False
+    assert m2.blocks[0].linear_attn.rope.learnable is False
+    # 可学 RoPE 在两路都应暴露可训参数（rope_log_scale）
+    assert hasattr(blk.attn.rope, 'rope_log_scale')
+    assert hasattr(blk.linear_attn.rope, 'rope_log_scale')
+

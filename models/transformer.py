@@ -323,6 +323,19 @@ def sample_next_token(logits_t: torch.Tensor, *, temperature: float,
     if probs.max() < 0.01:
         return None
     return torch.multinomial(probs, num_samples=1).item()
+def _decode_one_step(model: "TransformerModel", next_token: int,
+                     past: Optional[Any], cur_pos: int, *, device: str,
+                     use_cache: bool = True) -> Tuple[Any, torch.Tensor, int]:
+    """单步续前向（KV-cache 驱动）原语，供 model.generate 与 scripts/generate.py
+    的批量解码共用，消除两套解码主循环重复的「input_ids=[[tok]] -> forward(past)
+    -> cur_pos+=1」驱动逻辑。语义与原 generate 循环体完全一致（数值不变）。"""
+    input_ids = torch.tensor([[next_token]], dtype=torch.long, device=device)
+    logits, past = model.forward(input_ids, past_key_values=past, use_cache=use_cache)
+    cur_pos += 1
+    return past, logits, cur_pos
+
+
+
 
 
 
@@ -795,7 +808,8 @@ class LinearAttention(nn.Module):
     """
 
     def __init__(self, dim: int, num_heads: int, qk_norm: bool = True, attn_temp: bool = True,
-                 max_seq_length: int = 64, feature: str = 'relu', head_dim: Optional[int] = None):
+                 max_seq_length: int = 64, feature: str = 'relu', head_dim: Optional[int] = None,
+                 rope_learnable: bool = False):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = head_dim or (dim // num_heads)
@@ -804,7 +818,9 @@ class LinearAttention(nn.Module):
         # qkv 投影输出 3*num_heads*head_dim（head_dim 可小于 dim//num_heads 以省算力）
         self.qkv = nn.Linear(dim, 3 * self.num_heads * self.head_dim, bias=False)
         self.proj = nn.Linear(self.num_heads * self.head_dim, dim, bias=False)
-        self.rope = RotaryEmbedding(self.head_dim)
+        # 与 attn 分支的 RotaryEmbedding 保持同一 rope_learnable 配置，
+        # 避免 attn_linear 混合块内两路 RoPE 静默不一致（仅 rope_learnable=True 时显式分叉）。
+        self.rope = RotaryEmbedding(self.head_dim, learnable=rope_learnable)
         self.qk_norm_enabled = qk_norm
         if qk_norm:
             self.qk_norm = RMSNorm(self.head_dim)
@@ -1126,7 +1142,8 @@ class TransformerBlock(nn.Module):
                                           qk_norm=attn_kwargs.get('qk_norm', True),
                                           attn_temp=attn_kwargs.get('attn_temp', True),
                                           feature=attn_kwargs.get('linear_attn_feature', 'relu'),
-                                          head_dim=attn_kwargs.get('linear_attn_head_dim', None))
+                                          head_dim=attn_kwargs.get('linear_attn_head_dim', None),
+                                          rope_learnable=attn_kwargs.get('rope_learnable', False))
             mixer_gate = nn.Parameter(torch.ones(1))  # init 1.0 → 偏 attn
             return attn, linear_attn, mixer_gate
         # 默认：标准滑动窗口因果注意力
@@ -1746,10 +1763,8 @@ class TransformerModel(nn.Module):
                 if next_token == eos_token_id and len(generated) - len(token_ids) >= min_length:
                     break
                 if use_cache:
-                    input_ids = torch.tensor([[next_token]], dtype=torch.long, device=device)
-                    logits, past = self.forward(input_ids, past_key_values=past,
-                                                use_cache=True)
-                    cur_pos += 1
+                    past, logits, cur_pos = _decode_one_step(
+                        self, next_token, past, cur_pos, device=device, use_cache=True)
                 else:
                     ctx = generated[-max_seq_length:] if len(generated) > max_seq_length else generated
                     input_ids = torch.tensor([ctx], dtype=torch.long, device=device)
