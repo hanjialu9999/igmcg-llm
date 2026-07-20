@@ -22,7 +22,7 @@ model:
   memory_forget: true
   ngram_fusion: true
   ngram_corpus: data/pretrain_corpus/smoke_4000.txt
-  ngram_max_order: 5
+  ngram_max_order: 4
   ngram_min_count: 2
   mixer: hybrid
   linear_attn_feature: relu

@@ -158,6 +158,36 @@ def test_min_count_prune_reduces_memory_and_keeps_fusion():
     assert torch.isfinite(mat).all()
 
 
+def test_logprob_orders_matrix_vectorized_matches_per_position():
+    """回归锁：向量化后的 `logprob_orders_matrix`（去重 + index_select 批量拼回）
+    必须与逐位置调用 `_compute_logprob_orders` 的结果逐元素一致，否则会改变
+    训练期融合分布（等价无声修改先验强度）。
+
+    这是把训练期每步 ~0.56s 的逐 (b,t) Python 循环改为去重批量搬运的性能优化
+    的正确性护栏：仅改计算组织方式，不改任何数值。"""
+    small = ["甲 乙 丙 丁 戊", "甲 乙 戊 己 庚", "乙 丙 丁 戊 己 庚 辛"]
+    v = CharTokenizer(vocab_size=200)
+    v.train(small)
+    f = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
+    f.write("\n".join(small) + "\n")
+    f.close()
+    ng = NGramModel(v, f.name, max_order=5, smoothing=1.0, min_count=1)
+    os.unlink(f.name)
+
+    ids = torch.tensor(v.encode('甲 乙 丙 丁 戊 己 庚', add_special_tokens=False)).unsqueeze(0)
+    K = ng.max_order
+    V = ng.vocab_size
+    out = ng.logprob_orders_matrix(ids, 'cpu')  # (1, T, V, K)
+    # 参考：逐位置调 _compute_logprob_orders
+    ctx_len = K - 1
+    padded = [v.pad_idx] * ctx_len + ids[0].tolist()
+    ref = torch.empty(1, ids.shape[1], V, K)
+    for t in range(ids.shape[1]):
+        ref[0, t] = ng._compute_logprob_orders(padded[t:t + ctx_len], V, 'cpu')
+    max_diff = (out - ref).abs().max().item()
+    assert max_diff < 1e-6, f"向量化与逐位置结果不一致，max_diff={max_diff}"
+
+
 
 def test_load_ngram_honors_max_order_and_min_count():
     """回归锁：build_ngram_model 应读取 ngram_max_order / ngram_min_count 配置，
