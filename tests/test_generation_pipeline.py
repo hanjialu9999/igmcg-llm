@@ -10,6 +10,7 @@ import torch.nn.functional as F
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from models.config_loader import load_config, build_model
+from models.transformer import TransformerModel
 from models.data_utils import Vocabulary
 from models.device import get_device
 from scripts.generate import generate_igmcg, generate_text, NGramModel, load_model
@@ -190,7 +191,7 @@ def test_arch_options_enabled_build_and_forward():
     """开启全部架构增强（qk_norm/attn_temp/residual_gate/hybrid_gate）后模型可正常前向与生成。"""
     cfg = load_config('configs/config_hybrid.yaml')
     # 这些增强通过 config['model'] 开关控制（与训练 YAML 一致）
-    for k in ('qk_norm', 'attn_temp', 'residual_gate', 'hybrid_gate'):
+    for k in TransformerModel.ENHANCEMENT_KEYS:
         cfg['model'][k] = True
     # 显式放一个 hybrid 块以覆盖混合路径门控（config_hybrid.yaml 默认只用 attn/ssm）
     cfg['model']['num_layers'] = 2

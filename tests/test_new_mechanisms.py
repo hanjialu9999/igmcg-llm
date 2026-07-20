@@ -1,11 +1,12 @@
 import torch
 import torch.nn.functional as F
 import sys
+import pytest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from models.transformer import TransformerModel, MemoryBank
+from models.transformer import TransformerModel, MemoryBank, apply_repetition_penalty
 from scripts.train import train_epoch
 from torch.utils.data import Dataset, DataLoader
 
@@ -21,9 +22,57 @@ class _TinyDS(Dataset):
 
 def _small(**over):
     kw = dict(vocab_size=200, embedding_dim=64, num_heads=4, num_layers=2,
-              hidden_dim=128, max_seq_length=32)
+               hidden_dim=128, max_seq_length=32)
     kw.update(over)
     return TransformerModel(**kw)
+
+
+def _ngram_parity_model():
+    v, ng = _small_ngram()
+    return _small(vocab_size=len(v), ngram_fusion=True, ngram_model=ng)
+
+
+def _get_logits(out):
+    """统一从模型输出中抽取 logits（兼容 dict / tuple / Tensor 三种返回形态）。"""
+    if isinstance(out, dict):
+        return out["logits"]
+    if isinstance(out, tuple):
+        return out[0]
+    return out
+
+
+# 额外8：训练（全量）vs 推理（cache）路径数值一致性 —— 统一参数化矩阵，
+# 取代原先 9 个结构雷同的 *_cache_parity 测试，覆盖记忆/窗口/alibi/retrieval/
+# linear mixer/ngram 融合/product_key 等组合（均为历史 cache-parity bug 回归点）。
+_PARITY_CASES = [
+    ("memory+window", lambda: (_small(memory_size=16, memory_comp_dim=16, attn_window=4), 14)),
+    ("memory+window=8", lambda: (_small(memory_size=16, memory_comp_dim=16, attn_window=8), 14)),
+    ("memory+window=0", lambda: (_small(memory_size=16, memory_comp_dim=16, attn_window=0), 14)),
+    ("retrieval_full", lambda: (_small(memory_size=16, memory_comp_dim=16,
+                                    memory_retrieval_full=True, memory_retrieval_topk=8, attn_window=8), 14)),
+    ("alibi+memory+window", lambda: (_small(alibi=True, memory_size=16, memory_comp_dim=16,
+                                          attn_window=8), 14)),
+    ("linear_mixer", lambda: (_small(mixer='linear'), 12)),
+    ("ngram_fusion", lambda: (_ngram_parity_model(), 12)),
+    ("memory_product_key", lambda: (_small_memory(memory_product_key=True), 12)),
+    ("memory_default_write", lambda: (_small_memory(memory_product_key=False), 12)),
+    ("hybrid_single_gate", lambda: (_small_hybrid(hybrid_single_gate=True), 12)),
+]
+
+
+@pytest.mark.parametrize("name,builder", [(c[0], c[1]) for c in _PARITY_CASES],
+                         ids=[c[0] for c in _PARITY_CASES])
+def test_cache_parity_matrix(name, builder):
+    """训练（全量）与推理（cache）路径必须数值一致（max_diff<1e-4）。"""
+    m, L = builder()
+    m.eval()
+    ids = torch.randint(0, m.vocab_size, (1, L))
+    with torch.no_grad():
+        full = m(ids, use_cache=False)
+        cached = m(ids, use_cache=True)
+    diff = (_get_logits(full) - _get_logits(cached)).abs().max().item()
+    assert diff < 1e-4, f"{name} 训练/推理不一致：max_diff={diff}"
+
 
 
 def test_memory_forget_gate_learned():
@@ -129,7 +178,7 @@ def test_skip_gate_prunes_layer():
 
 def test_compute_complexity_scalar():
     """复杂度度量返回标量且与模型参数在同一设备。"""
-    m = _small(layer_skip=True, mixer='hybrid', learn_window=True, attn_window=8)
+    m = _small(layer_skip=True, mixer='attn_linear', learn_window=True, attn_window=8)
     c = m.compute_complexity()
     assert c.dim() == 0
     assert c.item() > 0
@@ -164,20 +213,6 @@ def test_linear_mixer_training_no_crash():
     logits.sum().backward()
     # 梯度应真实可达
     assert any(p.grad is not None for p in m.parameters() if p.requires_grad)
-
-
-def test_linear_mixer_full_cache_parity():
-    """纯线性注意力 mixer 的训练（全量）与推理（cache）路径必须数值一致。"""
-    m = _small(mixer='linear')
-    m.eval()
-    ids = torch.randint(0, 200, (1, 12))
-    with torch.no_grad():
-        full = m(ids, use_cache=False)
-        cached = m(ids, use_cache=True)
-    fl = full["logits"] if isinstance(full, dict) else full
-    cl = cached[0] if isinstance(cached, tuple) else (cached["logits"] if isinstance(cached, dict) else cached)
-    diff = (fl - cl).abs().max().item()
-    assert diff < 1e-4, f"linear mixer 训练/推理不一致：max_diff={diff}"
 
 
 def test_memory_window_reset_after_train():
@@ -249,79 +284,6 @@ def test_memory_window0_training_no_crash_and_retrievable():
     mem_segment = bias[0, 0, :, :mem_cols]
     # 记忆列应全 0（可见），而非被 -1e9 遮蔽
     assert mem_segment.abs().max().item() < 1e-3, "记忆段被静默遮蔽（全 -1e9），模型读不到记忆"
-
-
-def test_memory_window_cache_parity():
-    """memory_size>0 + attn_window>0 时，训练（全量）与推理（cache）路径必须数值一致。
-
-    回归 BUG-2：cache 路径曾用 `kpos > qpos` 把记忆段（位于 KV 前缀）当成序列前缀按位置
-    因果遮蔽，导致推理期记忆按位置被部分遮蔽，与训练全可见不一致（静默质量退化）。
-    原 test_memory_window0_training 只测 window==0，漏掉此路径。
-    """
-    for w in (4, 8):
-        m = _small(memory_size=16, memory_comp_dim=16, attn_window=w)
-        m.eval()
-        ids = torch.randint(0, 200, (1, 14))
-        with torch.no_grad():
-            full = m(ids, use_cache=False)
-            cached = m(ids, use_cache=True)
-    fl = full["logits"] if isinstance(full, dict) else full
-    cl = cached[0] if isinstance(cached, tuple) else (cached["logits"] if isinstance(cached, dict) else cached)
-    diff = (fl - cl).abs().max().item()
-    assert diff < 1e-4, f"memory+window={w} 训练/推理不一致：max_diff={diff}"
-
-
-def test_memory_window0_cache_parity():
-    """memory_size>0 且 attn_window=0 时，训练/推理路径必须一致（回归潜在 bug）。
-
-    window==0 + memory 走 attend 的纯因果分支，原主序列因果用 kpos>qpos（全局索引）
-    多遮了 mem_cols 列合法过去 token，与 cache 路径 kpos>qpos+mem_cols 不一致
-    （full 路径主序列列被错标 -1e9，max_diff≈0.037）。window>0 走含正确项的窗口分支故掩盖。
-    修复：纯因果分支改 kpos>(qpos+mem_cols)，与 cache/窗口分支对齐。
-    """
-    m = _small(memory_size=16, memory_comp_dim=16, attn_window=0)
-    m.eval()
-    ids = torch.randint(0, 200, (1, 14))
-    with torch.no_grad():
-        full = m(ids, use_cache=False)
-        cached = m(ids, use_cache=True)
-    fl = full["logits"] if isinstance(full, dict) else full
-    cl = cached[0] if isinstance(cached, tuple) else (cached["logits"] if isinstance(cached, dict) else cached)
-    diff = (fl - cl).abs().max().item()
-    assert diff < 1e-4, f"memory+window=0 训练/推理不一致：max_diff={diff}"
-
-
-def test_memory_retrieval_full_cache_parity():
-    """memory_retrieval_full=True 时，训练（全量）与推理（cache）路径必须数值一致。
-
-    回归 BUG-1：cache 路径曾完全漏调用 `_full_retrieval_bias`，训练用 top-k 稀疏检索偏置、
-    推理（generate）不注入，导致训练-推理系统性偏差、生成质量偏离训练行为。
-    """
-    m = _small(memory_size=16, memory_comp_dim=16, memory_retrieval_full=True,
-               memory_retrieval_topk=8, attn_window=8)
-    m.eval()
-    ids = torch.randint(0, 200, (1, 14))
-    with torch.no_grad():
-        full = m(ids, use_cache=False)
-        cached = m(ids, use_cache=True)
-    fl = full["logits"] if isinstance(full, dict) else full
-    cl = cached[0] if isinstance(cached, tuple) else (cached["logits"] if isinstance(cached, dict) else cached)
-    diff = (fl - cl).abs().max().item()
-    assert diff < 1e-4, f"retrieval_full 训练/推理不一致：max_diff={diff}"
-
-
-def test_alibi_memory_window_cache_parity():
-    """alibi + memory + window>0 三路组合，训练与推理必须数值一致（交叉 bug 温床）。"""
-    m = _small(alibi=True, memory_size=16, memory_comp_dim=16, attn_window=8)
-    m.eval()
-    ids = torch.randint(0, 200, (1, 14))
-    with torch.no_grad():
-        full = m(ids, use_cache=False)
-        cached = m(ids, use_cache=True)
-    fl = full["logits"] if isinstance(full, dict) else full
-    cl = cached[0] if isinstance(cached, tuple) else (cached["logits"] if isinstance(cached, dict) else cached)
-    diff = (fl - cl).abs().max().item()
-    assert diff < 1e-4, f"alibi+memory+window 训练/推理不一致：max_diff={diff}"
 
 
 def test_learn_window_preserves_configured_window():
@@ -434,22 +396,6 @@ def test_ngram_fusion_disabled_is_identity():
     with torch.no_grad():
         out = m(x)
     assert out.shape == (2, 10, 200)
-
-
-def test_ngram_fusion_cache_parity():
-    """ngram 融合下训练（全量）与推理（cache）路径必须数值一致（逐 token 融合也对齐）。"""
-    v, ng = _small_ngram()
-    V = len(v)
-    m = _small(vocab_size=V, ngram_fusion=True, ngram_model=ng)
-    m.eval()
-    ids = torch.randint(0, V, (1, 12))
-    with torch.no_grad():
-        full = m(ids, use_cache=False)
-        cached = m(ids, use_cache=True)
-    fl = full["logits"] if isinstance(full, dict) else full
-    cl = cached[0] if isinstance(cached, tuple) else (cached["logits"] if isinstance(cached, dict) else cached)
-    diff = (fl - cl).abs().max().item()
-    assert diff < 1e-4, f"ngram 融合训练/推理不一致：max_diff={diff}"
 
 
 def test_ngram_fusion_incremental_matches_full():
@@ -712,38 +658,6 @@ def test_memory_product_key_changes_write_routing():
     assert not torch.allclose(slots_pk, slots_def), "product_key 写路由应与默认不同"
 
 
-def test_memory_product_key_cache_parity():
-    """product_key 记忆下训练（全量）与推理（cache）路径必须数值一致。"""
-    v = 200
-    m = _small_memory(memory_product_key=True)
-    m.eval()
-    ids = torch.randint(0, v, (1, 12))
-    with torch.no_grad():
-        full = m(ids, use_cache=False)
-        cached = m(ids, use_cache=True)
-    fl = full["logits"] if isinstance(full, dict) else full
-    cl = cached[0] if isinstance(cached, tuple) else (cached["logits"] if isinstance(cached, dict) else cached)
-    diff = (fl - cl).abs().max().item()
-    assert diff < 1e-4, f"product_key 记忆训练/推理不一致：max_diff={diff}"
-
-
-def test_memory_default_write_cache_parity():
-    """默认（非 product_key）记忆写路由下，训练（全量）与推理（cache）路径也必须数值一致。
-    默认路径为向量化 write_gate 分配，无顺序依赖，但此前仅 product_key 有 parity 覆盖，
-    此处补默认路径的 parity 回归，降低无测试盲区风险。"""
-    v = 200
-    m = _small_memory(memory_product_key=False)
-    m.eval()
-    ids = torch.randint(0, v, (1, 12))
-    with torch.no_grad():
-        full = m(ids, use_cache=False)
-        cached = m(ids, use_cache=True)
-    fl = full["logits"] if isinstance(full, dict) else full
-    cl = cached[0] if isinstance(cached, tuple) else (cached["logits"] if isinstance(cached, dict) else cached)
-    diff = (fl - cl).abs().max().item()
-    assert diff < 1e-4, f"默认记忆训练/推理不一致：max_diff={diff}"
-
-
 def test_memory_product_key_write_matches_reference():
     """阶段8.8：优化后的 product_key 顺序写（F.normalize + 无 unsqueeze 开销）必须与
     独立参考实现（逐 token 顺序 softmax 路由 + 1/(norm+1e-6) 归一）数值一致（优化不改数值语义）。"""
@@ -806,20 +720,6 @@ def test_hybrid_single_gate_changes_output():
         out_d = m_dual(x)
     assert not torch.allclose(out_s, out_d), "单动态门控应与双标量门控输出不同"
     assert hasattr(m_single.blocks[1], 'hybrid_mix'), "单门控未创建 hybrid_mix 线性层"
-
-
-def test_hybrid_single_gate_cache_parity():
-    """单动态门控下训练（全量）与推理（cache）路径数值一致。"""
-    m = _small_hybrid(hybrid_single_gate=True)
-    m.eval()
-    ids = torch.randint(0, 200, (1, 12))
-    with torch.no_grad():
-        full = m(ids, use_cache=False)
-        cached = m(ids, use_cache=True)
-    fl = full["logits"] if isinstance(full, dict) else full
-    cl = cached[0] if isinstance(cached, tuple) else (cached["logits"] if isinstance(cached, dict) else cached)
-    diff = (fl - cl).abs().max().item()
-    assert diff < 1e-4, f"单动态门控训练/推理不一致：max_diff={diff}"
 
 
 def test_hybrid_single_gate_backward_flows():
@@ -1103,7 +1003,7 @@ def test_hybrid_block_no_leak_attn_kwargs():
     from models.transformer import TransformerBlock
     # 不应 TypeError: unexpected keyword argument
     blk = TransformerBlock(
-        64, 4, 128, block_type='attn', mixer='hybrid',
+        64, 4, 128, block_type='attn', mixer='attn_linear',
         attn_kwargs={'window': 32, 'qk_norm': True, 'attn_temp': True,
                      'linear_attn_feature': 'relu'}
     )
@@ -1135,10 +1035,28 @@ def test_linear_attn_head_dim_reduces_projection():
     assert out8.shape == (2, 8, dim)              # 输出仍映射回 dim
     # hybrid block 透传 linear_attn_head_dim 且不泄漏到 attn
     blk = TransformerBlock(
-        dim, nh, 128, block_type='attn', mixer='hybrid',
+        dim, nh, 128, block_type='attn', mixer='attn_linear',
         attn_kwargs={'window': 32, 'qk_norm': True, 'attn_temp': True,
                      'linear_attn_feature': 'relu', 'linear_attn_head_dim': 8}
     )
     assert blk.linear_attn.head_dim == 8
     assert blk.attn.head_dim == dim // nh          # 注意力的 head_dim 不受影响
     assert blk(torch.randn(2, 8, dim))[0].shape == (2, 8, dim)
+
+
+def test_apply_repetition_penalty_matches_formula():
+    """INT-1 回归：apply_repetition_penalty 是 sample_step 与 _generate_candidates_batch
+    共用的加性频率惩罚单一事实来源，须满足「已出现 token 按次数减去 penalty*count」。"""
+    dev = torch.device('cpu')
+    logits = torch.zeros(10)
+    out = apply_repetition_penalty(logits.clone(), [3, 3, 5], 0.5, dev)
+    # token 3 出现 2 次 → -0.5*2 = -1.0；token 5 出现 1 次 → -0.5；其余不变
+    assert out[3].item() == -1.0
+    assert out[5].item() == -0.5
+    assert out[0].item() == 0.0
+    # penalty<=0 或空序列原样返回（不修改）
+    assert torch.equal(apply_repetition_penalty(logits.clone(), [], 0.5, dev), logits)
+    assert torch.equal(apply_repetition_penalty(logits.clone(), [1, 2], 0.0, dev), logits)
+    # 越界 token 被 valid 掩码过滤，不越界报错（仅 token 3 受罚）
+    out2 = apply_repetition_penalty(logits.clone(), [3, 999], 0.5, dev)
+    assert out2[3].item() == -0.5
