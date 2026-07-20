@@ -1,0 +1,117 @@
+from __future__ import annotations
+import math
+import threading
+from typing import Optional, Dict, Tuple, Any
+import torch
+import torch.nn as nn
+from models.constants import ROPE_BASE
+
+
+class RotaryEmbedding(nn.Module):
+    """旋转位置编码 RoPE：对 Q/K 按位置旋转，天然支持长度外推。
+    
+    使用实例级缓存（而非模块级全局缓存），避免多线程/多设备冲突。
+    提供可选的类级共享缓存（带锁）供性能敏感场景使用。
+    """
+    # 类级共享缓存（可选，需显式启用）
+    _shared_cache: Dict[Tuple[str, str, int], Tuple[torch.Tensor, torch.Tensor]] = {}
+    _shared_cache_lock = threading.RLock()
+    _use_shared_cache = False
+
+    def __init__(self, dim: int, base: float = ROPE_BASE, learnable: bool = False):
+        super().__init__()
+        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
+        self.register_buffer('inv_freq', inv_freq, persistent=False)
+        self.learnable = learnable
+        # 阶段5：可学习 RoPE 频率缩放——让模型调整各频率尺度，更好适应长度/尺度。
+        # inv_freq 实际 = buffer * exp(log_scale)，log_scale 每维可学（init 0 = 不变）。
+        if learnable:
+            self.rope_log_scale = nn.Parameter(torch.zeros(dim // 2))
+        # 实例级缓存：隔离不同模型/设备/dtype
+        self._cache: Dict[Tuple[str, str, int], Tuple[torch.Tensor, torch.Tensor]] = {}
+        self._cache_lock = threading.RLock()
+
+    @classmethod
+    def enable_shared_cache(cls, enabled: bool = True):
+        """启用/禁用类级共享缓存（跨实例共享，带锁保护）。"""
+        cls._use_shared_cache = enabled
+        if not enabled:
+            cls._shared_cache.clear()
+
+    def _get_cos_sin(self, start_pos: int, seq_len: int, device: torch.device, dtype: torch.dtype, max_len: int = 2048) -> Tuple[torch.Tensor, torch.Tensor]:
+        """按 (device, dtype, head_dim) 缓存整张位置表后按需切片。
+
+        实例级缓存避免多线程/多设备污染；可选共享缓存用于性能敏感场景。
+
+        注意（2026-07-18 修复 rope_learnable 训练崩溃）：缓存只存「无 grad 的基准表」
+        （由 inv_freq buffer 计算，scale=1）。可学习路径在此之上按 rope_log_scale
+        重新计算 cos/sin（带 grad），保证梯度回流到 rope_log_scale，且绝不跨 step
+        复用带 grad 图的张量（否则多步训练 backward 触发「graph freed」错误）。
+        """
+        key = (str(device), str(dtype), self.inv_freq.shape[0])
+        need = start_pos + seq_len
+
+        # 非可学：直接返回缓存（基准表本身无 grad，可安全复用）
+        if not self.learnable:
+            with self._cache_lock:
+                cached = self._cache.get(key)
+                if cached is not None and cached[0].size(2) >= need:
+                    cos_full, sin_full = cached
+                    return cos_full[:, :, start_pos:need, :].to(dtype), sin_full[:, :, start_pos:need, :].to(dtype)
+            if self._use_shared_cache:
+                with self._shared_cache_lock:
+                    cached = self._shared_cache.get(key)
+                    if cached is not None and cached[0].size(2) >= need:
+                        cos_full, sin_full = cached
+                        return cos_full[:, :, start_pos:need, :].to(dtype), sin_full[:, :, start_pos:need, :].to(dtype)
+
+        # 计算新缓存（基准表，由 inv_freq buffer 算，detach 确保无 grad 历史）
+        L = min(max(need, 128), max_len)
+        if need > max_len:
+            import warnings
+            warnings.warn(f'RoPE: need={need} > max_len={max_len}，位置将被 clamp，'
+                          '可能影响长序列质量。建议增大 rope_max_len。')
+        t = torch.arange(0, L, device=device).type_as(self.inv_freq)
+        # 基准频率表（无 grad，inv_freq 为 buffer）
+        freqs = torch.outer(t, self.inv_freq)
+        emb = torch.cat((freqs, freqs), dim=-1)
+        cos_full = emb.cos()[None, None, :, :].to(dtype).detach()
+        sin_full = emb.sin()[None, None, :, :].to(dtype).detach()
+
+        # 存入实例缓存（仅非可学路径后续会命中；可学路径每步重算，不依赖此缓存）
+        with self._cache_lock:
+            self._cache[key] = (cos_full, sin_full)
+        if self._use_shared_cache:
+            with self._shared_cache_lock:
+                self._shared_cache[key] = (cos_full, sin_full)
+
+        # 可学习路径：按 rope_log_scale 重新计算 cos/sin（带 grad，梯度回流 rope_log_scale）
+        if self.learnable:
+            t_eff = torch.arange(start_pos, need, device=device).type_as(self.inv_freq)
+            inv_freq_eff = self.inv_freq * torch.exp(self.rope_log_scale).to(self.inv_freq.device)
+            freqs_eff = torch.outer(t_eff, inv_freq_eff)
+            emb_eff = torch.cat((freqs_eff, freqs_eff), dim=-1)
+            cos = emb_eff.cos()[None, None, :, :].to(dtype)
+            sin = emb_eff.sin()[None, None, :, :].to(dtype)
+            return cos, sin
+
+        return cos_full[:, :, start_pos:need, :].to(dtype), sin_full[:, :, start_pos:need, :].to(dtype)
+
+    def forward(self, q: torch.Tensor, k: torch.Tensor, start_pos: int = 0, max_len: int = 2048) -> Tuple[torch.Tensor, torch.Tensor]:
+        cos, sin = self._get_cos_sin(start_pos, q.size(2), q.device, q.dtype, max_len=max_len)
+        return self._rope_apply(q, cos, sin), self._rope_apply(k, cos, sin)
+
+    @staticmethod
+    def _rope_apply(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
+        d = x.size(-1) // 2
+        x1, x2 = x[..., :d], x[..., d:]
+        # 标准旋转公式：x1*cos - x2*sin, x1*sin + x2*cos（无 cat、无 neg 临时张量）
+        return torch.cat([
+            x1 * cos[..., :d] - x2 * sin[..., :d],
+            x1 * sin[..., :d] + x2 * cos[..., d:]
+        ], dim=-1)
+
+    def clear_cache(self):
+        """清空实例缓存（长时间运行时可调用防止内存泄漏）。"""
+        with self._cache_lock:
+            self._cache.clear()

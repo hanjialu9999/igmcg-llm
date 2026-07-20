@@ -608,23 +608,9 @@ def main(config_path='configs/pretrain.yaml', resume=False):
     # Save final model and vocab
     final_model_path = os.path.join(checkpoint_dir, 'final_model.pt')
     # CPU-offload 后再保存，确保任意设备（含 DML/CUDA）都能用 weights_only=True 加载
-    torch.save({
-        'model_state_dict': _cpu_offload(model.state_dict()),
-        'vocab_size': len(vocab),
-    }, final_model_path)
-    # Save config separately for weights_only=True compatibility
-    config_path = os.path.join(checkpoint_dir, 'final_model_config.yaml')
-    with open(config_path, 'w', encoding='utf-8') as f:
-        yaml.dump(config['model'], f, allow_unicode=True)
-    
-    vocab_path = os.path.join(checkpoint_dir, 'vocab.json')
-    vocab_data = {
-        'word2idx': vocab.word2idx,
-        'idx2word': {str(k): v for k, v in vocab.idx2word.items()}
-    }
-    with open(vocab_path, 'w', encoding='utf-8') as f:
-        json.dump(vocab_data, f, ensure_ascii=False, indent=2)
-    
+    final_model_path, vocab_path = save_final_model(
+        model, vocab, checkpoint_dir, config['model'])
+
     print(f"\nTraining completed!")
     print(f"Best loss: {best_loss:.4f} (Epoch {history['best_epoch']})")
     print(f"Final model saved at {final_model_path}")

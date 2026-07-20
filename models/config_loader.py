@@ -157,7 +157,11 @@ def load_vocab(vocab_path: str = 'checkpoints/vocab.json') -> Vocabulary:
 
     vocab = Vocabulary()
     vocab.word2idx = vocab_data['word2idx']
-    vocab.idx2word = vocab_data['idx2word']
+    vocab.idx2word = {int(k): v for k, v in vocab_data['idx2word'].items()}
+    # 恢复 special_tokens（save_final_model 写出；旧 vocab.json 无此键则用默认）
+    _st = vocab_data.get('special_tokens')
+    if _st is not None:
+        vocab.special_tokens = list(_st)
     return vocab
 
 
