@@ -26,11 +26,15 @@ class NGramModel:
     """
 
     def __init__(self, vocab, corpus_file, max_order: int = 10, smoothing: float = 1.0,
-                 l1: float = 0.1, l2: float = 0.3, l3: float = 0.6, vocab_size: Optional[int] = None):
+                 l1: float = 0.1, l2: float = 0.3, l3: float = 0.6, vocab_size: Optional[int] = None,
+                 min_count: int = 1):
         self.vocab = vocab
         self.max_order = max_order
         self.smoothing = smoothing
         self.l1, self.l2, self.l3 = l1, l2, l3
+        # 计数剪枝阈值：单/低频次 n-gram（count < min_count）多为语料噪声，既浪费内存
+        # 又拖累泛化；训练/融合默认剪掉（min_count=2），仅保留有统计意义的高频上下文。
+        self.min_count = int(max(1, min_count))
         # vocab_size 决定统计缓冲维度：默认取 len(vocab)（语料实际覆盖的 token 数），
         # 但融合时需对齐模型词表（可能远大于语料覆盖），故允许显式覆盖。
         self.vocab_size = int(vocab_size) if vocab_size is not None else len(vocab)
@@ -62,7 +66,15 @@ class NGramModel:
         # 预计算（加速解码期每次调用的 logprob_vector）
         V = self.vocab_size
         self.uni_total = sum(self.uni.values()) + self.smoothing * V
-        # 各阶上下文总计数
+        # 各阶上下文总计数（先按 min_count 剪枝低频次计数，降低内存并按住噪声）
+        for order in range(2, self.max_order + 1):
+            for ctx in list(self.ngrams[order].keys()):
+                c = self.ngrams[order][ctx]
+                dead = [t for t, n in c.items() if n < self.min_count]
+                for t in dead:
+                    del c[t]
+                if not c:
+                    del self.ngrams[order][ctx]
         self.ngram_totals = {}
         for order in range(2, self.max_order + 1):
             self.ngram_totals[order] = {

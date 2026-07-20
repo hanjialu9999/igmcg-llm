@@ -61,9 +61,15 @@ def build_ngram_model(vocab, model_config: Dict[str, Any]):
         from models.ngram import NGramModel
         corpus = model_config.get('ngram_corpus', 'data/pretrain_corpus/merged.txt')
         vocab_size = model_config.get('vocab_size', getattr(vocab, 'vocab_size', None))
-        model = NGramModel(vocab, corpus, max_order=10, smoothing=1.0,
-                           vocab_size=vocab_size)
-        print(f"[n-gram 融合] 已从 {corpus} 重建统计缓冲（推理对齐训练分布）")
+        # 融合用 n-gram 阶数：默认 5（原 10）。高阶对字符级小模型贡献甚微，
+        # 降阶可大幅缩减计数表内存与每步 (B,T,V,K) 张量分配（K 减半）。
+        max_order = int(model_config.get('ngram_max_order', 5))
+        # 剪枝单/低频次计数（默认 count<2 丢弃），显著降低静态内存占用。
+        min_count = int(model_config.get('ngram_min_count', 2))
+        model = NGramModel(vocab, corpus, max_order=max_order, smoothing=1.0,
+                           vocab_size=vocab_size, min_count=min_count)
+        print(f"[n-gram 融合] 已从 {corpus} 重建统计缓冲（max_order={max_order}, "
+              f"min_count={min_count}，推理对齐训练分布）")
         return model
     except Exception as e:
         print(f"[n-gram 融合] 重建失败，已跳过：{e}")

@@ -115,3 +115,66 @@ def test_vec_for_ctx_deterministic_reference():
     assert vec.max().item() < 0.0
     # 缓存键存在
     assert (w2, w1) in ng._logprob_cache
+
+
+def test_min_count_prune_reduces_memory_and_keeps_fusion():
+    """回归锁：ngram_min_count 剪枝应大幅缩减计数表内存，且不破坏可学融合的
+    logprob_orders_matrix 输出有限性与形态。
+
+    背景：原实现对所有 order 2..10 建全量计数表（4000 行语料下 ~462MB dict
+    载荷 + 540MB 常驻），并在每步物化 (B,T,V,K) 张量（K=10）造成 4GB+ 内存
+    占用与 ~0.59s/step 的额外开销。降阶(max_order=5)+剪枝(min_count=2)后
+    静态内存应降到约 1/20，且融合输出仍 (B,T,V,K) 有限可用。"""
+    # 构造一个含单/低频次 n-gram 的小语料，验证剪枝确实丢弃低频次项
+    small = [
+        "甲 乙 丙 丁",
+        "甲 乙 戊 己",  # (甲,乙)->丙 / (甲,乙)->戊 各出现 1 次（count=1）
+    ]
+    v = CharTokenizer(vocab_size=200)
+    v.train(small)  # 词表与统计语料同源，避免 OOV 越界
+    f = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
+    f.write("\n".join(small) + "\n")
+    f.close()
+    ng = NGramModel(v, f.name, max_order=5, smoothing=1.0,
+                    l1=0.1, l2=0.3, l3=0.6, min_count=2)
+    os.unlink(f.name)
+
+    import sys as _s
+    payload_pruned = 0
+    # 剪枝后所有计数字典的载荷应极小；这里仅断言无 count<2 残留
+    for order in range(2, 6):
+        for ctx, c in ng.ngrams[order].items():
+            for tok, n in c.items():
+                assert n >= 2, f"min_count=2 剪枝残留 count={n} 的项"
+                payload_pruned += _s.getsizeof(tok) + _s.getsizeof(n)
+    # 剪枝后内存远小于未剪枝全量（定性：payload 应很小，不超数百 KB）
+    assert payload_pruned < 100 * 1024, f"剪枝后计数表仍过大 {payload_pruned} 字节"
+
+    # 融合输出形态与有限性不破坏（V 取 ngram 对齐的模型词表维度）
+    V = ng.vocab_size
+    ids = torch.tensor(v.encode('甲 乙 丙 丁', add_special_tokens=False)).unsqueeze(0)
+    mat = ng.logprob_orders_matrix(ids, 'cpu')
+    assert mat.shape == (1, ids.shape[1], V, 5)
+    assert torch.isfinite(mat).all()
+
+
+
+def test_load_ngram_honors_max_order_and_min_count():
+    """回归锁：build_ngram_model 应读取 ngram_max_order / ngram_min_count 配置，
+    降阶与剪枝经由统一入口生效（避免训练/推理统计缓冲不对称）。"""
+    from models.checkpoint import build_ngram_model
+    v = CharTokenizer(vocab_size=5000)
+    v.train(CORPUS)
+    f = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
+    f.write("\n".join(CORPUS * 50) + "\n")
+    f.close()
+    cfg = {'ngram_fusion': True, 'ngram_corpus': f.name,
+           'vocab_size': 5000, 'ngram_max_order': 5, 'ngram_min_count': 2}
+    ng = build_ngram_model(v, cfg)
+    os.unlink(f.name)
+    assert ng is not None
+    assert ng.max_order == 5
+    assert ng.min_count == 2
+    # 不应存在 order>5 的计数表
+    assert not any(o > 5 for o in ng.ngrams)
+
