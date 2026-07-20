@@ -532,7 +532,7 @@ class TransformerModel(nn.Module):
             self.output_head.weight = self.embedding.weight
         return module
 
-    def forward(self, src: torch.Tensor, past_key_values: Optional[List[Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]]]] = None, use_cache: bool = False, intuition: Optional[torch.Tensor] = None, igmcg_force_off: bool = False) -> Tuple[torch.Tensor, Optional[List[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]]]]:
+    def forward(self, src: torch.Tensor, past_key_values: Optional[List[Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]]]] = None, use_cache: bool = False, intuition: Optional[torch.Tensor] = None, igmcg_force_off: bool = False, temperature: float = 1.0) -> Tuple[torch.Tensor, Optional[List[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]]]]:
         # src: (batch, seq_len)；RoPE 在注意力内部按位置旋转，无需外部 PE
         # 阶段8.7 IGMCG 2.0：intuition 为 (B,7) 连续直觉向量（训练期可作为条件输入，推理期可选）；
         # igmcg_force_off 用于训练期 IGMCG-SEL（随机整批关闭 IGMCG 引导，让模型学"何时用"）。
@@ -639,7 +639,17 @@ class TransformerModel(nn.Module):
             # gate 语义即"先验权重"(∈(0,1) 表示混合比例)，与 ngram_vec 同尺度、可直接调节概率。
             # softmax 单调，返回 logp 与返回 logits 在采样上等价，不破坏下游（仅采样消费该输出）。
             z = self.output_head(x)                                         # (B,T,V) 主干 logits
-            logp = F.log_softmax(z, dim=-1)                                 # (B,T,V) 同尺度 log 概率
+            # 阶段8.9 温度作用域修正：温度只缩放"主干"分布（log_softmax(z/τ)），
+            # 不缩放 n-gram 先验（gate*ngram_vec 处于 log 概率空间，属外部固定先验，
+            # 不应被采样温度非线性放大/压缩）。旧写法 fused=logp+gate*ngram_vec 后由
+            # sample_next_token 对整体除以 τ，等价于把先验也缩放 τ 倍，温度越高先验越被
+            # 错误放大（τ>1 时 prior/τ 变小、反而压低先验；语义与"温度仅控随机度"相悖）。
+            # 现温度在 log_softmax 内部作用于 z：logp_τ=log_softmax(z/τ)，fused=logp_τ+prior，
+            # 与采样中单独对主干做温度在 softmax 前缩放完全一致；τ=1 时与原行为逐位相同。
+            # temperature 可为标量或 (B,) 张量（批量解码时各候选温度不同）；
+            # 统一整形为 (B,1,1) 与 (B,T,V) 主干 logits 广播。
+            _t = torch.as_tensor(temperature, dtype=z.dtype, device=z.device).view(-1, 1, 1)
+            logp = F.log_softmax(z / _t, dim=-1)                           # (B,T,V) 同尺度 log 概率（已温度缩放主干）
             # 门控角色分离（消除 8.1/8.7 双 (0,1) sigmoid 冗余）：
             #  - igmcg_use_gate（仅 IGMCG 启用时）："是否启用 IGMCG 引导"的逐位置自决门控（含直觉条件偏置）；
             #  - ngram_gate：逐位置"对 n-gram 先验的置信/强度"（8.1 语义，保留以兼容已训练权重）；
@@ -705,6 +715,8 @@ class TransformerModel(nn.Module):
 
         def sample_step(logits_t: torch.Tensor) -> Optional[int]:
             # INT-2：单步采样统一走 sample_next_token（与 IGMCG 批量解码共用单一事实来源）
+            # 阶段8.9：n-gram 融合路径下，温度已在 forward 内作用于主干 logits，
+            # 此处标记 temperature_applied 避免对整体（含 n-gram 先验）再除以 τ。
             return sample_next_token(
                 logits_t, temperature=temperature, repetition_penalty=repetition_penalty,
                 generated_ids=generated, ngram_fn=ngram_fn, ngram_weight=ngram_weight,
@@ -712,6 +724,7 @@ class TransformerModel(nn.Module):
                 generated_len=len(generated) - len(token_ids), min_length=min_length,
                 eos_penalty=eos_penalty, top_k=top_k, vocab_size=logits_t.shape[0],
                 raw_logits=logits_t,
+                temperature_applied=getattr(self, 'ngram_fusion_enabled', False),
             )
 
         with torch.no_grad():
@@ -720,7 +733,8 @@ class TransformerModel(nn.Module):
             # use_cache 固定为 True（增量解码），无 cache 的每步全量重算分支已删除（死代码、
             # 且极慢易错）；如未来需要无缓存生成，应单独实现而非复用此循环。
             input_ids = torch.tensor([generated], dtype=torch.long, device=device)
-            logits, past = self.forward(input_ids, past_key_values=None, use_cache=True)
+            logits, past = self.forward(input_ids, past_key_values=None, use_cache=True,
+                                        temperature=temperature)
             cur_pos = input_ids.size(1)
 
             for _ in range(max_length):
@@ -733,5 +747,6 @@ class TransformerModel(nn.Module):
                 if next_token == eos_token_id and len(generated) - len(token_ids) >= min_length:
                     break
                 past, logits, cur_pos = _decode_one_step(
-                    self, next_token, past, cur_pos, device=device, use_cache=True)
+                    self, next_token, past, cur_pos, device=device, use_cache=True,
+                    temperature=temperature)
         return generated

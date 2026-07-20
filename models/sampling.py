@@ -30,14 +30,19 @@ def sample_next_token(logits_t: torch.Tensor, *, temperature: float,
                       pad_id: int, sep_id: int, eos_id: int,
                       generated_len: int, min_length: int, eos_penalty: float,
                       top_k: int, vocab_size: int,
-                      raw_logits: Optional[torch.Tensor] = None) -> Optional[int]:
+                      raw_logits: Optional[torch.Tensor] = None,
+                      temperature_applied: bool = False) -> Optional[int]:
     """INT-2：单步采样单一事实来源——model.generate（单序列）与 generate.py 批量候选
     解码（_generate_candidates_batch）共用，消除两套采样循环公式漂移。
 
     流程：温度缩放 → 加性重复惩罚 → n-gram 先验叠加 → pad/sep 屏蔽 → min_length/eos 处理
     → top_k 截断 → 全 -inf 回退 → softmax → multinomial。低置信（probs.max()<0.01）返回
-    None 表示提前终止。返回的是 token id（或 None）。"""
-    lt = logits_t / temperature
+    None 表示提前终止。返回的是 token id（或 None）。
+
+    `temperature_applied`：当上游已对主干 logits 应用过温度（n-gram 融合路径，forward 内
+    log_softmax(z/τ)），此处不再整体除以 τ（否则会错误缩放 n-gram 先验）。此时若提供了
+    未温度化的 raw_logits，回退分支仍用 raw_logits/τ 以恢复正确主干分布。"""
+    lt = logits_t if temperature_applied else logits_t / temperature
     apply_repetition_penalty(lt, generated_ids, repetition_penalty, device)
     if ngram_fn is not None and ngram_weight != 0.0:
         lt = lt + ngram_weight * ngram_fn(generated_ids, device)
@@ -55,7 +60,9 @@ def sample_next_token(logits_t: torch.Tensor, *, temperature: float,
         # 全 -inf 回退（设计行为，非 bug）：所有合法 token 都被屏蔽（pad/sep/eos/
         # top_k/惩罚后无候选）的极端边界，放弃已处理分布、用原始温度分布仅屏蔽 pad
         # 以产出合法 token 避免崩溃。raw_logits 为未被惩罚污染的前向原始 logits。
-        rb = (raw_logits if raw_logits is not None else logits_t) / temperature
+        rb = (raw_logits if raw_logits is not None else logits_t)
+        if not temperature_applied:
+            rb = rb / temperature
         rb[pad_id] = float('-inf')
         lt = rb
     probs = torch.softmax(lt, dim=-1)
@@ -63,12 +70,13 @@ def sample_next_token(logits_t: torch.Tensor, *, temperature: float,
         return None
     return torch.multinomial(probs, num_samples=1).item()
 def _decode_one_step(model: "TransformerModel", next_token: int,
-                     past: Optional[Any], cur_pos: int, *, device: str,
-                     use_cache: bool = True) -> Tuple[Any, torch.Tensor, int]:
+                      past: Optional[Any], cur_pos: int, *, device: str,
+                      use_cache: bool = True, temperature: float = 1.0) -> Tuple[Any, torch.Tensor, int]:
     """单步续前向（KV-cache 驱动）原语，供 model.generate 与 scripts/generate.py
     的批量解码共用，消除两套解码主循环重复的「input_ids=[[tok]] -> forward(past)
     -> cur_pos+=1」驱动逻辑。语义与原 generate 循环体完全一致（数值不变）。"""
     input_ids = torch.tensor([[next_token]], dtype=torch.long, device=device)
-    logits, past = model.forward(input_ids, past_key_values=past, use_cache=use_cache)
+    logits, past = model.forward(input_ids, past_key_values=past, use_cache=use_cache,
+                                 temperature=temperature)
     cur_pos += 1
     return past, logits, cur_pos

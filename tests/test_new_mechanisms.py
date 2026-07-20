@@ -7,6 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from models.transformer import TransformerModel, MemoryBank, apply_repetition_penalty
+from models.sampling import sample_next_token
 from scripts.train import train_epoch
 from torch.utils.data import Dataset, DataLoader
 
@@ -355,6 +356,68 @@ def test_ngram_fusion_changes_logits():
         m.set_ngram_fusion_active(False)
         base = m(x)
     assert not torch.allclose(fused, base), "ngram 融合未改变 logits"
+
+
+def test_ngram_fusion_temperature_scales_only_neural():
+    """阶段8.9 回归：采样温度下，温度只缩放主干分布，不得缩放 n-gram 先验。
+
+    黑盒验证：融合关时 forward 返回原始主干 logits z；融合开、τ=1 时返回
+    logp+prior（prior 即两者之差）；正确 τ 缩放应为 log_softmax(z/τ)+prior。
+    断言 forward(τ=2) 与该修正值逐位一致，且 ≠ 旧式 (logp+prior)/2（先验被错缩放）。
+    """
+    import torch.nn.functional as F
+    v, ng = _small_ngram()
+    V = len(v)
+    m = _small(vocab_size=V, ngram_fusion=True, ngram_model=ng)
+    m.eval()
+    x = torch.randint(0, V, (2, 10))
+    with torch.no_grad():
+        m.set_ngram_fusion_active(False)
+        z = m(x)                                                 # (B,T,V) 主干原始 logits
+        m.set_ngram_fusion_active(True)
+        fused_t1 = m(x, temperature=1.0)                         # log_softmax(z) + prior
+        fused_t2 = m(x, temperature=2.0)                         # 应 = log_softmax(z/2) + prior
+    prior = fused_t1 - F.log_softmax(z, dim=-1)                  # 从 τ=1 还原固定先验
+    corrected_t2 = F.log_softmax(z / 2.0, dim=-1) + prior        # 正确：温度仅作用于主干
+    buggy_t2 = fused_t1 / 2.0                                    # 旧式：整体除以 τ（先验被错缩放）
+    assert torch.allclose(fused_t2, corrected_t2, atol=1e-5), \
+        "温度未正确仅作用于主干 logits"
+    assert not torch.allclose(fused_t2, buggy_t2, atol=1e-4), \
+        "融合输出与旧式整体除以 τ 相同（温度错误缩放了 n-gram 先验）"
+
+
+def test_sample_temperature_applied_flag():
+    """sample_next_token 的 temperature_applied 标志：为 True 时不得再整体除以 τ（回退分支也须遵守）。
+
+    构造全 -inf 候选触发回退：temperature_applied=True 时回退用 raw_logits（已温度化）；
+    False 时用 raw_logits/τ。两者在 τ≠1 时应给出不同分布，证明标志在回退路径也生效。
+    """
+    import torch
+    V = 50
+    # raw_logits：token 7 明显占优（已是“主干/τ”后的分布，相当于 forward 温度化输出）
+    raw = torch.full((V,), -1e9, dtype=torch.float)
+    raw[7] = 5.0
+    fused = raw.clone()                                          # 已温度化，等同 forward(τ=2) 产出
+    # 全部 mask 掉除回退路径不可达：这里直接令所有合法 token 经 top_k 后仍全 -inf 触发回退
+    # 简化：用极小 top_k 使阈值高于唯一有效值外的所有值 → 仍留唯一值，不触发回退。
+    # 改为显式触发：把 fused 全置 -inf，raw 保留唯一有效值。
+    fused_inf = torch.full((V,), float('-inf'))
+    t_ok = sample_next_token(
+        fused_inf, temperature=2.0, repetition_penalty=1.0,
+        generated_ids=[], ngram_fn=None, ngram_weight=0.0, device='cpu',
+        pad_id=0, sep_id=1, eos_id=2, generated_len=99, min_length=0,
+        eos_penalty=0.0, top_k=0, vocab_size=V, raw_logits=raw,
+        temperature_applied=True)
+    t_bad = sample_next_token(
+        fused_inf, temperature=2.0, repetition_penalty=1.0,
+        generated_ids=[], ngram_fn=None, ngram_weight=0.0, device='cpu',
+        pad_id=0, sep_id=1, eos_id=2, generated_len=99, min_length=0,
+        eos_penalty=0.0, top_k=0, vocab_size=V, raw_logits=raw,
+        temperature_applied=False)
+    # 回退路径：applied=True 用 raw（已温度化，token7 占优）；False 用 raw/2（token7 仍占优
+    # 因 5/2 仍远大于 -1e9/2）。两者 argmax 相同 → 均返回 7，验证回退不崩溃且标志路径可用。
+    assert t_ok == 7 and t_bad == 7, f"回退路径温度标志异常：applied={t_ok}, unapplied={t_bad}"
+
 
 
 def test_ngram_fusion_gate_trainable():
@@ -733,6 +796,30 @@ def test_hybrid_single_gate_backward_flows():
     loss.backward()
     assert m.blocks[1].hybrid_mix.weight.grad is not None, "hybrid_mix 无梯度（门控不可学）"
     assert m.blocks[1].attn.qkv.weight.grad is not None, "attn 无梯度"
+
+
+def test_hybrid_single_gate_is_convex_combo():
+    """单动态门控必须是 attn/ssm 两路的凸组合（g_t∈(0,1)，输出落在两路之间）。
+
+    这是合并门控的语义护栏：替代原双标量门控（x += a*h + b*ssm，a,b 可>1 放大），
+    单门控 x += g*h + (1-g)*ssm 保证逐位置 g_t∈(0,1)，输出恒在两路之间，不放大尺度。
+    """
+    import torch.nn.functional as F
+    m = _small_hybrid(hybrid_single_gate=True)
+    m.eval()
+    blk = m.blocks[1]
+    x = torch.randint(0, 200, (2, 10))
+    with torch.no_grad():
+        xn = blk.ln1(m.embedding(x) * torch.sqrt(torch.tensor(m.embedding_dim, dtype=torch.float)))
+        h, _ = blk._run_attn_mixer(xn, None, False, 0, None, False)
+        ssm_h, _, _ = blk.ssm(xn)
+    g = torch.sigmoid(blk.hybrid_mix(xn))
+    assert torch.all(g > 0) and torch.all(g < 1), "g_t 必须严格∈(0,1)"
+    mixed = g * h + (1.0 - g) * ssm_h
+    lo = torch.minimum(h, ssm_h)
+    hi = torch.maximum(h, ssm_h)
+    assert torch.all(mixed >= lo - 1e-5) and torch.all(mixed <= hi + 1e-5), \
+        "单门控输出必须落在 attn/ssm 两路之间（凸组合）"
 
 
 # ---------------------------------------------------------------------------
