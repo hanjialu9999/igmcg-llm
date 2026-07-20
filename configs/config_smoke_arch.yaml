@@ -29,6 +29,7 @@
   linear_attn_head_dim: 16
   learn_window: true
   layer_skip: false
+  hybrid_single_gate: true
   alibi: true
   complexity_reward: true
   rope_learnable: true

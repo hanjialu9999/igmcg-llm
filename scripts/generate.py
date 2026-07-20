@@ -177,10 +177,14 @@ def _generate_candidates_batch(model, ids, temps, max_length, top_k, rep_penalty
     with torch.no_grad():
         # 重置 n-gram 滚动缓冲，避免跨调用残留上一序列的上下文污染当前生成
         model.reset_ngram_state()
+        # 阶段8.9：各候选温度可能不同，批量前向以 (N,) 温度张量传入，forward 内对主干
+        # logits 逐候选做 log_softmax(z_n/τ_n)；n-gram 先验不被温度缩放。
+        _temps = torch.tensor(temps, dtype=torch.float32, device=device)
+        _temp_applied = getattr(model, 'ngram_fusion_enabled', False)
         # 初始前向：所有候选共享同一输入，得到 batched past（batch 维 = N）
         inp = torch.tensor([ids] * N, dtype=torch.long, device=device)
         logits, past = model.forward(inp, past_key_values=None, use_cache=True,
-                                     intuition=intu_batch)
+                                     intuition=intu_batch, temperature=_temps)
 
         for step in range(max_length):
             if all(done):
@@ -200,6 +204,7 @@ def _generate_candidates_batch(model, ids, temps, max_length, top_k, rep_penalty
                     generated_len=len(generated[n]) - len(ids), min_length=min_length,
                     eos_penalty=eos_penalty, top_k=top_k, vocab_size=logits[n, -1, :].shape[0],
                     raw_logits=logits[n, -1, :],
+                    temperature_applied=_temp_applied,
                 )
                 if tok is None:
                     # 低置信提前终止：填 pad 占位保持 batch 对齐并标记完成
@@ -214,7 +219,7 @@ def _generate_candidates_batch(model, ids, temps, max_length, top_k, rep_penalty
             # 且无法共享单次前向）。_decode_one_step 的语义等价于单次 [[tok]] forward。
             feed = torch.tensor(nt, dtype=torch.long, device=device).unsqueeze(1)
             logits, past = model.forward(feed, past_key_values=past, use_cache=True,
-                                         intuition=intu_batch)
+                                         intuition=intu_batch, temperature=_temps)
             for n in range(N):
                 if not done[n]:
                     generated[n].append(nt[n])
