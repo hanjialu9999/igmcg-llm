@@ -313,7 +313,9 @@ def sample_next_token(logits_t: torch.Tensor, *, temperature: float,
         threshold = top_k_vals[..., -1]
         lt[lt < threshold] = float('-inf')
     if torch.isinf(lt).all():
-        # 全 -inf 回退：恢复原始温度缩放（仅屏蔽 pad，保留 ngram/惩罚外的合法分布）
+        # 全 -inf 回退（设计行为，非 bug）：所有合法 token 都被屏蔽（pad/sep/eos/
+        # top_k/惩罚后无候选）的极端边界，放弃已处理分布、用原始温度分布仅屏蔽 pad
+        # 以产出合法 token 避免崩溃。raw_logits 为未被惩罚污染的前向原始 logits。
         rb = (raw_logits if raw_logits is not None else logits_t) / temperature
         rb[pad_id] = float('-inf')
         lt = rb
