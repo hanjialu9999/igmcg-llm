@@ -9,6 +9,8 @@ from torch.nn.functional import scaled_dot_product_attention
 import threading
 from typing import Optional, List, Tuple, Any, Dict, Callable
 
+from models.constants import MASK_FILL_VALUE, ROPE_BASE
+
 
 class CharMergeLayer(nn.Module):
     """轻量学习型分词层（Learned Segmentation）。
@@ -370,7 +372,7 @@ class RotaryEmbedding(nn.Module):
     _shared_cache_lock = threading.RLock()
     _use_shared_cache = False
 
-    def __init__(self, dim: int, base: float = 10000.0, learnable: bool = False):
+    def __init__(self, dim: int, base: float = ROPE_BASE, learnable: bool = False):
         super().__init__()
         inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
         self.register_buffer('inv_freq', inv_freq, persistent=False)
@@ -475,7 +477,7 @@ class SlidingWindowCausalSelfAttention(nn.Module):
      故 DML(及其他后端)走手动 matmul+softmax+因果掩码 以规避该 bug。
     """
     def __init__(self, dim: int, num_heads: int, window: int = 0, rel_bias: bool = False, max_seq_length: int = 64,
-                 qk_norm: bool = True, attn_temp: bool = True, mask_fill_value: float = -1e9,
+                 qk_norm: bool = True, attn_temp: bool = True, mask_fill_value: float = MASK_FILL_VALUE,
                  rope_learnable: bool = False, alibi: bool = False, retrieval_full: bool = False,
                  retrieval_topk: int = 32, learn_window: bool = False, window_base: int = 64):
         super().__init__()
@@ -1341,7 +1343,7 @@ class TransformerModel(nn.Module):
                  ssm_a_log_init_range: List[float] = [-1, 1],
                  ssm_D_init: float = 1.0,
                   attn_window: int = 0, attn_rel_bias: bool = False,
-                  rope_base: float = 10000.0, rope_max_len: int = 4096,
+                  rope_base: float = ROPE_BASE, rope_max_len: int = 4096,
                   # 注意两个"长度"语义不同、勿混（额外7 澄清）：
                   #   max_seq_length —— 本模型训练/生成的上下文窗口上限（用于生成截断、复杂度归一）；
                   #   rope_max_len     —— RoPE/注意力缓冲区的位置编码容量，向下传给各 block/attn 作其

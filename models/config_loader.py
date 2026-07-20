@@ -9,6 +9,7 @@ import yaml
 
 from models.data_utils import Vocabulary
 from models.transformer import TransformerModel
+from models.constants import MASK_FILL_VALUE, ROPE_BASE
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -64,11 +65,11 @@ def build_model(config: Dict[str, Any], device: Optional[torch.device] = None,
         ssm_D_init=mc.get('ssm_D_init', 1.0),
         attn_window=mc.get('attn_window', 0),
         attn_rel_bias=mc.get('attn_rel_bias', False),
-        rope_base=mc.get('rope_base', 10000.0),
+        rope_base=mc.get('rope_base', ROPE_BASE),
         # RoPE/注意力缓冲区长度：默认与 max_seq_length 一致（指向同一"模型最大序列长"概念），
         # 仅当显式配置 rope_max_len 时才覆盖——避免未配置时悄悄用 4096 而与 max_seq_length 发散。
         rope_max_len=mc.get('rope_max_len', mc['max_seq_length']),
-        mask_fill_value=mc.get('mask_fill_value', -1e9),
+        mask_fill_value=mc.get('mask_fill_value', MASK_FILL_VALUE),
         # 阶段5：可学习 RoPE 频率 + ALiBi 线性位置偏置（默认关，向后兼容）
         rope_learnable=mc.get('rope_learnable', False),
         alibi=mc.get('alibi', False),

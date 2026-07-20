@@ -9,6 +9,9 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
 
+from models.constants import (SPECIAL_TOKENS, PAD_IDX, UNK_IDX, BOS_IDX,
+                              EOS_IDX, SEP_IDX)
+
 
 class Vocabulary:
     """Vocabulary class with improved tokenization and filtering"""
@@ -28,14 +31,14 @@ class Vocabulary:
         
         # Define special tokens (including [SEP] for question-answer separation)
         if special_tokens is None:
-            special_tokens = ['<pad>', '<???>', '<bos>', '<eos>', '[SEP]']
+            special_tokens = list(SPECIAL_TOKENS)
         
         self.special_tokens = special_tokens
-        self.pad_idx = 0
-        self.unk_idx = 1
-        self.bos_idx = 2
-        self.eos_idx = 3
-        self.sep_idx = 4
+        self.pad_idx = PAD_IDX
+        self.unk_idx = UNK_IDX
+        self.bos_idx = BOS_IDX
+        self.eos_idx = EOS_IDX
+        self.sep_idx = SEP_IDX
         
     def build_vocab(self, texts: List[str]) -> None:
         """Build vocabulary from texts with better filtering"""
@@ -295,14 +298,14 @@ class BaseTokenizer:
 
     def __init__(self, vocab_size: int = 8000, special_tokens: Optional[List[str]] = None):
         if special_tokens is None:
-            special_tokens = ['<pad>', '<???>', '<bos>', '<eos>', '[SEP]']
+            special_tokens = list(SPECIAL_TOKENS)
         self.vocab_size = vocab_size
         self.special_tokens = special_tokens
-        self.pad_idx = 0
-        self.unk_idx = 1
-        self.bos_idx = 2
-        self.eos_idx = 3
-        self.sep_idx = 4
+        self.pad_idx = PAD_IDX
+        self.unk_idx = UNK_IDX
+        self.bos_idx = BOS_IDX
+        self.eos_idx = EOS_IDX
+        self.sep_idx = SEP_IDX
         self.word2idx: Dict[str, int] = {}
         self.idx2word: Dict[int, str] = {}
         self.merges: List[Tuple[str, str]] = []

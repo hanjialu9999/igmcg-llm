@@ -1104,3 +1104,21 @@ def test_cached_causal_mask_matches_inline():
     out2 = m.generate([1, 2, 3], max_length=8, device='cpu', temperature=1.0, top_k=0)
     assert out1 == out2
 
+
+def test_shared_constants_consistent():
+    # §整合：特殊 token / 掩码填充 / RoPE 基频集中到 models/constants.py 单一来源，
+    # Vocabulary 与 BaseTokenizer 的索引须与常量一致（防止改一处漏一处）。
+    from models.constants import (SPECIAL_TOKENS, PAD_IDX, UNK_IDX, BOS_IDX,
+                                  EOS_IDX, SEP_IDX, MASK_FILL_VALUE, ROPE_BASE)
+    from models.data_utils import Vocabulary, BaseTokenizer
+    v = Vocabulary()
+    assert v.pad_idx == PAD_IDX and v.unk_idx == UNK_IDX and v.bos_idx == BOS_IDX
+    assert v.eos_idx == EOS_IDX and v.sep_idx == SEP_IDX
+    assert list(v.special_tokens) == list(SPECIAL_TOKENS)
+    t = BaseTokenizer()
+    assert t.pad_idx == PAD_IDX and t.eos_idx == EOS_IDX and t.sep_idx == SEP_IDX
+    assert list(t.special_tokens) == list(SPECIAL_TOKENS)
+    # 魔数常量值正确
+    assert MASK_FILL_VALUE == -1e9
+    assert ROPE_BASE == 10000.0
+
