@@ -145,11 +145,15 @@ class SlidingWindowCausalSelfAttention(nn.Module):
         else:
             raise TypeError(f"set_enhancements_active 期望 bool 或 dict，收到 {type(spec)}")
 
-    def _alibi_bias(self, Tq: int, Tkv: int, device: torch.device, start_pos: int = 0) -> Optional[torch.Tensor]:
+    def _alibi_bias(self, Tq: int, Tkv: int, device: torch.device, start_pos: int = 0,
+                    mem_cols: int = 0) -> Optional[torch.Tensor]:
         """ALiBi 线性位置偏置：(1, H, Tq, Tkv)，bias[h,i,j] = -m_h * |i-j|。
 
         start_pos 为增量解码时当前窗口首 token 的绝对位置，必须传入，
         否则缓存路径会把每个查询当成序列第 0 位、造成训练-推理位置偏移。
+
+        mem_cols：记忆列（前 mem_cols 列）是位置无关的压缩历史，不受位置距离偏置影响；
+        显式清零，避免生成时 start_pos 增长使记忆列被强负偏置逐步压制（训练-推理不一致）。
         """
         if not self.alibi:
             return None
@@ -158,6 +162,9 @@ class SlidingWindowCausalSelfAttention(nn.Module):
         dist = (qpos - kpos).abs().to(device)
         # slopes: (H,) -> (1,H,1,1)，乘以距离 -> (1,H,Tq,Tkv)
         bias = -self.alibi_slopes.view(1, self.num_heads, 1, 1).to(device) * dist.unsqueeze(0).unsqueeze(0)
+        if mem_cols > 0:
+            bias = bias.clone()
+            bias[..., :mem_cols] = 0
         return bias
 
     def _full_retrieval_bias(self, q: torch.Tensor, k_full: torch.Tensor, Treal: int, mem_cols: int,
@@ -171,6 +178,10 @@ class SlidingWindowCausalSelfAttention(nn.Module):
         k_real = k_full[:, :, mem_cols:mem_cols + Treal, :]  # (B,H,Treal,D)
         rlogits = torch.einsum('bhqd,bhkd->bhqk', q, k_real)  # (B,H,Tq,Treal)
         if gate is not None:
+            # 与 inject_memory 的 mem_bias 一致：retrieval_gate 经 sigmoid→(0,1) 软门控，
+            # 不能把原始 Parameter（含 0 初始化）直接乘（会令全上下文检索偏置整体清零、与
+            # 记忆段偏置语义/尺度脱节）。
+            gate = torch.sigmoid(gate)
             rlogits = rlogits * gate
         # 局部窗口恒保留：对每个 query q，保留其因果窗口 [q-window, q] 内的 key 位置，
         # 防止这些本应可见的位置被 top-k 稀疏误丢。原实现仅保留全局末尾 window+1 个位置，
@@ -182,8 +193,13 @@ class SlidingWindowCausalSelfAttention(nn.Module):
             kpos = torch.arange(Treal, device=device).unsqueeze(0)  # (1, Treal)
             keep = ((qpos_q - kpos) <= self.window) & (kpos <= qpos_q)  # (Tq, Treal)
             rlogits = rlogits + keep.unsqueeze(0).unsqueeze(0).float() * 1e9
-        # 因果：未来位置本就被 attn_mask 屏蔽，这里也压到 -inf 不参与检索
-        causal = torch.triu(torch.ones(Treal, Treal, dtype=torch.bool, device=device), diagonal=1)
+        # 因果：未来位置本就被 attn_mask 屏蔽，这里也压到 -inf 不参与检索。
+        # 注意因果掩码须是 (Tq, Treal) 的逐查询掩码（query i 只看 key j<=i），不能写成
+        # (Treal,Treal) 的方阵——当 Tq≠Treal（如增量/不同长度）会形状不符崩溃；统一用
+        # qpos/kpos 构造与上方 keep 掩码同源，避免维度假设。
+        qpos_q = torch.arange(q.size(2), device=device).unsqueeze(1)  # (Tq, 1)
+        kpos_r = torch.arange(Treal, device=device).unsqueeze(0)      # (1, Treal)
+        causal = (kpos_r > qpos_q)                                    # (Tq, Treal)
         rlogits = rlogits.masked_fill(causal.unsqueeze(0).unsqueeze(0), self.mask_fill_value)
         # top-k 稀疏（保留最相关 k 个），余下压 -inf
         k_keep = max(1, min(self.retrieval_topk, Treal))
@@ -262,13 +278,17 @@ class SlidingWindowCausalSelfAttention(nn.Module):
             # 记忆槽位置在窗口 KV 之前（seq 起点之前），永远不被因果遮蔽，
             # 但也不参与"未来"泄露：记忆是历史压缩，视为已发生，不施加 causal 惩罚
             if self.rel_bias:
+                # qpos/kpos 必须在本作用域构造（非缓存路径它们在 _build_causal_window_mask
+                # 内，缓存在 attend 作用域外不可见）；增量解码 qpos 从 start_pos 起。
+                qpos = torch.arange(start_pos, start_pos + Tq, device=dev).unsqueeze(1)
+                kpos = torch.arange(0, Tkv, device=dev).unsqueeze(0)
                 idx = (qpos - kpos + Tkv - 1).clamp(0, 2 * self.max_seq_length - 1)
                 attn_mask = attn_mask + self.rel_bias_table[:, idx].unsqueeze(0)
             if mem_bias is not None:
                 # mem_bias: (B,H,Tq,mem_cols)，右侧补零到 Tkv 再与 attn_mask 广播相加
                 padded = torch.nn.functional.pad(mem_bias, (0, Tkv - mem_cols))
                 attn_mask = attn_mask + padded
-            alibi_b = self._alibi_bias(Tq, Tkv, q.device, start_pos)
+            alibi_b = self._alibi_bias(Tq, Tkv, dev, start_pos, mem_cols=mem_cols)
             if alibi_b is not None:
                 attn_mask = attn_mask + alibi_b
             # 全上下文检索：inject_memory 已统一算好 rbias_full（cache 与全量路径同源），
@@ -299,12 +319,20 @@ class SlidingWindowCausalSelfAttention(nn.Module):
             base = self._build_causal_window_mask(T, Tkv, mem_cols, dev, 0)
             base = base if base is not None else torch.zeros(1, 1, T, Tkv, device=dev)
             if self.rel_bias:
-                # 绝对位置相对偏置表（rel_bias 模型仅在训练全量路径使用，start_pos==0）
-                base = base + (self._mask.float() * self.mask_fill_value)
+                # 绝对位置相对偏置表（rel_bias 路径必须显式带因果掩码，不能退回 is_causal 快捷）。
+                # 注意 KV 长度 Tkv = T + mem_cols（记忆列已拼到前面），self._mask 是 (T,T) 与
+                # base (1,1,T,Tkv) 维度不符（记忆开启时越界崩溃），故此处直接用 _build_causal_window_mask
+                # 构造含记忆列的基础掩码（记忆列恒 0，全局可检索），再叠加相对偏置表。
+                causal_base = self._build_causal_window_mask(T, Tkv, mem_cols, dev, 0)
+                if causal_base is None:
+                    # 纯因果（无窗口/记忆/alibi）：显式构造因果掩码，保证 rel_bias 开启时仍有因果
+                    qp = torch.arange(0, T, device=dev).unsqueeze(1)
+                    kp = torch.arange(0, Tkv, device=dev).unsqueeze(0)
+                    causal_base = ((kp > qp).float() * self.mask_fill_value).unsqueeze(0).unsqueeze(0)
                 idx = (torch.arange(T, device=dev).unsqueeze(1)
                        - torch.arange(Tkv, device=dev).unsqueeze(0)
                        + Tkv - 1).clamp(0, 2 * self.max_seq_length - 1)
-                base = base + self.rel_bias_table[:, idx].unsqueeze(0)
+                base = causal_base + self.rel_bias_table[:, idx].unsqueeze(0)
             self._bias_key = cache_key
             self._bias_cache = base
         attn_mask = self._bias_cache
@@ -312,7 +340,7 @@ class SlidingWindowCausalSelfAttention(nn.Module):
             # mem_bias: (B,H,T,mem_cols)，右侧补零到 Tkv 再与 attn_mask 广播相加
             padded = torch.nn.functional.pad(mem_bias, (0, Tkv - mem_cols))  # (B,H,T,Tkv)
             attn_mask = attn_mask + padded
-        alibi_b = self._alibi_bias(T, Tkv, dev, start_pos)
+        alibi_b = self._alibi_bias(T, Tkv, dev, start_pos, mem_cols=mem_cols)
         if alibi_b is not None:
             attn_mask = attn_mask + alibi_b
         # 全上下文检索：inject_memory 已统一算好 rbias_full（与 cache 路径同源一致）
@@ -619,9 +647,13 @@ class MambaSSM(nn.Module):
         # Standard parallel prefix scan (Hillis-Steele) assuming h_0 = 0
         offset = 1
         while offset < L:
-            # 左移 offset：位置 i 取 i-offset（越界填单位元 A=1, B=0）
-            A_prev = torch.cat([torch.ones_like(A[:, :offset]), A[:, :-offset]], dim=1)
-            B_prev = torch.cat([torch.zeros_like(B[:, :offset]), B[:, :-offset]], dim=1)
+            # 左移 offset：位置 i 取 i-offset（越界填单位元 A=1, B=0）。
+            # 用 roll + 单位元填充替代 torch.cat（省去 ones_like/zeros_like 前缀临时张量
+            # 的整 (B,L,d_inner,d_state) 分配；结果与 cat 版逐位相同，半群结合律不变）。
+            A_prev = A.roll(offset, dims=1)
+            A_prev[:, :offset] = 1.0
+            B_prev = B.roll(offset, dims=1)
+            B_prev[:, :offset] = 0.0
             A_new = A_prev * A
             B_new = A * B_prev + B
             A, B = A_new, B_new
