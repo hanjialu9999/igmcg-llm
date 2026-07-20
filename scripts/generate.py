@@ -13,7 +13,6 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from models.transformer import TransformerModel, apply_repetition_penalty, sample_next_token, _decode_one_step
-from models.data_utils import Vocabulary
 from models.config_loader import load_vocab
 from models.device import get_device
 from models.checkpoint import load_model, safe_torch_load

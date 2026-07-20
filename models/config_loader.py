@@ -7,7 +7,6 @@ from typing import Any, Dict, Optional
 import torch
 import yaml
 
-from models.data_utils import Vocabulary
 from models.transformer import TransformerModel
 from models.constants import MASK_FILL_VALUE, ROPE_BASE
 
@@ -130,38 +129,33 @@ def build_model(config: Dict[str, Any], device: Optional[torch.device] = None,
     return model
 
 
-def load_vocab(vocab_path: str = 'checkpoints/vocab.json') -> Vocabulary:
-    """Load a Vocabulary object from a previously saved vocab.json."""
+def load_vocab(vocab_path: str = 'checkpoints/vocab.json') -> 'BaseTokenizer':
+    """Load a BaseTokenizer (CharTokenizer / BPETokenizer) from a saved vocab.json.
+
+    词表 JSON 须带 `char`/`bpe` 标志（build_char_vocab.py / build_bpe_vocab.py /
+    save_final_model 均已写出）；缺标志时按字符级 CharTokenizer 重建，避免旧双轨
+    残留的 Vocabulary 分支再被使用（统一为单一 BaseTokenizer 系）。
+    """
+    from models.data_utils import BPETokenizer, CharTokenizer
     path = Path(vocab_path)
     if not path.is_absolute():
         path = PROJECT_ROOT / path
     with open(path, 'r', encoding='utf-8') as f:
         vocab_data = json.load(f)
 
-    if vocab_data.get('bpe') or vocab_data.get('char'):
-        # BPE / 字符级词表：用 BPETokenizer 或 CharTokenizer 重建
-        from models.data_utils import BPETokenizer, CharTokenizer
-        if vocab_data.get('char'):
-            vocab = CharTokenizer()
-        else:
-            vocab = BPETokenizer()
-        vocab.word2idx = vocab_data['word2idx']
-        vocab.idx2word = {int(k): v for k, v in vocab_data['idx2word'].items()}
-        vocab.merges = [tuple(m) for m in vocab_data.get('merges', [])]
-        vocab.special_tokens = vocab_data.get('special_tokens', vocab.special_tokens)
-        # 重建 byte_tokens（用于 decode 还原字节级 token）
-        vocab.byte_tokens = [f'{BPETokenizer.BYTE_PREFIX}{b}' for b in range(256)]
-        vocab.vocab_size = len(vocab.word2idx)
-        vocab._symbol_cap = vocab.vocab_size - len(vocab.special_tokens) - 256
-        return vocab
-
-    vocab = Vocabulary()
+    if vocab_data.get('char'):
+        vocab = CharTokenizer()
+    else:
+        # 默认按 BPE 路径（含缺标志的情况）重建，char/bpe 统一走 BaseTokenizer
+        vocab = BPETokenizer()
     vocab.word2idx = vocab_data['word2idx']
     vocab.idx2word = {int(k): v for k, v in vocab_data['idx2word'].items()}
-    # 恢复 special_tokens（save_final_model 写出；旧 vocab.json 无此键则用默认）
-    _st = vocab_data.get('special_tokens')
-    if _st is not None:
-        vocab.special_tokens = list(_st)
+    vocab.merges = [tuple(m) for m in vocab_data.get('merges', [])]
+    vocab.special_tokens = vocab_data.get('special_tokens', vocab.special_tokens)
+    # 重建 byte_tokens（用于 decode 还原字节级 token）
+    vocab.byte_tokens = [f'{BPETokenizer.BYTE_PREFIX}{b}' for b in range(256)]
+    vocab.vocab_size = len(vocab.word2idx)
+    vocab._symbol_cap = vocab.vocab_size - len(vocab.special_tokens) - 256
     return vocab
 
 
