@@ -170,21 +170,26 @@ class MemoryBank(nn.Module):
             self.slots = self.slots + update
             # 归一化防止数值膨胀
             self.slots = self.slots / (1e-6 + self.slots.norm(dim=-1, keepdim=True))
+        # write 已更新 slots → 立即解压并重算 K/V 缓存（而非延迟到下次 get_kv 时重算），
+        # 每个 block 调 get_kv 直接命中缓存，避免跨层重复解压（DML 小算子启动税显著）。
+        self._recompute_kv_cache()
+
+    def _recompute_kv_cache(self):
+        decomp = self.decompress(self.slots)  # (B, M, D)
+        self._kv_cache = (self.mem_k(decomp), self.mem_v(decomp))
+        self._kv_cache_slots = self.slots
 
     def get_kv(self) -> Tuple[torch.Tensor, torch.Tensor, Optional[Dict[str, Any]]]:
         """返回记忆的 K/V：(B, M, head_dim) 及检索元信息（门控/稀疏）。
 
         直接复用已对齐设备的 slots，不在热路径做 .to（避免 DML 设备别名导致的每步拷贝）。
-        slots 未变时复用缓存 K/V，避免多块重复解压（DML 小算子启动税显著）。
+        slots 未变时复用缓存 K/V（write 后已立即重算），避免多块重复解压。
         """
         if getattr(self, '_kv_cache', None) is not None and self._kv_cache_slots is self.slots:
             k, v = self._kv_cache
         else:
-            decomp = self.decompress(self.slots)  # (B, M, D)
-            k = self.mem_k(decomp)
-            v = self.mem_v(decomp)
-            self._kv_cache = (k, v)
-            self._kv_cache_slots = self.slots
+            self._recompute_kv_cache()
+            k, v = self._kv_cache
         meta = None
         if self.retrieval_enabled or self.sparse_topk > 0:
             meta = {
@@ -217,9 +222,11 @@ class MemoryBank(nn.Module):
             mem_bias: 记忆段可加偏置 (B,H,Tq,M) 或 None
         """
         mem_cols = mk.size(1)
+        # 各头共享记忆 K/V：升维到 (B,H,M,D) 供点积与拼接复用（避免重复 expand）
+        mk_e = mk.unsqueeze(1).expand(-1, q.size(1), -1, -1)
+        mv_e = mv.unsqueeze(1).expand(-1, q.size(1), -1, -1)
         # 记忆查询相似度（每槽点积）：(B,H,Tq,M)，廉价（M 小）
-        mlogits = torch.einsum('bhqd,bhmd->bhqm', q,
-                               mk.unsqueeze(1).expand(-1, q.size(1), -1, -1))
+        mlogits = torch.einsum('bhqd,bhmd->bhqm', q, mk_e)
         if meta is not None:
             # 仅当开启检索/稀疏时才加偏置；否则记忆仅作为全局 KV 参与注意力（不加额外 bias）
             if meta.get('retrieval_gate') is not None:
@@ -236,8 +243,6 @@ class MemoryBank(nn.Module):
         mem_bias = mlogits  # (B,H,Tq,M)，作为 scores 的可加偏置
 
         # 记忆拼到 K/V 之前（记忆在前，窗口/全量在后）；各头共享记忆 K/V
-        mk_e = mk.unsqueeze(1).expand(-1, q.size(1), -1, -1)
-        mv_e = mv.unsqueeze(1).expand(-1, q.size(1), -1, -1)
         k_aug = torch.cat([mk_e, k], dim=2)
         v_aug = torch.cat([mv_e, v], dim=2)
         return k_aug, v_aug, mem_bias
@@ -520,6 +525,11 @@ class SlidingWindowCausalSelfAttention(nn.Module):
         # 避免每步每头重复 arange/torch.zeros/cat 造成的海量分配与 DML 拷贝开销
         self._bias_key: Optional[tuple] = None
         self._bias_cache: Optional[torch.Tensor] = None
+        # 增量解码（cache 路径）纯因果掩码缓存：掩码仅依赖 (Tq, Tkv)，确定性，
+        # 逐 token 解码时 Tkv 单调增长，缓存避免每步 arange + (1,1,Tq,Tkv) 张量分配
+        # （DML 小算子启动税敏感）。仅 attn_mask 为 None（无窗口/记忆/alibi/rel_bias）时命中。
+        self._causal_key: Optional[tuple] = None
+        self._causal_cache: Optional[torch.Tensor] = None
 
     def _sync_window(self):
         """阶段6：从可学习 log_window 重算实际窗口尺寸（每步前向同步，训练时随参数变化）。
@@ -684,10 +694,7 @@ class SlidingWindowCausalSelfAttention(nn.Module):
             # cache 路径始终需要显式掩码（单步/整段解码都靠它施加因果，不能用 is_causal 快捷）：
             # 纯因果（无窗口/记忆/alibi）时退化为主序列因果掩码。
             if attn_mask is None:
-                qpos = torch.arange(start_pos, start_pos + Tq, device=dev).unsqueeze(1)
-                kpos = torch.arange(0, Tkv, device=dev).unsqueeze(0)
-                causal = (kpos > qpos).float() * self.mask_fill_value
-                attn_mask = causal.unsqueeze(0).unsqueeze(0)  # (1,1,Tq,Tkv)
+                attn_mask = self._cached_causal_mask(Tq, Tkv, dev, start_pos)
             # 记忆槽位置在窗口 KV 之前（seq 起点之前），永远不被因果遮蔽，
             # 但也不参与"未来"泄露：记忆是历史压缩，视为已发生，不施加 causal 惩罚
             if self.rel_bias:
@@ -760,6 +767,24 @@ class SlidingWindowCausalSelfAttention(nn.Module):
             out = self._manual_attention(q, k, v, attn_mask)
         out = out.transpose(1, 2).reshape(B, T, self.num_heads * self.head_dim)
         return self.proj(out), None
+
+    def _cached_causal_mask(self, Tq: int, Tkv: int, dev: torch.device,
+                             start_pos: int) -> torch.Tensor:
+        """纯因果（无窗口/记忆/alibi/rel_bias）增量解码掩码 (1,1,Tq,Tkv)，带缓存。
+
+        掩码仅依赖 (Tq, Tkv)（确定性），逐 token 解码 Tkv 单调增长；缓存避免每步
+        重建 arange + (1,1,Tq,Tkv) 张量（DML 小算子启动税敏感）。语义与原始
+        `(kpos > qpos) * mask_fill` 完全一致。"""
+        key = (Tq, Tkv)
+        if self._causal_key == key and self._causal_cache is not None \
+                and self._causal_cache.device == dev:
+            return self._causal_cache
+        qpos = torch.arange(start_pos, start_pos + Tq, device=dev).unsqueeze(1)
+        kpos = torch.arange(0, Tkv, device=dev).unsqueeze(0)
+        causal = (kpos > qpos).float() * self.mask_fill_value
+        self._causal_cache = causal.unsqueeze(0).unsqueeze(0)  # (1,1,Tq,Tkv)
+        self._causal_key = key
+        return self._causal_cache
 
     def _build_causal_window_mask(self, T: int, Tkv: int, mem_cols: int,
                                    dev: torch.device, start_pos: int) -> Optional[torch.Tensor]:
@@ -1745,13 +1770,11 @@ class TransformerModel(nn.Module):
         with torch.no_grad():
             past = None
             cur_pos = 0
-            if use_cache:
-                input_ids = torch.tensor([generated], dtype=torch.long, device=device)
-                logits, past = self.forward(input_ids, past_key_values=None, use_cache=True)
-                cur_pos = input_ids.size(1)
-            else:
-                input_ids = torch.tensor([generated], dtype=torch.long, device=device)
-                logits = self.forward(input_ids)
+            # use_cache 固定为 True（增量解码），无 cache 的每步全量重算分支已删除（死代码、
+            # 且极慢易错）；如未来需要无缓存生成，应单独实现而非复用此循环。
+            input_ids = torch.tensor([generated], dtype=torch.long, device=device)
+            logits, past = self.forward(input_ids, past_key_values=None, use_cache=True)
+            cur_pos = input_ids.size(1)
 
             for _ in range(max_length):
                 if cur_pos >= max_seq_length:
@@ -1762,11 +1785,6 @@ class TransformerModel(nn.Module):
                 generated.append(next_token)
                 if next_token == eos_token_id and len(generated) - len(token_ids) >= min_length:
                     break
-                if use_cache:
-                    past, logits, cur_pos = _decode_one_step(
-                        self, next_token, past, cur_pos, device=device, use_cache=True)
-                else:
-                    ctx = generated[-max_seq_length:] if len(generated) > max_seq_length else generated
-                    input_ids = torch.tensor([ctx], dtype=torch.long, device=device)
-                    logits = self.forward(input_ids)
+                past, logits, cur_pos = _decode_one_step(
+                    self, next_token, past, cur_pos, device=device, use_cache=True)
         return generated

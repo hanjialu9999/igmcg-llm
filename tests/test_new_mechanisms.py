@@ -1079,3 +1079,28 @@ def test_attn_linear_rope_config_consistent():
     assert hasattr(blk.attn.rope, 'rope_log_scale')
     assert hasattr(blk.linear_attn.rope, 'rope_log_scale')
 
+
+def test_cached_causal_mask_matches_inline():
+    # §优化#1 回归：增量解码纯因果掩码缓存须与原始 arange 公式数值一致，
+    # 且重复调用（cache 命中）返回同一形状/值，不影响注意力输出。
+    m = _small(num_layers=1)
+    attn = m.blocks[0].attn
+    dev = torch.device('cpu')
+    Tq, Tkv, start_pos = 1, 13, 12
+    cached = attn._cached_causal_mask(Tq, Tkv, dev, start_pos)
+    # 原始公式复算
+    qpos = torch.arange(start_pos, start_pos + Tq).unsqueeze(1).float()
+    kpos = torch.arange(0, Tkv).unsqueeze(0).float()
+    expected = (kpos > qpos).float() * attn.mask_fill_value
+    expected = expected.unsqueeze(0).unsqueeze(0)
+    assert torch.allclose(cached, expected)
+    # 缓存命中：再次调用返回同形状同值（不重建）
+    cached2 = attn._cached_causal_mask(Tq, Tkv, dev, start_pos)
+    assert cached2.shape == cached.shape
+    assert torch.allclose(cached2, cached)
+    # 生成确定性：多次 generate 走 cache 命中路径，输出一致（覆盖掩码缓存不污染结果）
+    m.eval()
+    out1 = m.generate([1, 2, 3], max_length=8, device='cpu', temperature=1.0, top_k=0)
+    out2 = m.generate([1, 2, 3], max_length=8, device='cpu', temperature=1.0, top_k=0)
+    assert out1 == out2
+
