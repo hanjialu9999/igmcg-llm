@@ -144,31 +144,49 @@ class NGramModel:
     def logprob_orders_matrix(self, ids: torch.Tensor, device) -> torch.Tensor:
         """泛化版：返回逐阶 n-gram log 概率，shape (B, T, V, max_order)。
         供 TransformerModel 用可学 order 权重做混合（模型自选各阶占比）。
-        上下文窗口长度 = max_order-1（如 max_order=10 → 9 token 上下文）。"""
+        上下文窗口长度 = max_order-1（如 max_order=10 → 9 token 上下文）。
+
+        性能：训练期 batch 内各位置的上下文大量重复，逐 (b,t) 调
+        `_compute_logprob_orders` + 设备小 kernel 在 DML 上极慢。故改为
+        先收集全部上下文并去重，仅对【唯一上下文】各算一次（命中 `_orders_cache`
+        则免算），再用 `index_select` 一次性批量搬回 (B,T,V,K)。数值与逐位置
+        循环完全一致（同一 `_compute_logprob_orders` + 同一缓存键）。"""
         if ids.dim() == 1:
             ids = ids.unsqueeze(0)
         B, T = ids.shape
         K = self.max_order
         V = self.vocab_size
-        out = torch.empty(B, T, V, K, device=device)
         pad = self.vocab.pad_idx if hasattr(self.vocab, 'pad_idx') else 0
         ctx_len = max(1, K - 1)  # 上下文窗口长度
+        # 1) 收集每个位置的上下文键，并去重
+        ctx_keys: List[Tuple[int, ...]] = []
+        pos_to_key: List[int] = []
+        uniq: Dict[Tuple[int, ...], int] = {}
         for b in range(B):
             seq = ids[b].tolist()
-            # 左填充 ctx_len 个 pad，保证每个位置都有足够上下文
             padded = [pad] * ctx_len + seq
             for t in range(T):
-                # 位置 t 的上下文窗口 = padded[t : t+ctx_len]
-                ctx_tokens = padded[t: t + ctx_len]
-                ck = tuple(ctx_tokens)
-                if ck in self._orders_cache:
-                    out[b, t] = self._orders_cache[ck].to(device)
-                else:
-                    v = self._compute_logprob_orders(ctx_tokens, V, device)
-                    if len(self._orders_cache) > self._orders_cache_max:
-                        self._orders_cache.clear()
-                    self._orders_cache[ck] = v.cpu()
-                    out[b, t] = v
+                ck = tuple(padded[t: t + ctx_len])
+                pos_to_key.append(ck)
+                if ck not in uniq:
+                    uniq[ck] = len(ctx_keys)
+                    ctx_keys.append(ck)
+        # 2) 仅对唯一上下文计算（命中缓存则免算），结果堆叠为 (U, V, K) 后搬设备
+        uniq_vecs = []
+        for ck in ctx_keys:
+            if ck in self._orders_cache:
+                uniq_vecs.append(self._orders_cache[ck].to(device))
+            else:
+                v = self._compute_logprob_orders(ck, V, device)  # (V, K) 已在 device
+                if len(self._orders_cache) > self._orders_cache_max:
+                    self._orders_cache.clear()
+                self._orders_cache[ck] = v.cpu()
+                uniq_vecs.append(v)
+        # 3) 批量拼回 (B, T, V, K)：index_select 替代逐位置赋值
+        stacked = torch.stack(uniq_vecs, dim=0)              # (U, V, K)
+        key_idx = torch.tensor([uniq[ck] for ck in pos_to_key],
+                               dtype=torch.long, device=device)
+        out = stacked[key_idx].view(B, T, V, K)             # (B, T, V, K)
         return out
 
     def logprob_orders_incremental(self, ctx2: torch.Tensor, new_ids: torch.Tensor, device):
