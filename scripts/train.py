@@ -27,7 +27,7 @@ sys.path.insert(0, str(project_root))
 
 from models.transformer import TransformerModel
 from models.data_utils import load_data, create_dataloader, split_dataset
-from models.config_loader import build_model
+from models.config_loader import build_model, load_config
 from models.device import get_device, apply_cpu_threads
 from models.utils import (save_checkpoint, cleanup_old_checkpoints,
                               backup_existing_checkpoints, save_final_model, cli_guard,
@@ -65,13 +65,6 @@ class AverageMeter:
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
-
-
-def load_config(config_path):
-    """Load configuration from YAML file"""
-    with open(config_path, 'r', encoding='utf-8') as f:
-        config = yaml.safe_load(f)
-    return config
 
 
 def set_seed(seed):
