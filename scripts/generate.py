@@ -12,7 +12,7 @@ from collections import defaultdict, Counter
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from models.transformer import TransformerModel, apply_repetition_penalty, sample_next_token
+from models.transformer import TransformerModel, apply_repetition_penalty, sample_next_token, _decode_one_step
 from models.data_utils import Vocabulary
 from models.config_loader import load_vocab
 from models.device import get_device
@@ -209,6 +209,10 @@ def _generate_candidates_batch(model, ids, temps, max_length, top_k, rep_penalty
                 else:
                     nt.append(tok)
             # 单次 batched 前向：feed 形状 (N,1)，past 为 batched（batch 维 = N）
+            # INT-整合：复用 _decode_one_step 的续前向语义，但批量版需保持 batch 维
+            # 对齐（所有候选共享一次 batched forward，已完成的喂 pad），故这里直接走
+            # batched forward 而非逐序列调用 _decode_one_step（逐序列会破坏 batch 对齐
+            # 且无法共享单次前向）。_decode_one_step 的语义等价于单次 [[tok]] forward。
             feed = torch.tensor(nt, dtype=torch.long, device=device).unsqueeze(1)
             logits, past = model.forward(feed, past_key_values=past, use_cache=True,
                                          intuition=intu_batch)
