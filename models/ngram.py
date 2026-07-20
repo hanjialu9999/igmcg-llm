@@ -13,10 +13,16 @@ class NGramModel:
     模型侧用可学 order_logits 做各阶加权混合（阶段8.7，替代固定的 l1/l2/l3 插值），
     本类只负责构建计数表与查表（logprob_orders_* 系列）。
 
-    统一事实来源：所有查表最终经 `_compute_logprob_orders` + `_orders_cache` 单缓存完成，
-    旧接口 `logprob_vector` / `logprob_matrix`（uni/bi/tri 插值）退化为其薄封装，
-    消除原 `_vec_for_ctx` / `_orders_cache` 双缓存与 `_compute_logprob` / `_compute_logprob_orders`
-    双插值实现的漂移风险。
+    统一事实来源（`logprob_orders_*` 系列）：训练期可学融合走 `_compute_logprob_orders`
+    + `_orders_cache` 单缓存，逐阶独立返回（各阶仅对自己与 unigram 用顶权混合），
+    由可学 `ngram_order_logits` 加权。
+
+    旧接口 `logprob_vector` / `logprob_matrix`（uni/bi/tri 固定插值）是**生产解码路径**
+    （scripts/generate.py 的 `--ngram` 固定先验、transformer.py:303、_ngram_coherence 评分），
+    经 `_vec_for_ctx` 实现**独立顺序嵌套插值**（uni→bi→tri 依次混合），与 orders 路径的
+    逐阶独立插值数学上**不等价**（双阶命中时 max abs diff ≈ 1e-3，见 `_vec_for_ctx` 注释）。
+    二者语义分离是有意的（固定 CLI 先验 vs 可学融合），故保留 `_vec_for_ctx` 独立实现，
+    不合并以消除“双插值漂移”——反而明确标注其差异，避免误合并改变解码分布。
     """
 
     def __init__(self, vocab, corpus_file, max_order: int = 10, smoothing: float = 1.0,
@@ -187,7 +193,30 @@ class NGramModel:
     # ------------------------------------------------------------------
     def _vec_for_ctx(self, w2, w1, device):
         """上下文 (w2,w1) 下的 log 概率向量 (V,)，按上下文缓存。
-        统一委托给 _compute_logprob_orders（order=3 → uni/bi/tri 插值）。"""
+
+        **有意保留的独立插值路径（非 `_compute_logprob_orders` 的薄封装）。**
+
+        §6.1 去重调查发现本函数与 `_compute_logprob_orders` 在数学上**不等价**，
+        不可为去重而改写，否则会无声改变生产解码分布（scripts/generate.py 的
+        `--ngram` 固定先验、transformer.py:303 的 `ngram_weight*ngram_fn`、
+        `_ngram_coherence` 评分均走此路）。
+
+        差异来源（数值证据，max_order=10, smoothing=1.0, l1/l2/l3=0.1/0.3/0.6）：
+        - 双阶命中（bi+tri 都命中上下文）时，两路对 V 向量 max abs diff ≈ 1.4e-3
+          （bi-only 情形 ≈ 1.0e-2；uni-only ≈ 7e-9，因退化到 unigram 才一致）。
+        - 混合方式不同：
+            * 本函数：从 unigram 起**顺序嵌套混合**——先 `vec=0.7*uni+0.3*p_bi`，
+              再 `vec=0.4*vec+0.6*p_tri`，即 `0.6*p_tri+0.28*uni+0.12*p_bi`，
+              bigram 信息会“漏进” trigram 结果。
+            * `_compute_logprob_orders`：每个 order 阶**独立**用其顶权 `ws[-1]`
+              仅与该阶对 unigram 混合（tri 列 = `0.6*p_tri+0.4*uni`），各阶并列
+              返回，由可学 `ngram_order_logits` 做融合（服务训练期可学插值），
+              而非固定 l1/l2/l3 顺序混合。
+        - 语义分离是有意的：orders 路径服务**可学融合**；vector 路径服务**固定 CLI
+          先验**。两者权重定义/混合方式/归一化位置均不同，强行统一会漂移解码分布。
+
+        因此保留独立实现，仅在此明确标注，杜绝后续误判为“重复可合并代码”。
+        """
         cache_key = (w2, w1)
         if cache_key in self._logprob_cache:
             return self._logprob_cache[cache_key].to(device)
