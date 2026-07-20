@@ -36,7 +36,8 @@ class TextDataset(Dataset):
         # “GPU 不响应更多命令 / device reset”导致 backward 崩溃。
         L = max_seq_length + 1
         pad = self.vocab.pad_idx
-        arr = np.zeros((len(texts), L), dtype=np.int16)
+        # int32 以容纳 vocab_size > 32767 的词表（int16 上限 32767，超界会回绕静默损坏 token id）。
+        arr = np.zeros((len(texts), L), dtype=np.int32)
         for i, text in enumerate(texts):
             tokens = self.vocab.encode(text)
             n = len(tokens)
@@ -45,7 +46,7 @@ class TextDataset(Dataset):
             elif n < L:
                 tokens = tokens + [pad] * (L - n)
             arr[i] = tokens
-        self.tokens = torch.from_numpy(arr)  # (N, L) int16，取用时转 long
+        self.tokens = torch.from_numpy(arr)  # (N, L) int32，取用时转 long
         self.texts = None  # 释放原始字符串，回收内存
         
     def _preprocess_texts(self, texts: List[str]) -> List[str]:

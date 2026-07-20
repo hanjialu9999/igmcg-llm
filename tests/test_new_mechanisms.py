@@ -480,6 +480,67 @@ def test_ngram_fusion_incremental_matches_full():
     assert diff < 1e-4, f"增量解码 n-gram 上下文错误（退化 unigram）：max_diff={diff}"
 
 
+def test_ngram_fusion_fluency_requires_log_softmax():
+    """回归：融合开启时 forward 返回 fused = log_softmax(z)+prior，NOT 已归一化的对数概率
+    （prior 在 log_softmax 之后相加，被逐行常数偏移）。故 _fluency_batch 必须对 forward 输出
+    再 log_softmax 才得到正确组合分布 log_softmax(z+prior)；移除该 log_softmax 反而会令流畅度
+    被逐行常数偏移、候选排序失真（"双重归一化"假设已证伪）。
+    本测试锁死：F.log_softmax(forward_out) 是合法分布（logsumexp≈0）。"""
+    v, ng = _small_ngram()
+    V = len(v)
+    m = _small(vocab_size=V, ngram_fusion=True, ngram_model=ng)
+    m.eval()
+    ids = torch.randint(0, V, (2, 10))
+    with torch.no_grad():
+        out = m(ids)  # fused = log_softmax(z)+prior
+        lp = F.log_softmax(out, dim=-1)
+    lse = torch.logsumexp(lp, dim=-1)
+    assert lse.abs().max().item() < 1e-2, \
+        f"F.log_softmax(forward_out) 非合法分布：logsumexp={lse.abs().max().item()}"
+
+
+def test_fluency_batch_applies_log_softmax():
+    """回归：_fluency_batch 必须对 forward 输出做 F.log_softmax（不论融合开/关），
+    得到正确的逐 token 对数概率均值。验证融合开启与关闭两条路径行为一致。"""
+    from scripts.generate import _fluency_batch
+    # 融合开启
+    v, ng = _small_ngram()
+    V = len(v)
+    m_on = _small(vocab_size=V, ngram_fusion=True, ngram_model=ng)
+    m_on.eval()
+    pad_id = v.pad_idx
+    seqs = [[5, 6, 7, 8], [9, 10, 11]]
+    flus = _fluency_batch(m_on, seqs, 'cpu', pad_id)
+    with torch.no_grad():
+        batch = torch.full((2, 4), pad_id, dtype=torch.long)
+        batch[0] = torch.tensor(seqs[0])
+        batch[1, :3] = torch.tensor(seqs[1])
+        out = m_on(batch)
+    expected = []
+    for n, s in enumerate(seqs):
+        lp = F.log_softmax(out[n, :len(s) - 1].float(), dim=-1)
+        tgt = torch.tensor(s[1:]).unsqueeze(1)
+        expected.append(lp.gather(1, tgt).mean().item())
+    for got, exp in zip(flus, expected):
+        assert abs(got - exp) < 1e-4, f"融合路径流畅度错误：got={got}, exp={exp}"
+    # 融合关闭
+    m_off = _small(vocab_size=200)
+    m_off.eval()
+    flus_off = _fluency_batch(m_off, [[3, 4, 5], [6, 7]], 'cpu', 0)
+    with torch.no_grad():
+        batch = torch.full((2, 3), 0, dtype=torch.long)
+        batch[0] = torch.tensor([3, 4, 5])
+        batch[1, :2] = torch.tensor([6, 7])
+        out = m_off(batch)
+    exp_off = []
+    for n, s in enumerate([[3, 4, 5], [6, 7]]):
+        lp = F.log_softmax(out[n, :len(s) - 1].float(), dim=-1)
+        tgt = torch.tensor(s[1:]).unsqueeze(1)
+        exp_off.append(lp.gather(1, tgt).mean().item())
+    for got, exp in zip(flus_off, exp_off):
+        assert abs(got - exp) < 1e-4, f"非融合路径流畅度错误：got={got}, exp={exp}"
+
+
 def test_ngram_orders_incremental_matches_full():
     """阶段8.8：logprob_orders_incremental（滚动增量查表）必须与 logprob_orders_matrix
     （全量 ctx）逐位置完全一致（否则增量解码 n-gram 上下文错位）。"""

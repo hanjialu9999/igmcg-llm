@@ -119,6 +119,13 @@ def load_model(model_path, vocab_path, device: str = 'cpu',
     _ngram_model = build_ngram_model(vocab, model_config)
     model = build_model({'model': model_config}, device=device, ngram_model=_ngram_model)
 
+    # 词表一致性防护：模型输出词表必须覆盖加载的分词器词表大小，否则推理时 embedding /
+    # 采样会因 token id 越界崩溃（data.vocab_size 与 model.vocab_size 独立配置，须显式校验）。
+    if model_config.get('vocab_size', 0) < len(vocab):
+        raise ValueError(
+            f"model_config.vocab_size={model_config.get('vocab_size')} 小于分词器词表 "
+            f"{len(vocab)}，token id 将越界。请确认训练与推理使用同一套 vocab_size。")
+
     model.load_state_dict(checkpoint['model_state_dict'], strict=False)
     # 架构型参数（hybrid_mix / ngram_gate）缺失/多余属静默质量风险，主动告警而非 strict 吞掉。
     _arch_keys = ['hybrid_mix', 'ngram_gate']

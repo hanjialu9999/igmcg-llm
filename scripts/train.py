@@ -314,6 +314,16 @@ def main(config_path='configs/pretrain.yaml', resume=False):
     )
     print(f"Vocabulary size: {len(vocab)}")
     print(f"Dataset size: {len(dataset)}")
+
+    # 词表一致性防护：模型输出词表必须覆盖分词器实际词表大小，否则 embedding / CE 会因
+    # token id 越界崩溃或静默错乱（data.vocab_size 与 model.vocab_size 是两个独立配置键，
+    # 从不交叉校验，过去仅靠约定一致，属潜伏陷阱）。
+    _model_vocab = config['model']['vocab_size']
+    if _model_vocab < len(vocab):
+        raise ValueError(
+            f"model.vocab_size={_model_vocab} 小于分词器词表大小 {len(vocab)}，token id 将越界。"
+            f"请保证 data.vocab_size <= model.vocab_size"
+            f"（当前 data.vocab_size={config['data']['vocab_size']}）。")
     
     # Split into train/validation
     test_split = config['data'].get('test_split', 0.0)
