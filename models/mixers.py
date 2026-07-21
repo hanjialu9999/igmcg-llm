@@ -824,14 +824,15 @@ class DifferentialAttention(nn.Module):
         scores2 = torch.matmul(q2t, k2t.transpose(-2, -1)) / math.sqrt(D)
         scores1 = scores1.masked_fill(causal, self.mask_fill_value)
         scores2 = scores2.masked_fill(causal, self.mask_fill_value)
-        # 注入记忆 K/V（若有）
+        # 注入记忆 K/V（若有）—— 两组 K 都需同步增强，保持差分语义一致
         if memory_kv is not None:
             mk, mv, mem_meta = memory_kv
             k1_aug, v_aug, mem_bias = self.__class__.inject_mem(q1t, k1t, vt, mk, mv, mem_meta, self.mask_fill_value)
+            k2_aug, _, _ = self.__class__.inject_mem(q2t, k2t, vt, mk, mv, mem_meta, self.mask_fill_value)
             if mem_bias is not None:
                 scores1 = scores1 + mem_bias
                 scores2 = scores2 + mem_bias
-            k1t, vt = k1_aug, v_aug
+            k1t, k2t, vt = k1_aug, k2_aug, v_aug
         attn1 = torch.softmax(scores1, dim=-1)
         attn2 = torch.softmax(scores2, dim=-1)
         # 差分注意力
@@ -1000,7 +1001,7 @@ class SwiGLU(nn.Module):
         return self.w2(torch.nn.functional.silu(self.w1(x)) * self.w3(x))
 
 
-class MambaSSMWithCAST(nn.Module):
+class MambaSSMWithCAST(MambaSSM):
     """MambaSSM + CAST（Context-Adaptive State Transition）。
 
     核心思想：状态转移矩阵 A 由局部上下文动态调制。
@@ -1020,49 +1021,12 @@ class MambaSSMWithCAST(nn.Module):
                  a_log_init_range: Tuple[float, float] = (-1.0, 1.0),
                  D_init: float = 1.0,
                  cast_hidden: int = 32):
-        super().__init__()
-        # 复用 MambaSSM 的所有标准组件
-        d_inner = dim * d_inner_factor
-        dt_rank = dt_rank or max(1, math.ceil(dim / 16))
-        self.dim = dim
-        self.d_inner = d_inner
-        self.d_state = d_state
-        self.dt_rank = dt_rank
-        self.conv_kernel = conv_kernel
-        self.a_log_init_range = a_log_init_range
-        self.D_init = D_init
-        self.norm = RMSNorm(dim)
-        self.in_proj = nn.Linear(dim, 2 * d_inner, bias=False)
-        self.conv = nn.Conv1d(d_inner, d_inner, kernel_size=conv_kernel,
-                              padding=conv_kernel - 1, groups=d_inner, bias=False)
-        self.act = nn.SiLU()
-        self.x_proj = nn.Linear(d_inner, dt_rank + 2 * d_state, bias=False)
-        self.dt_proj = nn.Linear(dt_rank, d_inner, bias=True)
-        nn.init.constant_(self.dt_proj.bias, dt_proj_bias_init)
-        self.A_log = nn.Parameter(torch.empty(d_inner, d_state))
-        nn.init.uniform_(self.A_log, a_log_init_range[0], a_log_init_range[1])
-        self.D = nn.Parameter(torch.ones(d_inner) * D_init)
-        self.out_proj = nn.Linear(d_inner, dim, bias=False)
+        super().__init__(dim, d_state, d_inner_factor, dt_rank, conv_kernel,
+                         dt_proj_bias_init, a_log_init_range, D_init)
         # CAST 组件：从上下文推导 A_delta
-        # 统计特征：每个位置的局部窗口（均值、方差、范数）→ 投影到 (d_inner, d_state)
-        self.cast_stat_proj = nn.Linear(3, cast_hidden, bias=False)  # 3个统计量→hidden
-        self.cast_delta_proj = nn.Linear(cast_hidden, d_inner * d_state, bias=False)
+        self.cast_stat_proj = nn.Linear(3, cast_hidden, bias=False)
+        self.cast_delta_proj = nn.Linear(cast_hidden, self.d_inner * d_state, bias=False)
         nn.init.zeros_(self.cast_delta_proj.weight)  # 零初始化→初始行为等价于标准 Mamba
-        self.proper_init()
-
-    def _selective_scan(self, a, b, past_state=None):
-        """并行前缀扫描（复用模块级 _parallel_prefix_scan）。"""
-        return _parallel_prefix_scan(a, b, past_state)
-
-    def proper_init(self):
-        nn.init.xavier_uniform_(self.in_proj.weight)
-        nn.init.xavier_uniform_(self.out_proj.weight)
-        nn.init.xavier_uniform_(self.x_proj.weight)
-        nn.init.xavier_uniform_(self.dt_proj.weight)
-        nn.init.constant_(self.dt_proj.bias, 0.1)
-        nn.init.uniform_(self.A_log, *self.a_log_init_range)
-        nn.init.ones_(self.D)
-        self.D.data.mul_(self.D_init)
 
     def _compute_cast_delta(self, x: torch.Tensor) -> torch.Tensor:
         """从输入 x 的局部统计身份推导 A_delta。"""
@@ -1084,7 +1048,6 @@ class MambaSSMWithCAST(nn.Module):
         x = self.norm(x)
         xz = self.in_proj(x)
         x_in, z = xz.chunk(2, dim=-1)
-        # 因果卷积
         if past_conv_state is not None and past_conv_state.shape[0] == B and L == 1:
             conv_input = torch.cat([past_conv_state, x_in.transpose(1, 2)], dim=-1)
             x_conv = self.conv(conv_input)[:, :, self.conv_kernel - 1].unsqueeze(1)
@@ -1093,32 +1056,25 @@ class MambaSSMWithCAST(nn.Module):
             x_conv = self.conv(x_in.transpose(1, 2)).transpose(1, 2)[:, :L, :]
             present_conv_state = x_in.transpose(1, 2)[:, :, -(self.conv_kernel - 1):] if use_cache and L > 0 else None
         x_conv = self.act(x_conv)
-        # 选择性投影
         proj = self.x_proj(x_conv)
         dt = proj[:, :, :self.dt_rank]
         Bp = proj[:, :, self.dt_rank:self.dt_rank + self.d_state]
         Cp = proj[:, :, self.dt_rank + self.d_state:]
-        dt = F.softplus(self.dt_proj(dt))  # (B, L, d_inner)
+        dt = F.softplus(self.dt_proj(dt))
         # CAST：上下文调制 A
-        A_base = -torch.exp(self.A_log)  # (d_inner, d_state)
-        A_delta = self._compute_cast_delta(x_conv)  # (B, L, d_inner, d_state)
-        A_effective = A_base.unsqueeze(0).unsqueeze(0) + A_delta  # (B, L, d_inner, d_state)
-        # 离散化
-        dA = torch.exp(dt.unsqueeze(-1) * A_effective)  # (B, L, d_inner, d_state)
-        dB = dt.unsqueeze(-1) * Bp.unsqueeze(2)  # (B, L, d_inner, d_state)
-        xb = dB * x_conv.unsqueeze(-1)  # (B, L, d_inner, d_state)
-        # 选择性扫描（复用 MambaSSM 的并行前缀扫描）
-        if past_state is not None and past_state.shape[0] == B and L == 1:
-            h = past_state * dA[:, 0] + xb[:, 0]  # (B, d_inner, d_state)
-            present_state = h
-        else:
-            h = self._selective_scan(dA, xb, past_state)  # (B, L, d_inner, d_state)
-            present_state = h[:, -1] if use_cache else None
-        # 输出
-        y = (h * Cp.unsqueeze(2)).sum(-1)  # (B, L, d_inner)
+        A_base = -torch.exp(self.A_log)
+        A_delta = self._compute_cast_delta(x_conv)
+        A_effective = A_base.unsqueeze(0).unsqueeze(0) + A_delta
+        dA = torch.exp(dt.unsqueeze(-1) * A_effective)
+        xb = (dt.unsqueeze(-1) * Bp.unsqueeze(2)) * x_conv.unsqueeze(-1)
+        C = Cp
+        if past_state is not None and L == 1:
+            return self._forward_step(x, z, x_conv, dA, xb, C, past_state, use_cache, present_conv_state)
+        h = self._selective_scan(dA, xb, past_state)
+        y = (h * C.unsqueeze(2)).sum(-1)
         y = y + self.D * x_conv
-        y = y * F.silu(z)
+        y = y * self.act(z)
         y = self.out_proj(y)
         if use_cache:
-            return y, present_state, present_conv_state
-        return y, None, None
+            return y, h[:, -1, :, :], present_conv_state
+        return y, None, present_conv_state

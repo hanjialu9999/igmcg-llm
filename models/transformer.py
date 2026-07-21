@@ -648,7 +648,7 @@ class TransformerModel(nn.Module):
         nn.init.normal_(self.embedding.weight, 0, 0.02)
         # SSM 模块用更专业的初始化覆盖通用初始化
         for m in self.modules():
-            if isinstance(m, MambaSSM):
+            if type(m) is MambaSSM:
                 m.proper_init()
 
     def tie_weights(self):
