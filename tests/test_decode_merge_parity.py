@@ -549,3 +549,22 @@ def test_parallel_prefix_scan_gradient():
     loss = result.sum()
     loss.backward()
     assert a.grad is not None, "gradient should flow through _parallel_prefix_scan"
+
+
+# ─── CAST init 修复验证 ───────────────────────────────────────────────────
+
+def test_cast_ssm_uses_custom_init_range():
+    """MambaSSMWithCAST 使用自定义 a_log_init_range（非硬编码 -1,1）。"""
+    from models.mixers import MambaSSMWithCAST
+    ssm = MambaSSMWithCAST(dim=64, a_log_init_range=(-2.0, 0.0))
+    assert ssm.a_log_init_range == (-2.0, 0.0)
+    # A_log 应在 [-2, 0] 范围内
+    assert ssm.A_log.min().item() >= -2.0 - 0.01, f"A_log min={ssm.A_log.min().item()}"
+    assert ssm.A_log.max().item() <= 0.0 + 0.01, f"A_log max={ssm.A_log.max().item()}"
+
+def test_cast_ssm_uses_custom_d_init():
+    """MambaSSMWithCAST 使用自定义 D_init（非硬编码 1.0）。"""
+    from models.mixers import MambaSSMWithCAST
+    ssm = MambaSSMWithCAST(dim=64, D_init=2.5)
+    assert torch.allclose(ssm.D.data, torch.ones_like(ssm.D) * 2.5, atol=0.01), \
+        f"D={ssm.D.data.mean().item()}, expected 2.5"
