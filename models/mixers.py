@@ -315,23 +315,22 @@ class SlidingWindowCausalSelfAttention(nn.Module):
         # （基础因果/窗口掩码经 _build_causal_window_mask 与 cache 路径共用，额外1）
         cache_key = (T, Tkv, mem_cols)
         if self._bias_key != cache_key or self._bias_cache is None or self._bias_cache.device != dev:
-            base = self._build_causal_window_mask(T, Tkv, mem_cols, dev, 0)
-            base = base if base is not None else torch.zeros(1, 1, T, Tkv, device=dev)
+            raw_mask = self._build_causal_window_mask(T, Tkv, mem_cols, dev, 0)
+            base = raw_mask if raw_mask is not None else torch.zeros(1, 1, T, Tkv, device=dev)
             if self.rel_bias:
                 # 绝对位置相对偏置表（rel_bias 路径必须显式带因果掩码，不能退回 is_causal 快捷）。
                 # 注意 KV 长度 Tkv = T + mem_cols（记忆列已拼到前面），self._mask 是 (T,T) 与
                 # base (1,1,T,Tkv) 维度不符（记忆开启时越界崩溃），故此处直接用 _build_causal_window_mask
                 # 构造含记忆列的基础掩码（记忆列恒 0，全局可检索），再叠加相对偏置表。
-                causal_base = self._build_causal_window_mask(T, Tkv, mem_cols, dev, 0)
-                if causal_base is None:
+                if raw_mask is None:
                     # 纯因果（无窗口/记忆/alibi）：显式构造因果掩码，保证 rel_bias 开启时仍有因果
                     qp = torch.arange(0, T, device=dev).unsqueeze(1)
                     kp = torch.arange(0, Tkv, device=dev).unsqueeze(0)
-                    causal_base = ((kp > qp).float() * self.mask_fill_value).unsqueeze(0).unsqueeze(0)
+                    base = ((kp > qp).float() * self.mask_fill_value).unsqueeze(0).unsqueeze(0)
                 idx = (torch.arange(T, device=dev).unsqueeze(1)
                        - torch.arange(Tkv, device=dev).unsqueeze(0)
                        + Tkv - 1).clamp(0, 2 * self.max_seq_length - 1)
-                base = causal_base + self.rel_bias_table[:, idx].unsqueeze(0)
+                base = base + self.rel_bias_table[:, idx].unsqueeze(0)
             self._bias_key = cache_key
             self._bias_cache = base
         attn_mask = self._bias_cache
@@ -522,12 +521,11 @@ class AxialLinearAttention(nn.Module):
         self.max_seq_length = max_seq_length
         self.feature = feature
         self.grid_size = grid_size  # (row, col) or None for auto
-        # 与 LinearAttention 同结构的共享/独立 QKV/Output 投影
+        # 共享/独立 QKV/Output 投影：main + row 共享（4 个 Linear，而非 6 个）
+        # main（增量解码）和 row 轴共享同一组投影；col 轴独立投影。
         self.qkv = shared_qkv if shared_qkv is not None else nn.Linear(dim, 3 * self.num_heads * self.head_dim, bias=False)
         self.proj = shared_proj if shared_proj is not None else nn.Linear(self.num_heads * self.head_dim, dim, bias=False)
-        # 行/列各自独立的投影（不共享，各有各的 QKV 空间）
-        self.qkv_row = nn.Linear(dim, 3 * self.num_heads * self.head_dim, bias=False)
-        self.proj_row = nn.Linear(self.num_heads * self.head_dim, dim, bias=False)
+        # row 轴复用 main 投影；col 轴独立投影
         self.qkv_col = nn.Linear(dim, 3 * self.num_heads * self.head_dim, bias=False)
         self.proj_col = nn.Linear(self.num_heads * self.head_dim, dim, bias=False)
         # 行/列融合门控：sigmoid(gate) * row_out + (1-sigmoid(gate)) * col_out
@@ -537,12 +535,10 @@ class AxialLinearAttention(nn.Module):
         self.qk_norm_enabled = qk_norm
         if qk_norm:
             self.qk_norm = RMSNorm(self.head_dim)
-            self.qk_norm_row = RMSNorm(self.head_dim)
             self.qk_norm_col = RMSNorm(self.head_dim)
         self.attn_temp_enabled = attn_temp
         if attn_temp:
             self.log_temp = nn.Parameter(torch.zeros(1))
-            self.log_temp_row = nn.Parameter(torch.zeros(1))
             self.log_temp_col = nn.Parameter(torch.zeros(1))
         self._rt: Dict[str, bool] = {"qk_norm": True, "attn_temp": True}
 
@@ -615,21 +611,21 @@ class AxialLinearAttention(nn.Module):
             x = torch.nn.functional.pad(x, (0, 0, 0, pad_len))  # 补零到 row*col
         x2d = x.reshape(B, row, col, C)
 
-        # ── 行注意力：沿 col 维度做线性注意力 ──
+        # ── 行注意力：沿 col 维度做线性注意力（复用 main 投影） ──
         x_row = x2d.reshape(B * row, col, C)
-        qkv_r = self.qkv_row(x_row).reshape(B * row, col, 3, self.num_heads, self.head_dim)
+        qkv_r = self.qkv(x_row).reshape(B * row, col, 3, self.num_heads, self.head_dim)
         qkv_r = qkv_r.permute(2, 0, 3, 1, 4)
         qr, kr, vr = qkv_r[0], qkv_r[1], qkv_r[2]
         qr, kr = apply_qk_norm_and_temp(
             qr, kr, self._rt,
-            self.qk_norm_row if self.qk_norm_enabled else None,
-            self.log_temp_row if self.attn_temp_enabled else None)
+            self.qk_norm if self.qk_norm_enabled else None,
+            self.log_temp if self.attn_temp_enabled else None)
         hr = self._linear_attn_1d(qr, kr, vr,
                                    qk_norm_mod=None, log_temp_mod=None)  # 已在上面处理
-        out_row = self.proj_row(hr.transpose(1, 2).reshape(B * row, col, self.num_heads * self.head_dim))
+        out_row = self.proj(hr.transpose(1, 2).reshape(B * row, col, self.num_heads * self.head_dim))
         out_row = out_row.reshape(B, row, col, C)
 
-        # ── 列注意力：沿 row 维度做线性注意力 ──
+        # ── 列注意力：沿 row 维度做线性注意力（独立投影） ──
         x_col = x2d.permute(0, 2, 1, 3).reshape(B * col, row, C)  # (B*col, row, C)
         qkv_c = self.qkv_col(x_col).reshape(B * col, row, 3, self.num_heads, self.head_dim)
         qkv_c = qkv_c.permute(2, 0, 3, 1, 4)
@@ -662,8 +658,9 @@ class AxialLinearAttention(nn.Module):
                 v_t = v[:, :, 0, :]
                 S = S + torch.einsum('bhd,bhe->bhde', kf_t, v_t)
                 z = z + kf_t
-                num = torch.einsum('bhd,bhde->bhe', self._feat(q[:, :, 0, :]), S)
-                den = torch.einsum('bhd,bhd->bh', self._feat(q[:, :, 0, :]), z).unsqueeze(-1).clamp_min(1e-6)
+                qf_t = self._feat(q[:, :, 0, :])
+                num = torch.einsum('bhd,bhde->bhe', qf_t, S)
+                den = torch.einsum('bhd,bhd->bh', qf_t, z).unsqueeze(-1).clamp_min(1e-6)
                 out = self.proj((num / den).transpose(1, 2).reshape(B, 1, H * D))
                 return out, (k, v, S, z)
             # 首步：初始化 S/z
@@ -775,8 +772,8 @@ class MambaSSM(nn.Module):
         dt = torch.nn.functional.softplus(self.dt_proj(dt_in))   # (B, L, d_inner)
         A = -torch.exp(self.A_log)                   # (d_inner, d_state)
         dA = torch.exp(dt.unsqueeze(-1) * A)          # (B, L, d_inner, d_state)
-        dB = dt.unsqueeze(-1) * Bp.unsqueeze(2)       # (B, L, d_inner, d_state)
-        xb = dB * x_conv.unsqueeze(-1)               # (B, L, d_inner, d_state)
+        # 融合 dB * x_conv 为单次运算，避免 (B,L,d_inner,d_state) 中间张量分配
+        xb = (dt.unsqueeze(-1) * Bp.unsqueeze(2)) * x_conv.unsqueeze(-1)  # (B, L, d_inner, d_state)
         C = Cp                                        # (B, L, d_state)
         
         if past_state is not None and L == 1:
@@ -822,23 +819,37 @@ class MambaSSM(nn.Module):
         如果提供 past_state (B, d_inner, d_state)，将其作为 h_{-1} 用于计算 h_0 = a_0 * past_state + b_0。
         """
         L = a.shape[1]
-        A = a  # 无需 clone：循环中 A,B 通过新张量赋值，不修改原始 a,b
-        B = b
-        
         # Standard parallel prefix scan (Hillis-Steele) assuming h_0 = 0
-        offset = 1
-        while offset < L:
-            # 左移 offset：位置 i 取 i-offset（越界填单位元 A=1, B=0）。
-            # 用 roll + 单位元填充替代 torch.cat（省去 ones_like/zeros_like 前缀临时张量
-            # 的整 (B,L,d_inner,d_state) 分配；结果与 cat 版逐位相同，半群结合律不变）。
-            A_prev = A.roll(offset, dims=1)
-            A_prev[:, :offset] = 1.0
-            B_prev = B.roll(offset, dims=1)
-            B_prev[:, :offset] = 0.0
-            A_new = A_prev * A
-            B_new = A * B_prev + B
-            A, B = A_new, B_new
-            offset <<= 1
+        # 训练时用普通运算（支持 autograd），推理时用预分配缓冲区（减少分配开销）
+        if a.requires_grad:
+            A, B = a, b
+            offset = 1
+            while offset < L:
+                A_prev = A.roll(offset, dims=1)
+                A_prev[:, :offset] = 1.0
+                B_prev = B.roll(offset, dims=1)
+                B_prev[:, :offset] = 0.0
+                A, B = A_prev * A, A * B_prev + B
+                offset <<= 1
+        else:
+            A = a.clone()
+            B = b.clone()
+            A_prev = torch.empty_like(A)
+            B_prev = torch.empty_like(B)
+            A_new = torch.empty_like(A)
+            B_new = torch.empty_like(B)
+            offset = 1
+            while offset < L:
+                A_prev.copy_(A.roll(offset, dims=1))
+                A_prev[:, :offset] = 1.0
+                B_prev.copy_(B.roll(offset, dims=1))
+                B_prev[:, :offset] = 0.0
+                torch.mul(A_prev, A, out=A_new)
+                torch.mul(A, B_prev, out=B_new)
+                B_new.add_(B)
+                A.copy_(A_new)
+                B.copy_(B_new)
+                offset <<= 1
         
         # If we have past_state, incorporate it: A is already the prefix product
         if past_state is not None:
