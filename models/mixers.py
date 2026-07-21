@@ -124,7 +124,7 @@ class SlidingWindowCausalSelfAttention(nn.Module):
         if qk_norm:
             self.qk_norm = RMSNorm(self.head_dim)
         # ⑤ 可学习注意力温度：softmax(score / T)，T=exp(log_temp) 恒正（默认开）
-        self.attn_temp_enabled = attn_temp
+        self.temp_enabled = attn_temp
         if attn_temp:
             self.log_temp = nn.Parameter(torch.zeros(1))
         # 运行时增强开关（按开关粒度，用于“交替/分段增强”训练）：默认全开
@@ -271,7 +271,7 @@ class SlidingWindowCausalSelfAttention(nn.Module):
         q, k = apply_qk_norm_and_temp(
             q, k, self._rt,
             self.qk_norm if self.qk_norm_enabled else None,
-            self.log_temp if self.attn_temp_enabled else None)
+            self.log_temp if self.temp_enabled else None)
         q, k = self.rope(q, k, start_pos=start_pos, max_len=self.max_seq_length)
         return q, k, v
 
@@ -481,7 +481,7 @@ class LinearMixerBase(nn.Module):
         self.qk_norm_enabled = qk_norm
         if qk_norm:
             self.qk_norm = RMSNorm(self.head_dim)
-        self.attn_temp_enabled = attn_temp
+        self.temp_enabled = attn_temp
         if attn_temp:
             self.log_temp = nn.Parameter(torch.zeros(1))
         self._rt: Dict[str, bool] = {"qk_norm": True, "attn_temp": True}
@@ -499,7 +499,7 @@ class LinearMixerBase(nn.Module):
         q, k = apply_qk_norm_and_temp(
             q, k, self._rt,
             self.qk_norm if self.qk_norm_enabled else None,
-            self.log_temp if self.attn_temp_enabled else None)
+            self.log_temp if self.temp_enabled else None)
         q, k = self.rope(q, k, start_pos=start_pos, max_len=self.max_seq_length)
         return q, k, v
 
@@ -659,7 +659,7 @@ class AxialLinearAttention(LinearMixerBase):
         qr, kr = apply_qk_norm_and_temp(
             qr, kr, self._rt,
             self.qk_norm if self.qk_norm_enabled else None,
-            self.log_temp if self.attn_temp_enabled else None)
+            self.log_temp if self.temp_enabled else None)
         # 屏蔽 padded v：reshape 为 (B*row, col) 后 expand 到 (B*row, H, col, D)
         if pad_mask is not None:
             row_mask = pad_mask.reshape(B * row, col).unsqueeze(1).unsqueeze(-1)
@@ -677,7 +677,7 @@ class AxialLinearAttention(LinearMixerBase):
         qc, kc = apply_qk_norm_and_temp(
             qc, kc, self._rt,
             self.qk_norm_col if self.qk_norm_enabled else None,
-            self.log_temp_col if self.attn_temp_enabled else None)
+            self.log_temp_col if self.temp_enabled else None)
         # 列注意力的 padding mask：按列重排后，padded 位置在同一列的不同行
         if pad_mask is not None:
             col_mask = pad_mask.reshape(B, row, col).permute(0, 2, 1).reshape(B * col, row).unsqueeze(1).unsqueeze(-1)
