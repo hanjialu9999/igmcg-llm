@@ -37,6 +37,8 @@ def build_model(config: Dict[str, Any], device: Optional[torch.device] = None,
     budget = mc.get('memory_budget', None)
     if budget is not None:
         budget = float(budget)
+        if budget <= 0 or budget > 1.0:
+            raise ValueError(f"memory_budget must be in (0, 1], got {budget}")
         if 'attn_window' not in mc:
             mc['attn_window'] = int(round(64 * budget))
         if 'memory_size' not in mc:

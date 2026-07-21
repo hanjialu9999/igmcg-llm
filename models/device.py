@@ -60,13 +60,18 @@ def get_device(preferred: Optional[Union[str, torch.device]] = None) -> torch.de
 def apply_cpu_threads(threads: Optional[Union[int, str]] = None) -> None:
     """限制 PyTorch 占用的 CPU 线程数，避免训练/推理吃满所有核心。
 
-    传入 None / 0 / 负数则不改变默认设置。
+    传入 None / 0 / 负数 / 非数字字符串则不改变默认设置。
     """
-    if not threads or int(threads) <= 0:
+    if not threads:
         return
-    n = int(threads)
+    try:
+        n = int(threads)
+    except (ValueError, TypeError):
+        return
+    if n <= 0:
+        return
     try:
         torch.set_num_threads(n)
         torch.set_num_interop_threads(max(1, n // 2))
-    except Exception:
+    except RuntimeError:
         pass
