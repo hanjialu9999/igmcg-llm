@@ -58,13 +58,20 @@ class TransformerBlock(nn.Module):
             # 阶段7 token mixer 选择：attn(默认) / linear(纯线性注意力) /
             # linear2d(2D 轴向线性注意力, O(T·√T)) /
             # attn_linear(attn+线性注意力 两路并行，可学 mixer_gate 自选择比例)。
+            # hybrid_linear2d(hybrid块用 linear2d 做 token mixer + SSM 并行，全链路 O(T·√T))。
             # 旧配置字符串 'hybrid' 等价于 'attn_linear'（向后兼容）。
             if mixer == 'hybrid':
                 mixer = 'attn_linear'
             self.mixer = mixer
-            self.attn, self.linear_attn, self.mixer_gate = self._build_attn_mixer(
-                mixer, dim, num_heads, max_seq_length, attn_kwargs,
-                shared_qkv=shared_qkv, shared_proj=shared_proj)
+            if mixer == 'hybrid_linear2d':
+                # hybrid 块 token mixer 用 linear2d（替代标准 attn），与 SSM 并行
+                self.attn, self.linear_attn, self.mixer_gate = self._build_attn_mixer(
+                    'linear2d', dim, num_heads, max_seq_length, attn_kwargs,
+                    shared_qkv=shared_qkv, shared_proj=shared_proj)
+            else:
+                self.attn, self.linear_attn, self.mixer_gate = self._build_attn_mixer(
+                    mixer, dim, num_heads, max_seq_length, attn_kwargs,
+                    shared_qkv=shared_qkv, shared_proj=shared_proj)
         if block_type in ('ssm', 'hybrid'):
             self.ssm = MambaSSM(dim, **ssm_kwargs)
         self.ln2 = RMSNorm(dim)
