@@ -740,62 +740,9 @@ class TransformerModel(nn.Module):
         # g_t=sigmoid(h_t·W_g) 逐位置自决多信 n-gram，且随 use_cache 增量解码逐 token 计算也一致
         # （前向每步传入当前序列，logprob_matrix 按位置上下文查表，与全量路径共享同一张表）。
         if self.ngram_fusion_enabled and getattr(self, '_ngram_fusion_active', True):
-            # 阶段8.1 n-gram 神经融合：z_neural + g_t·ngram_vec（g_t 逐位置可学门控）。
-            # 全量/训练路径（非增量）：src 含完整上下文，直接 logprob_matrix(src)。
-            # 增量解码路径（use_cache 且 past 非空，即 generate 逐 token 喂入）：src 仅是新 token。
-            # 阶段8.8：改用滚动增量查表 logprob_orders_incremental——仅就"新 token 各位置"按滚动
-            # 上下文(末 ctx_len token，ctx_len=max_order-1)查表，不重建整段 ctx → 每步 O(T)。
-            # 滚动缓冲 _ngram_last_ids 仅在增量分支维护，全量分支不写实例状态，
-            # 避免两次独立调用间相互污染（保证全量/cache 单调用 parity）。
-            ctx_len = max(1, getattr(self.ngram_model, 'max_order', 10) - 1)
-            if use_cache and past_key_values is not None:
-                if getattr(self, '_ngram_last_ids', None) is None or \
-                        self._ngram_last_ids.shape[0] != src.shape[0]:
-                    pad = self.ngram_model.vocab.pad_idx \
-                        if hasattr(self.ngram_model.vocab, 'pad_idx') else 0
-                    self._ngram_last_ids = src.new_full((src.shape[0], ctx_len), pad)
-                ngram_ord = self.ngram_model.logprob_orders_incremental(
-                    self._ngram_last_ids, src, x.device).detach()          # (B,T,V,K) 仅新位置
-                # 更新滚动缓冲（保留末 ctx_len token），供下一步增量解码
-                self._ngram_last_ids = torch.cat([self._ngram_last_ids, src], dim=1)[:, -ctx_len:]
-            else:
-                ngram_ord = self.ngram_model.logprob_orders_matrix(src, x.device).detach()  # (B,T,V,K)
-            # 阶段8.7：可学阶混合——softmax(order_logits) 对 K 阶 logprob 加权混合（模型自选各阶占比）。
-            _ow = torch.softmax(self.ngram_order_logits, dim=0)             # (K,)
-            ngram_vec = (ngram_ord * _ow.view(1, 1, 1, -1)).sum(-1)         # (B,T,V) 处于 log 概率空间(≈-7..-1)
-            # 阶段8.7/8.8：融合改为在"对数概率空间"进行，修复原 z(原始 logits, ±数十) 直接加
-            # gate·ngram_vec(log 概率, ≈-7) 的量纲错位——原写法须让 gate 学到超大尺度才有意义，
-            # n-gram 先验事实上只是微小扰动。现：logp = log_softmax(z) + gate·ngram_vec，
-            # gate 语义即"先验权重"(∈(0,1) 表示混合比例)，与 ngram_vec 同尺度、可直接调节概率。
-            # softmax 单调，返回 logp 与返回 logits 在采样上等价，不破坏下游（仅采样消费该输出）。
-            z = self.output_head(x)                                         # (B,T,V) 主干 logits
-            # 阶段8.9 温度作用域修正：温度只缩放"主干"分布（log_softmax(z/τ)），
-            # 不缩放 n-gram 先验（gate*ngram_vec 处于 log 概率空间，属外部固定先验，
-            # 不应被采样温度非线性放大/压缩）。旧写法 fused=logp+gate*ngram_vec 后由
-            # sample_next_token 对整体除以 τ，等价于把先验也缩放 τ 倍，温度越高先验越被
-            # 错误放大（τ>1 时 prior/τ 变小、反而压低先验；语义与"温度仅控随机度"相悖）。
-            # 现温度在 log_softmax 内部作用于 z：logp_τ=log_softmax(z/τ)，fused=logp_τ+prior，
-            # 与采样中单独对主干做温度在 softmax 前缩放完全一致；τ=1 时与原行为逐位相同。
-            # temperature 可为标量或 (B,) 张量（批量解码时各候选温度不同）；
-            # 统一整形为 (B,1,1) 与 (B,T,V) 主干 logits 广播。
-            _t = torch.as_tensor(temperature, dtype=z.dtype, device=z.device).view(-1, 1, 1)
-            logp = F.log_softmax(z / _t, dim=-1)                           # (B,T,V) 同尺度 log 概率（已温度缩放主干）
-            # 门控角色分离（消除 8.1/8.7 双 (0,1) sigmoid 冗余）：
-            #  - igmcg_use_gate（仅 IGMCG 启用时）："是否启用 IGMCG 引导"的逐位置自决门控（含直觉条件偏置）；
-            #  - ngram_gate：逐位置"对 n-gram 先验的置信/强度"（8.1 语义，保留以兼容已训练权重）；
-            #  - ngram_gate_scale：推理期总闸（用户 0~1+ 缩放，1.0=模型自决）。
-            # 二者相乘仍∈(0,1)：igmcg_use_gate 为"用不用"决策、ngram_gate 为"信多少"强度，分工不冗余。
-            g_strength = torch.sigmoid(self.ngram_gate(x))                  # (B,T,1) 强度
-            if self.igmcg_enabled and not igmcg_force_off:
-                _shift = 0.0
-                if intuition is not None:
-                    # 7 维直觉向量投影为 (B,1) 序列级偏置，广播到 (B,T,1) 影响 use 门控（融合训练直觉）。
-                    _shift = self.intuition_proj(intuition).unsqueeze(1)   # (B,1,1)
-                p_use = torch.sigmoid(self.igmcg_use_gate(x) + _shift)     # (B,T,1) 用/不用决策
-                gate = p_use * g_strength * self.ngram_gate_scale
-            else:
-                gate = g_strength * self.ngram_gate_scale
-            fused = logp + gate * ngram_vec
+            fused = self._apply_ngram_fusion(
+                x, src, use_cache, past_key_values,
+                temperature, igmcg_force_off, intuition)
             if use_cache:
                 return fused, presents
             return fused
@@ -809,6 +756,44 @@ class TransformerModel(nn.Module):
         避免调用方（generate.py / model.generate）直接戳实例变量，统一由模型拥有者
         管理状态（INT 后续整合：消除跨模块直接改模型内部状态的隐患）。"""
         self._ngram_last_ids = None
+
+    def _apply_ngram_fusion(
+        self, x: torch.Tensor, src: torch.Tensor,
+        use_cache: bool, past_key_values: Optional[List],
+        temperature: float, igmcg_force_off: bool,
+        intuition: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        """将 n-gram 统计先验融合到主干 logits，返回 (B, T, V) 对数概率。
+
+        逻辑从 forward 内联提取（原 L742-801），保持前向路径关注点分离。
+        """
+        ctx_len = max(1, getattr(self.ngram_model, 'max_order', 10) - 1)
+        if use_cache and past_key_values is not None:
+            if getattr(self, '_ngram_last_ids', None) is None or \
+                    self._ngram_last_ids.shape[0] != src.shape[0]:
+                pad = self.ngram_model.vocab.pad_idx \
+                    if hasattr(self.ngram_model.vocab, 'pad_idx') else 0
+                self._ngram_last_ids = src.new_full((src.shape[0], ctx_len), pad)
+            ngram_ord = self.ngram_model.logprob_orders_incremental(
+                self._ngram_last_ids, src, x.device).detach()
+            self._ngram_last_ids = torch.cat([self._ngram_last_ids, src], dim=1)[:, -ctx_len:]
+        else:
+            ngram_ord = self.ngram_model.logprob_orders_matrix(src, x.device).detach()
+        _ow = torch.softmax(self.ngram_order_logits, dim=0)
+        ngram_vec = (ngram_ord * _ow.view(1, 1, 1, -1)).sum(-1)
+        z = self.output_head(x)
+        _t = torch.as_tensor(temperature, dtype=z.dtype, device=z.device).view(-1, 1, 1)
+        logp = F.log_softmax(z / _t, dim=-1)
+        g_strength = torch.sigmoid(self.ngram_gate(x))
+        if self.igmcg_enabled and not igmcg_force_off:
+            _shift = 0.0
+            if intuition is not None:
+                _shift = self.intuition_proj(intuition).unsqueeze(1)
+            p_use = torch.sigmoid(self.igmcg_use_gate(x) + _shift)
+            gate = p_use * g_strength * self.ngram_gate_scale
+        else:
+            gate = g_strength * self.ngram_gate_scale
+        return logp + gate * ngram_vec
 
     def generate(self, token_ids: List[int], max_length: int = 50, temperature: float = 1.0, top_k: int = 50,
                   device: str = 'cpu', repetition_penalty: float = 1.2,

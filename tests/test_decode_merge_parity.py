@@ -498,3 +498,54 @@ def test_config_loader_build_model():
     model = build_model(config)
     assert model.vocab_size == 200
     assert len(model.blocks) == 2
+
+
+# ─── _parallel_prefix_scan 测试 ───────────────────────────────────────────
+
+def test_parallel_prefix_scan_basic():
+    """_parallel_prefix_scan 结果与朴素顺序扫描一致。"""
+    from models.mixers import _parallel_prefix_scan
+    torch.manual_seed(42)
+    B, L, d_inner, d_state = 2, 8, 16, 4
+    a = torch.randn(B, L, d_inner, d_state).abs() * 0.9  # |a|<1 保证稳定
+    b = torch.randn(B, L, d_inner, d_state)
+    # 朴素顺序扫描
+    h_seq = torch.zeros(B, d_inner, d_state)
+    seq_results = []
+    for t in range(L):
+        h_seq = a[:, t] * h_seq + b[:, t]
+        seq_results.append(h_seq.unsqueeze(1))
+    expected = torch.cat(seq_results, dim=1)  # (B, L, d_inner, d_state)
+    result = _parallel_prefix_scan(a, b)
+    assert torch.allclose(result, expected, atol=1e-5), f"max_diff={(result-expected).abs().max().item()}"
+
+def test_parallel_prefix_scan_with_past_state():
+    """_parallel_prefix_scan 支持 past_state 初始化。"""
+    from models.mixers import _parallel_prefix_scan
+    torch.manual_seed(42)
+    B, L, d_inner, d_state = 2, 4, 8, 3
+    a = torch.randn(B, L, d_inner, d_state).abs() * 0.9
+    b = torch.randn(B, L, d_inner, d_state)
+    past = torch.randn(B, d_inner, d_state)
+    # 朴素：h_0 = a_0 * past + b_0
+    h_seq = past
+    seq_results = []
+    for t in range(L):
+        h_seq = a[:, t] * h_seq + b[:, t]
+        seq_results.append(h_seq.unsqueeze(1))
+    expected = torch.cat(seq_results, dim=1)
+    result = _parallel_prefix_scan(a, b, past_state=past)
+    assert torch.allclose(result, expected, atol=1e-5), f"max_diff={(result-expected).abs().max().item()}"
+
+def test_parallel_prefix_scan_gradient():
+    """_parallel_prefix_scan 梯度可导。"""
+    from models.mixers import _parallel_prefix_scan
+    torch.manual_seed(42)
+    a = torch.randn(1, 4, 8, 4).abs() + 0.01
+    a.requires_grad_(True)
+    a.retain_grad()
+    b = torch.randn(1, 4, 8, 4)
+    result = _parallel_prefix_scan(a, b)
+    loss = result.sum()
+    loss.backward()
+    assert a.grad is not None, "gradient should flow through _parallel_prefix_scan"
