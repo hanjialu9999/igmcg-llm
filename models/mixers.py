@@ -697,6 +697,141 @@ class AxialLinearAttention(nn.Module):
         return self.proj(fused), None
 
 
+class DifferentialAttention(nn.Module):
+    """差分注意力（Differential Attention，CVPR 2025）。
+
+    核心思想：用两组注意力的差值来消除噪声，增强关键信息。
+    out = (softmax(Q1·K1^T) - λ · softmax(Q2·K2^T)) · V
+    其中 λ 是可学习标量，两组 Q/K 共享投影但独立计算注意力。
+
+    复杂度 O(T²)（标准注意力），但差分机制比标准注意力更关注显著特征。
+    支持增量解码（use_cache）和层间共享投影。
+    """
+    def __init__(self, dim: int, num_heads: int, max_seq_length: int = 64,
+                 qk_norm: bool = True, attn_temp: bool = True,
+                 mask_fill_value: float = MASK_FILL_VALUE,
+                 shared_qkv: Optional[nn.Linear] = None,
+                 shared_proj: Optional[nn.Linear] = None):
+        super().__init__()
+        self.num_heads = num_heads
+        self.head_dim = dim // num_heads
+        self.max_seq_length = max_seq_length
+        self.mask_fill_value = float(mask_fill_value)
+        # 层间共享：传入 shared_qkv/shared_proj 时复用外部投影
+        # 差分注意力需要 2 组独立 Q/K（共享 V），额外创建一组 QKV 投影
+        self.qkv = shared_qkv if shared_qkv is not None else nn.Linear(dim, 3 * dim, bias=False)
+        self.qkv2 = nn.Linear(dim, 2 * dim, bias=False)  # 第二组 Q/K 投影
+        self.proj = shared_proj if shared_proj is not None else nn.Linear(dim, dim, bias=False)
+        # QK-Norm + 温度（与 SlidingWindowCausalSelfAttention 一致）
+        self.qk_norm_enabled = qk_norm
+        if qk_norm:
+            self.qk_norm = RMSNorm(self.head_dim)
+        self.temp_enabled = attn_temp
+        if attn_temp:
+            self.log_temp = nn.Parameter(torch.zeros(1))
+        # 可学习差分权重 λ（初始化为 0.5，介于完全差分和完全平均之间）
+        self.diff_lambda = nn.Parameter(torch.tensor(0.5))
+        # 因果掩码缓冲区
+        self.register_buffer('_causal_mask', torch.triu(torch.ones(1, 1, max_seq_length, max_seq_length, dtype=torch.bool), diagonal=1))
+        self._cached_T = None
+
+    def forward(self, x: torch.Tensor, past_kv=None, use_cache: bool = False,
+                start_pos: int = 0, memory_kv=None):
+        B, T, C = x.shape
+        H, D = self.num_heads, self.head_dim
+        # 第一组 Q/K/V
+        qkv = self.qkv(x)  # (B, T, 3*C)
+        qkv = qkv.reshape(B, T, 3, H, D)
+        q1, k1, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]  # 各 (B, T, H, D)
+        # 第二组 Q/K（独立投影）
+        qkv2 = self.qkv2(x)  # (B, T, 2*C)
+        q2, k2 = qkv2.reshape(B, T, 2, H, D).unbind(dim=2)
+        # QK-Norm
+        if self.qk_norm_enabled:
+            q1 = self.qk_norm(q1)
+            k1 = self.qk_norm(k1)
+            q2 = self.qk_norm(q2)
+            k2 = self.qk_norm(k2)
+        # 温度缩放
+        if self.temp_enabled:
+            scale = torch.exp(-0.5 * self.log_temp)
+            q1, q2 = q1 * scale, q2 * scale
+            k1, k2 = k1 * scale, k2 * scale
+        # 因果掩码
+        causal = self._causal_mask[:, :, :T, :T]  # (1, 1, T, T)
+        if use_cache and past_kv is not None:
+            # past_kv 由 TransformerBlock 传入，结构为 attn_kv=(k1,k2,v) 或完整元组
+            if isinstance(past_kv, tuple) and len(past_kv) == 3 and isinstance(past_kv[0], torch.Tensor):
+                pk1, pk2, pv = past_kv
+            elif isinstance(past_kv, tuple) and len(past_kv) == 3 and isinstance(past_kv[0], tuple):
+                pk1, pk2, pv = past_kv[0]
+            else:
+                pk1, pk2, pv = None, None, None
+            if pk1 is not None:
+                k1_full = torch.cat([pk1, k1], dim=1)
+                k2_full = torch.cat([pk2, k2], dim=1)
+                v_full = torch.cat([pv, v], dim=1)
+                Tkv = k1_full.size(1)
+                # 增量掩码：当前 token 可 attend 所有历史
+                causal = torch.zeros(1, 1, T, Tkv, dtype=torch.bool, device=x.device)
+            else:
+                k1_full, k2_full, v_full = k1, k2, v
+                Tkv = T
+        else:
+            k1_full, k2_full, v_full = k1, k2, v
+            Tkv = T
+        # 注意力计算：两组独立 softmax
+        q1t = q1.transpose(1, 2)  # (B, H, T, D)
+        q2t = q2.transpose(1, 2)
+        k1t = k1_full.transpose(1, 2)  # (B, H, Tkv, D)
+        k2t = k2_full.transpose(1, 2)
+        vt = v_full.transpose(1, 2)    # (B, H, Tkv, D)
+        scores1 = torch.matmul(q1t, k1t.transpose(-2, -1)) / math.sqrt(D)
+        scores2 = torch.matmul(q2t, k2t.transpose(-2, -1)) / math.sqrt(D)
+        scores1 = scores1.masked_fill(causal, self.mask_fill_value)
+        scores2 = scores2.masked_fill(causal, self.mask_fill_value)
+        # 注入记忆 K/V（若有）
+        if memory_kv is not None:
+            mk, mv, mem_meta = memory_kv
+            k1_aug, v_aug, mem_bias = self.__class__.inject_mem(q1t, k1t, vt, mk, mv, mem_meta, self.mask_fill_value)
+            if mem_bias is not None:
+                scores1 = scores1 + mem_bias
+                scores2 = scores2 + mem_bias
+            k1t, vt = k1_aug, v_aug
+        attn1 = torch.softmax(scores1, dim=-1)
+        attn2 = torch.softmax(scores2, dim=-1)
+        # 差分注意力
+        lam = torch.sigmoid(self.diff_lambda)
+        attn_diff = attn1 - lam * attn2  # (B, H, T, Tkv)
+        out = torch.matmul(attn_diff, vt)  # (B, H, T, D)
+        out = out.transpose(1, 2).reshape(B, T, C)
+        out = self.proj(out)
+        if use_cache:
+            return out, (k1, k2, v)
+        return out, None
+
+    @staticmethod
+    def inject_mem(q, k, v, mk, mv, meta, mask_fill):
+        """复用 SlidingWindowCausalSelfAttention 的记忆注入逻辑。"""
+        mem_cols = mk.size(1)
+        mk_e = mk.unsqueeze(1).expand(-1, q.size(1), -1, -1)
+        mv_e = mv.unsqueeze(1).expand(-1, q.size(1), -1, -1)
+        mlogits = torch.einsum('bhqd,bhmd->bhqm', q, mk_e)
+        if meta is not None:
+            if meta.get('retrieval_gate') is not None:
+                gate = torch.sigmoid(meta['retrieval_gate']).view(1, 1, 1, 1).to(mlogits.device)
+                mlogits = mlogits * gate
+            if meta.get('sparse_topk', 0) and 0 < meta['sparse_topk'] < mem_cols:
+                k_keep = meta['sparse_topk']
+                kvals, _ = torch.topk(mlogits, k_keep, dim=-1)
+                thr = kvals[..., -1:]
+                drop = (mlogits < thr).to(mlogits.device)
+                mlogits = mlogits.masked_fill(drop, mask_fill)
+        k_aug = torch.cat([mk_e, k], dim=2)
+        v_aug = torch.cat([mv_e, v], dim=2)
+        return k_aug, v_aug, mlogits
+
+
 class MambaSSM(nn.Module):
     """Mamba-like 选择性状态空间模型（线性复杂度长序列建模）。
       门控 + 输入依赖的 Δ/B/C，零阶保持离散化后沿时间递推。
