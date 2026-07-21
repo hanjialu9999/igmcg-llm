@@ -130,6 +130,8 @@ class ModelConfig:
         assert self.num_layers > 0, f"num_layers must be > 0"
         assert self.hidden_dim > 0, f"hidden_dim must be > 0"
         assert self.max_seq_length > 0, f"max_seq_length must be > 0"
+        assert self.embedding_dim % self.num_heads == 0, \
+            f"embedding_dim ({self.embedding_dim}) must be divisible by num_heads ({self.num_heads})"
         if self.rope_max_len is None:
             self.rope_max_len = self.max_seq_length
 
