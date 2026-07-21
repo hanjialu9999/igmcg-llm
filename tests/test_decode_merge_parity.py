@@ -642,3 +642,14 @@ def test_axial_linear_extra_attributes():
     assert hasattr(ala, 'qkv_col')
     assert hasattr(ala, 'proj_col')
     assert hasattr(ala, 'gate')
+
+
+# ─── ModelConfig 校验增强 ─────────────────────────────────────────────────
+
+def test_model_config_rejects_indivisible_heads():
+    """ModelConfig 拒绝 embedding_dim 不能被 num_heads 整除。"""
+    from models.model_config import ModelConfig
+    import pytest
+    with pytest.raises(AssertionError, match="divisible"):
+        ModelConfig(vocab_size=200, embedding_dim=65, num_heads=4,
+                    num_layers=2, hidden_dim=128, max_seq_length=512)
