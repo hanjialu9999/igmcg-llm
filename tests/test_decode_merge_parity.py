@@ -403,3 +403,33 @@ def test_axial_linear_pos_aware_feat():
     out, _ = m(x)
     assert out.shape == (1, 16, 64)
     assert torch.isfinite(out).all()
+
+
+# ─── RMSNorm 独立测试 ──────────────────────────────────────────────────────
+
+def test_rmsnorm_output_shape():
+    """RMSNorm 输出形状与输入一致。"""
+    from models.norms import RMSNorm
+    norm = RMSNorm(dim=64)
+    x = torch.randn(2, 8, 64)
+    out = norm(x)
+    assert out.shape == (2, 8, 64)
+
+def test_rmsnorm_unit_variance():
+    """RMSNorm 输出的 RMS 应接近 1（归一化后）。"""
+    from models.norms import RMSNorm
+    norm = RMSNorm(dim=64)
+    x = torch.randn(1, 32, 64) * 10  # 大幅值输入
+    out = norm(x)
+    rms = out.pow(2).mean(-1).sqrt()
+    assert torch.allclose(rms, torch.ones_like(rms), atol=0.1), f"RMS={rms.mean().item()}"
+
+def test_rmsnorm_learnable_weight():
+    """RMSNorm 的 weight 参数可学习。"""
+    from models.norms import RMSNorm
+    norm = RMSNorm(dim=64)
+    x = torch.randn(1, 4, 64)
+    out = norm(x)
+    loss = out.sum()
+    loss.backward()
+    assert norm.weight.grad is not None, "weight.grad should not be None"

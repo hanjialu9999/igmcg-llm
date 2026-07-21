@@ -833,24 +833,10 @@ class DifferentialAttention(nn.Module):
 
     @staticmethod
     def inject_mem(q, k, v, mk, mv, meta, mask_fill):
-        """复用 SlidingWindowCausalSelfAttention 的记忆注入逻辑。"""
-        mem_cols = mk.size(1)
-        mk_e = mk.unsqueeze(1).expand(-1, q.size(1), -1, -1)
-        mv_e = mv.unsqueeze(1).expand(-1, q.size(1), -1, -1)
-        mlogits = torch.einsum('bhqd,bhmd->bhqm', q, mk_e)
-        if meta is not None:
-            if meta.get('retrieval_gate') is not None:
-                gate = torch.sigmoid(meta['retrieval_gate']).view(1, 1, 1, 1).to(mlogits.device)
-                mlogits = mlogits * gate
-            if meta.get('sparse_topk', 0) and 0 < meta['sparse_topk'] < mem_cols:
-                k_keep = meta['sparse_topk']
-                kvals, _ = torch.topk(mlogits, k_keep, dim=-1)
-                thr = kvals[..., -1:]
-                drop = (mlogits < thr).to(mlogits.device)
-                mlogits = mlogits.masked_fill(drop, mask_fill)
-        k_aug = torch.cat([mk_e, k], dim=2)
-        v_aug = torch.cat([mv_e, v], dim=2)
-        return k_aug, v_aug, mlogits
+        """复用 MemoryBank.inject_memory 统一逻辑，避免与 SlidingWindowCausalSelfAttention 漂移。"""
+        from models.memory import MemoryBank
+        k_aug, v_aug, mem_bias = MemoryBank.inject_memory(q, k, v, mk, mv, meta, mask_fill)
+        return k_aug, v_aug, mem_bias
 
 
 class MambaSSM(nn.Module):
@@ -1096,6 +1082,43 @@ class MambaSSMWithCAST(nn.Module):
         nn.init.zeros_(self.cast_delta_proj.weight)  # 零初始化→初始行为等价于标准 Mamba
         self.proper_init()
 
+    def _selective_scan(self, a, b, past_state=None):
+        """并行前缀扫描（复用 MambaSSM 的 Hillis-Steele 实现）。"""
+        L = a.shape[1]
+        if a.requires_grad:
+            A, B = a, b
+            offset = 1
+            while offset < L:
+                A_prev = A.roll(offset, dims=1)
+                A_prev[:, :offset] = 1.0
+                B_prev = B.roll(offset, dims=1)
+                B_prev[:, :offset] = 0.0
+                A, B = A_prev * A, A * B_prev + B
+                offset <<= 1
+        else:
+            A = a.clone()
+            B = b.clone()
+            A_prev = torch.empty_like(A)
+            B_prev = torch.empty_like(B)
+            A_new = torch.empty_like(A)
+            B_new = torch.empty_like(B)
+            offset = 1
+            while offset < L:
+                A_prev.copy_(A.roll(offset, dims=1))
+                A_prev[:, :offset] = 1.0
+                B_prev.copy_(B.roll(offset, dims=1))
+                B_prev[:, :offset] = 0.0
+                torch.mul(A_prev, A, out=A_new)
+                torch.mul(A, B_prev, out=B_new)
+                B_new.add_(B)
+                A.copy_(A_new)
+                B.copy_(B_new)
+                offset <<= 1
+        if past_state is not None:
+            past_expanded = past_state.unsqueeze(1).expand(-1, L, -1, -1)
+            B = B + A * past_expanded
+        return B
+
     def proper_init(self):
         nn.init.xavier_uniform_(self.in_proj.weight)
         nn.init.xavier_uniform_(self.out_proj.weight)
@@ -1148,18 +1171,12 @@ class MambaSSMWithCAST(nn.Module):
         dA = torch.exp(dt.unsqueeze(-1) * A_effective)  # (B, L, d_inner, d_state)
         dB = dt.unsqueeze(-1) * Bp.unsqueeze(2)  # (B, L, d_inner, d_state)
         xb = dB * x_conv.unsqueeze(-1)  # (B, L, d_inner, d_state)
-        # 选择性扫描
+        # 选择性扫描（复用 MambaSSM 的并行前缀扫描）
         if past_state is not None and past_state.shape[0] == B and L == 1:
             h = past_state * dA[:, 0] + xb[:, 0]  # (B, d_inner, d_state)
             present_state = h
         else:
-            # 全量并行扫描（简化版：顺序累积，与 MambaSSM 的前缀扫描对齐）
-            h = xb[:, 0]
-            h_all = [h]
-            for t in range(1, L):
-                h = h * dA[:, t] + xb[:, t]
-                h_all.append(h)
-            h = torch.stack(h_all, dim=1)  # (B, L, d_inner, d_state)
+            h = self._selective_scan(dA, xb, past_state)  # (B, L, d_inner, d_state)
             present_state = h[:, -1] if use_cache else None
         # 输出
         y = (h * Cp.unsqueeze(2)).sum(-1)  # (B, L, d_inner)
