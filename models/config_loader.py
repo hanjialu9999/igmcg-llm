@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 import torch
 import yaml
 
+from models.model_config import ModelConfig
 from models.transformer import TransformerModel
 from models.constants import MASK_FILL_VALUE, ROPE_BASE
 
@@ -44,83 +45,9 @@ def build_model(config: Dict[str, Any], device: Optional[torch.device] = None,
             mc['memory_retrieval_topk'] = int(round(32 * budget))
         if 'memory_retrieval' not in mc:
             mc['memory_retrieval'] = budget > 0.3
-    model = TransformerModel(
-        vocab_size=mc['vocab_size'],
-        embedding_dim=mc['embedding_dim'],
-        num_heads=mc['num_heads'],
-        num_layers=mc['num_layers'],
-        hidden_dim=mc['hidden_dim'],
-        max_seq_length=mc['max_seq_length'],
-        dropout=mc.get('dropout', 0.0),
-        tie_weights=mc.get('tie_weights', True),
-        gradient_checkpointing=mc.get('gradient_checkpointing', True),
-        layer_plan=mc.get('layer_plan', None),
-        ssm_d_state=mc.get('ssm_d_state', 16),
-        ssm_d_inner_factor=mc.get('ssm_d_inner_factor', 1),
-        ssm_dt_rank=mc.get('ssm_dt_rank', None),
-        ssm_conv_kernel=mc.get('ssm_conv_kernel', 3),
-        ssm_dt_proj_bias_init=mc.get('ssm_dt_proj_bias_init', 0.1),
-        ssm_a_log_init_range=mc.get('ssm_a_log_init_range', [-1, 1]),
-        ssm_D_init=mc.get('ssm_D_init', 1.0),
-        attn_window=mc.get('attn_window', 0),
-        attn_rel_bias=mc.get('attn_rel_bias', False),
-        rope_base=mc.get('rope_base', ROPE_BASE),
-        # RoPE/注意力缓冲区长度：默认与 max_seq_length 一致（指向同一"模型最大序列长"概念），
-        # 仅当显式配置 rope_max_len 时才覆盖——避免未配置时悄悄用 4096 而与 max_seq_length 发散。
-        rope_max_len=mc.get('rope_max_len', mc['max_seq_length']),
-        mask_fill_value=mc.get('mask_fill_value', MASK_FILL_VALUE),
-        # 阶段5：可学习 RoPE 频率 + ALiBi 线性位置偏置（默认关，向后兼容）
-        rope_learnable=mc.get('rope_learnable', False),
-        alibi=mc.get('alibi', False),
-        # 阶段6：可学习跳过层（默认关，向后兼容；开启需重训）
-        layer_skip=mc.get('layer_skip', False),
-        # 阶段6：可学习滑动窗口（默认关，向后兼容；开启需重训）
-        learn_window=mc.get('learn_window', False),
-        window_base=mc.get('window_base', 64),
-        # 阶段7：token mixer 选择（attn | linear | linear2d | attn_linear | hybrid_linear2d，默认 attn 向后兼容）。
-        # 旧字符串 'hybrid' 等价于 'attn_linear'（attn+线性注意力并行），由 TransformerBlock 归一。
-        mixer=('attn_linear' if mc.get('mixer', 'attn') == 'hybrid' else mc.get('mixer', 'attn')),
-        linear_attn_feature=mc.get('linear_attn_feature', 'relu'),
-        linear_attn_head_dim=mc.get('linear_attn_head_dim', None),
-        # 架构增强（默认全开：2026-07-14 起；旧权重门控 init=1.0 仍兼容，但开启后需重新训练以生效）
-        qk_norm=mc.get('qk_norm', True),
-        attn_temp=mc.get('attn_temp', True),
-        residual_gate=mc.get('residual_gate', True),
-        hybrid_gate=mc.get('hybrid_gate', True),
-        hybrid_single_gate=mc.get('hybrid_single_gate', False),
-        char_merge=mc.get('char_merge', False),
-        char_merge_kernel=mc.get('char_merge_kernel', 3),
-        char_merge_dropout=mc.get('char_merge_dropout', 0.0),
-        # 阶段2 可学习压缩记忆 + 阶段3 可学习检索/稀疏 + 阶段4 可学习遗忘
-        memory_size=mc.get('memory_size', 0),
-        memory_comp_dim=mc.get('memory_comp_dim', 32),
-        memory_retrieval=mc.get('memory_retrieval', False),
-        memory_sparse_topk=mc.get('memory_sparse_topk', 0),
-        memory_forget=mc.get('memory_forget', False),
-        memory_product_key=mc.get('memory_product_key', False),
-        memory_retrieval_full=mc.get('memory_retrieval_full', False),
-        memory_retrieval_topk=mc.get('memory_retrieval_topk', 32),
-        # 阶段8.1/8.7：n-gram 神经融合 + IGMCG 2.0（默认关，向后兼容；开启需传入 ngram_model 实例）
-        ngram_fusion=mc.get('ngram_fusion', False),
-        ngram_model=ngram_model,
-        ngram_gate_scale=float(mc.get('ngram_gate_scale', 1.0)),
-        igmcg=bool(mc.get('igmcg', False)),
-        share_attn_proj=bool(mc.get('share_attn_proj', False)),
-        share_ffn=bool(mc.get('share_ffn', False)),
-        share_norm=bool(mc.get('share_norm', False)),
-        ssm_type=mc.get('ssm_type', 'standard'),
-    )
-    # mixer 参数校验：非法值会静默退化为标准 attn，导致用户配置不生效
-    _VALID_MIXERS = {'attn', 'linear', 'linear2d', 'attn_linear', 'hybrid_linear2d', 'diff'}
-    _mixer_raw = mc.get('mixer', 'attn')
-    _mixer_val = 'attn_linear' if _mixer_raw == 'hybrid' else _mixer_raw
-    if _mixer_val not in _VALID_MIXERS:
-        raise ValueError(f"未知 mixer='{_mixer_raw}'（归一化后='{_mixer_val}'），可选 {_VALID_MIXERS}")
-    # 机制组合校验：mixer='attn_linear'（旧名 'hybrid'，attn+线性注意力并行）仅在
-    # block_type='attn' 的层真正融合线性注意力；若 layer_plan 含 'hybrid'（SSM×注意力混合块），
-    # 该块不会调用 linear_attn/mixer_gate，导致二者成为永不更新的死参数（占显存与 checkpoint 体积）。
-    # 发出告警避免静默无效训练。
-    # 注意：mixer='hybrid_linear2d' 不适用此校验——hybrid 块内 linear2d 作 token mixer + SSM 并行。
+    # 用 ModelConfig schema 校验（替代 42 个 mc.get() 散参数）
+    model_cfg = ModelConfig.from_dict(mc)
+    # 机制组合校验（需在 ModelConfig 之上额外检查 layer_plan 交互）
     _mixer = mc.get('mixer', 'attn')
     if _mixer in ('hybrid', 'attn_linear') and mc.get('layer_plan', None) is not None:
         layer_plan = mc.get('layer_plan', None)
@@ -133,10 +60,9 @@ def build_model(config: Dict[str, Any], device: Optional[torch.device] = None,
                 "如需全局线性融合，请将对应层改为 'attn'；否则 hybrid 块仅做 attn+ssm。",
                 stacklevel=2,
             )
-
+    model = TransformerModel.from_config(model_cfg, ngram_model=ngram_model)
     if device is not None:
         model = model.to(device)
-        # 使用模型内置的 tie_weights() 方法（to() 已自动调用，双重保险）
         model.tie_weights()
     return model
 

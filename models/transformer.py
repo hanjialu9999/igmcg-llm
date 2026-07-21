@@ -476,9 +476,69 @@ class TransformerModel(nn.Module):
         # 权重初始化（_init_weights 遍历所有 Linear 用 N(0,0.02)，再对 SSM 调 proper_init 覆盖）
         self._init_weights()
 
+    @classmethod
+    def from_config(cls, cfg: 'ModelConfig', ngram_model=None) -> TransformerModel:
+        """从 ModelConfig dataclass 构建（替代 config_loader 中 42 个 mc.get()）。"""
+        return cls(
+            vocab_size=cfg.vocab_size,
+            embedding_dim=cfg.embedding_dim,
+            num_heads=cfg.num_heads,
+            num_layers=cfg.num_layers,
+            hidden_dim=cfg.hidden_dim,
+            max_seq_length=cfg.max_seq_length,
+            dropout=cfg.dropout,
+            tie_weights=cfg.tie_weights,
+            gradient_checkpointing=cfg.gradient_checkpointing,
+            layer_plan=cfg.layer_plan,
+            ssm_d_state=cfg.ssm.d_state,
+            ssm_d_inner_factor=cfg.ssm.d_inner_factor,
+            ssm_dt_rank=cfg.ssm.dt_rank,
+            ssm_conv_kernel=cfg.ssm.conv_kernel,
+            ssm_dt_proj_bias_init=cfg.ssm.dt_proj_bias_init,
+            ssm_a_log_init_range=cfg.ssm.a_log_init_range,
+            ssm_D_init=cfg.ssm.D_init,
+            attn_window=cfg.attn.window,
+            attn_rel_bias=cfg.attn.rel_bias,
+            rope_base=cfg.rope_base,
+            rope_max_len=cfg.rope_max_len,
+            mask_fill_value=cfg.mask_fill_value,
+            qk_norm=cfg.attn.qk_norm,
+            attn_temp=cfg.attn.attn_temp,
+            residual_gate=cfg.residual_gate,
+            hybrid_gate=cfg.hybrid_gate,
+            hybrid_single_gate=cfg.hybrid_single_gate,
+            char_merge=cfg.char_merge,
+            char_merge_kernel=cfg.char_merge_kernel,
+            char_merge_dropout=cfg.char_merge_dropout,
+            memory_size=cfg.memory.size,
+            memory_comp_dim=cfg.memory.comp_dim,
+            memory_retrieval=cfg.memory.retrieval,
+            memory_sparse_topk=cfg.memory.sparse_topk,
+            memory_forget=cfg.memory.forget,
+            memory_product_key=cfg.memory.product_key,
+            memory_retrieval_full=cfg.memory.retrieval_full,
+            memory_retrieval_topk=cfg.memory.retrieval_topk,
+            rope_learnable=cfg.attn.rope_learnable,
+            alibi=cfg.attn.alibi,
+            layer_skip=cfg.layer_skip,
+            learn_window=cfg.attn.learn_window,
+            window_base=cfg.attn.window_base,
+            mixer=cfg.attn.mixer,
+            linear_attn_feature=cfg.attn.linear_attn_feature,
+            linear_attn_head_dim=cfg.attn.linear_attn_head_dim,
+            ngram_fusion=cfg.ngram_fusion,
+            ngram_model=ngram_model,
+            ngram_gate_scale=cfg.ngram_gate_scale,
+            igmcg=cfg.igmcg,
+            share_attn_proj=cfg.share_attn_proj,
+            share_ffn=cfg.share_ffn,
+            share_norm=cfg.share_norm,
+            ssm_type=cfg.ssm.ssm_type,
+        )
+
     def set_enhancements_active(self, spec):
         """运行时开关（按开关粒度）：`spec=True/False` 全开/全关；`spec=dict` 按键更新。
-        用于“交替/分段增强”训练（关闭则跳过对应增强，恒等）。"""
+        用于"交替/分段增强"训练（关闭则跳过对应增强，恒等）。"""
         for blk in self.blocks:
             blk.set_enhancements_active(spec)
 
