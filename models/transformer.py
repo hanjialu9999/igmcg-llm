@@ -760,17 +760,18 @@ class TransformerModel(nn.Module):
         逻辑从 forward 内联提取（原 L742-801），保持前向路径关注点分离。
         """
         ctx_len = max(1, getattr(self.ngram_model, 'max_order', 10) - 1)
-        if use_cache and past_key_values is not None:
-            if getattr(self, '_ngram_last_ids', None) is None or \
-                    self._ngram_last_ids.shape[0] != src.shape[0]:
-                pad = self.ngram_model.vocab.pad_idx \
-                    if hasattr(self.ngram_model.vocab, 'pad_idx') else 0
-                self._ngram_last_ids = src.new_full((src.shape[0], ctx_len), pad)
-            ngram_ord = self.ngram_model.logprob_orders_incremental(
-                self._ngram_last_ids, src, x.device).detach()
-            self._ngram_last_ids = torch.cat([self._ngram_last_ids, src], dim=1)[:, -ctx_len:]
-        else:
-            ngram_ord = self.ngram_model.logprob_orders_matrix(src, x.device).detach()
+        with torch.no_grad():
+            if use_cache and past_key_values is not None:
+                if getattr(self, '_ngram_last_ids', None) is None or \
+                        self._ngram_last_ids.shape[0] != src.shape[0]:
+                    pad = self.ngram_model.vocab.pad_idx \
+                        if hasattr(self.ngram_model.vocab, 'pad_idx') else 0
+                    self._ngram_last_ids = src.new_full((src.shape[0], ctx_len), pad)
+                ngram_ord = self.ngram_model.logprob_orders_incremental(
+                    self._ngram_last_ids, src, x.device)
+                self._ngram_last_ids = torch.cat([self._ngram_last_ids, src], dim=1)[:, -ctx_len:]
+            else:
+                ngram_ord = self.ngram_model.logprob_orders_matrix(src, x.device)
         _ow = torch.softmax(self.ngram_order_logits, dim=0)
         ngram_vec = (ngram_ord * _ow.view(1, 1, 1, -1)).sum(-1)
         z = self.output_head(x)

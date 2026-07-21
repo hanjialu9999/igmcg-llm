@@ -173,11 +173,13 @@ class NGramModel:
         pad = self.vocab.pad_idx if hasattr(self.vocab, 'pad_idx') else 0
         ctx_len = max(1, K - 1)  # 上下文窗口长度
         # 1) 收集每个位置的上下文键，并去重
+        # 一次性把 ids 搬到 CPU 再 .tolist()，用1次传输替代 B 次 GPU-CPU 同步
+        ids_cpu = ids.cpu() if ids.is_cuda or (hasattr(ids, 'device') and ids.device.type in ('cuda', 'privateuseone')) else ids
         ctx_keys: List[Tuple[int, ...]] = []
         pos_to_key: List[int] = []
         uniq: Dict[Tuple[int, ...], int] = {}
         for b in range(B):
-            seq = ids[b].tolist()
+            seq = ids_cpu[b].tolist()
             padded = [pad] * ctx_len + seq
             for t in range(T):
                 ck = tuple(padded[t: t + ctx_len])
@@ -196,11 +198,17 @@ class NGramModel:
                     self._orders_cache.clear()
                 self._orders_cache[ck] = v.cpu()
                 uniq_vecs.append(v)
-        # 3) 批量拼回 (B, T, V, K)：index_select 替代逐位置赋值
-        stacked = torch.stack(uniq_vecs, dim=0)              # (U, V, K)
-        key_idx = torch.tensor([uniq[ck] for ck in pos_to_key],
-                               dtype=torch.long, device=device)
-        out = stacked[key_idx].view(B, T, V, K)             # (B, T, V, K)
+        # 3) 逐唯一上下文填充输出张量，避免 stacked[key_idx] 的2倍峰值内存
+        #    （旧路径：stack(U,V,K) + fancy index → 额外 (B,T,V,K) 中间张量）
+        out = torch.empty(B, T, V, K, device=device)
+        key_idx_tensor = torch.tensor([uniq[ck] for ck in pos_to_key],
+                                      dtype=torch.long, device=device)
+        flat_idx = key_idx_tensor.view(-1)
+        flat_out = out.view(-1, V, K)
+        for i in range(len(ctx_keys)):
+            mask = (flat_idx == i)
+            if mask.any():
+                flat_out[mask] = uniq_vecs[i]
         return out
 
     def logprob_orders_incremental(self, ctx2: torch.Tensor, new_ids: torch.Tensor, device):
@@ -216,11 +224,11 @@ class NGramModel:
         ctx_len = max(1, K - 1)
         # 拼接滚动上下文 + 新 token：[ctx0..ctx_{L-1}, new0..new_{T-1}]
         full = torch.cat([ctx2, new_ids], dim=1)                     # (B, ctx_len+T)
+        full_cpu = full.cpu() if full.is_cuda or (hasattr(full, 'device') and full.device.type in ('cuda', 'privateuseone')) else full
         out = torch.empty(B, T, V, K, device=device)
         for b in range(B):
             for t in range(T):
-                # 位置 t 的上下文窗口 = full[t: t+ctx_len]
-                ctx_tokens = full[b, t: t + ctx_len].tolist()
+                ctx_tokens = full_cpu[b, t: t + ctx_len].tolist()
                 ck = tuple(ctx_tokens)
                 if ck in self._orders_cache:
                     out[b, t] = self._orders_cache[ck].to(device)
