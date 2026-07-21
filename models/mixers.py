@@ -41,7 +41,8 @@ class SlidingWindowCausalSelfAttention(nn.Module):
     def __init__(self, dim: int, num_heads: int, window: int = 0, rel_bias: bool = False, max_seq_length: int = 64,
                  qk_norm: bool = True, attn_temp: bool = True, mask_fill_value: float = MASK_FILL_VALUE,
                  rope_learnable: bool = False, alibi: bool = False, retrieval_full: bool = False,
-                 retrieval_topk: int = 32, learn_window: bool = False, window_base: int = 64):
+                 retrieval_topk: int = 32, learn_window: bool = False, window_base: int = 64,
+                 shared_qkv: Optional[nn.Linear] = None, shared_proj: Optional[nn.Linear] = None):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
@@ -52,16 +53,14 @@ class SlidingWindowCausalSelfAttention(nn.Module):
         self.alibi = alibi
         self.retrieval_full = retrieval_full
         self.retrieval_topk = retrieval_topk
-        # 阶段6：可学习滑动窗口——每层一个 log_window 参数，实际窗口 = round(exp(log_window))*base，
-        # 范围 clamp 到 [1, window_base]（或更宽），模型自决每层看多远。默认关（向后兼容）。
         self.learn_window = learn_window
         self.window_base = window_base
         if learn_window:
-            # 初始化使初始窗口 = 配置 window（window=0 → 退化为 1，即仅相邻局部）
             init_w = max(1, self.window) if self.window > 0 else 1
             self.log_window = nn.Parameter(torch.tensor(math.log(max(init_w, 1) / max(window_base, 1))))
-        self.qkv = nn.Linear(dim, 3 * dim, bias=False)
-        self.proj = nn.Linear(dim, dim, bias=False)
+        # 层间共享：传入 shared_qkv/shared_proj 时复用外部投影，不在本层创建新参数
+        self.qkv = shared_qkv if shared_qkv is not None else nn.Linear(dim, 3 * dim, bias=False)
+        self.proj = shared_proj if shared_proj is not None else nn.Linear(dim, dim, bias=False)
         self.rope = RotaryEmbedding(self.head_dim, learnable=rope_learnable)
         if self.rel_bias:
             # T5 风格相对位置偏置表：(heads, 2T-1)
@@ -426,15 +425,16 @@ class LinearAttention(nn.Module):
 
     def __init__(self, dim: int, num_heads: int, qk_norm: bool = True, attn_temp: bool = True,
                  max_seq_length: int = 64, feature: str = 'relu', head_dim: Optional[int] = None,
-                 rope_learnable: bool = False):
+                 rope_learnable: bool = False,
+                 shared_qkv: Optional[nn.Linear] = None, shared_proj: Optional[nn.Linear] = None):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = head_dim or (dim // num_heads)
         self.max_seq_length = max_seq_length
         self.feature = feature
-        # qkv 投影输出 3*num_heads*head_dim（head_dim 可小于 dim//num_heads 以省算力）
-        self.qkv = nn.Linear(dim, 3 * self.num_heads * self.head_dim, bias=False)
-        self.proj = nn.Linear(self.num_heads * self.head_dim, dim, bias=False)
+        # 层间共享：传入 shared_qkv/shared_proj 时复用外部投影
+        self.qkv = shared_qkv if shared_qkv is not None else nn.Linear(dim, 3 * self.num_heads * self.head_dim, bias=False)
+        self.proj = shared_proj if shared_proj is not None else nn.Linear(self.num_heads * self.head_dim, dim, bias=False)
         # 与 attn 分支的 RotaryEmbedding 保持同一 rope_learnable 配置，
         # 避免 attn_linear 混合块内两路 RoPE 静默不一致（仅 rope_learnable=True 时显式分叉）。
         self.rope = RotaryEmbedding(self.head_dim, learnable=rope_learnable)

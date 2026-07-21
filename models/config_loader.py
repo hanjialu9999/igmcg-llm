@@ -105,6 +105,7 @@ def build_model(config: Dict[str, Any], device: Optional[torch.device] = None,
         ngram_model=ngram_model,
         ngram_gate_scale=float(mc.get('ngram_gate_scale', 1.0)),
         igmcg=bool(mc.get('igmcg', False)),
+        share_attn_proj=bool(mc.get('share_attn_proj', False)),
     )
     # 机制组合校验：mixer='attn_linear'（旧名 'hybrid'，attn+线性注意力并行）仅在
     # block_type='attn' 的层真正融合线性注意力；若 layer_plan 含 'hybrid'（SSM×注意力混合块），

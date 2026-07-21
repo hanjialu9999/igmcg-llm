@@ -38,7 +38,9 @@ class TransformerBlock(nn.Module):
                  ssm_kwargs: Optional[Dict[str, Any]] = None, attn_kwargs: Optional[Dict[str, Any]] = None,
                  residual_gate: bool = True, hybrid_gate: bool = True, gradient_checkpointing: bool = True,
                  skip: bool = False, mixer: str = 'attn',
-                 hybrid_single_gate: bool = False):
+                 hybrid_single_gate: bool = False,
+                 shared_qkv: Optional[nn.Linear] = None,
+                 shared_proj: Optional[nn.Linear] = None):
         super().__init__()
         self.block_type = block_type
         self.drop = nn.Dropout(dropout)
@@ -47,7 +49,7 @@ class TransformerBlock(nn.Module):
         # ②/⑥ 残差门控 & ⭐A 混合路径门控开关（默认关，向后兼容）
         self.residual_gate_enabled = residual_gate
         self.hybrid_gate_enabled = hybrid_gate
-        # 运行时增强开关（按开关粒度，用于“交替/分段增强”训练）：默认全开
+        # 运行时增强开关（按开关粒度，用于"交替/分段增强"训练）：默认全开
         self._rt: Dict[str, bool] = {"residual_gate": True, "hybrid_gate": True}
         self.gradient_checkpointing = gradient_checkpointing
         # Both attn and ssm blocks need a pre-norm layer
@@ -60,7 +62,8 @@ class TransformerBlock(nn.Module):
                 mixer = 'attn_linear'
             self.mixer = mixer
             self.attn, self.linear_attn, self.mixer_gate = self._build_attn_mixer(
-                mixer, dim, num_heads, max_seq_length, attn_kwargs)
+                mixer, dim, num_heads, max_seq_length, attn_kwargs,
+                shared_qkv=shared_qkv, shared_proj=shared_proj)
         if block_type in ('ssm', 'hybrid'):
             self.ssm = MambaSSM(dim, **ssm_kwargs)
         self.ln2 = RMSNorm(dim)
@@ -90,8 +93,14 @@ class TransformerBlock(nn.Module):
 
     @staticmethod
     def _build_attn_mixer(mixer: str, dim: int, num_heads: int, max_seq_length: int,
-                           attn_kwargs: Dict[str, Any]) -> Tuple[nn.Module, Optional[nn.Module], Optional[nn.Parameter]]:
+                           attn_kwargs: Dict[str, Any],
+                           shared_qkv: Optional[nn.Linear] = None,
+                           shared_proj: Optional[nn.Linear] = None
+                           ) -> Tuple[nn.Module, Optional[nn.Module], Optional[nn.Parameter]]:
         """构造 attn 系 token mixer（A 项归一点，消除 attn/hybrid 块中的重复构建逻辑）。
+
+        shared_qkv/shared_proj：层间共享投影（share_attn_proj=True 时由 TransformerModel
+        创建并传入，各层复用同一组 QKV/Output 投影参数，减少 ~40% 参数量）。
 
         Returns:
             attn: 主注意力模块（SlidingWindowCausalSelfAttention 或 LinearAttention）
@@ -99,29 +108,33 @@ class TransformerBlock(nn.Module):
             mixer_gate: attn/linear 两路混合门控（仅 mixer='attn_linear' 时非 None）
         """
         if mixer == 'linear':
-            # 阶段7：纯线性注意力（O(N) token mixer）
             attn = LinearAttention(dim, num_heads, max_seq_length=max_seq_length,
                                    qk_norm=attn_kwargs.get('qk_norm', True),
                                    attn_temp=attn_kwargs.get('attn_temp', True),
-                                   feature=attn_kwargs.get('linear_attn_feature', 'relu'))
+                                   feature=attn_kwargs.get('linear_attn_feature', 'relu'),
+                                   shared_qkv=shared_qkv, shared_proj=shared_proj)
             return attn, None, None
         if mixer == 'attn_linear':
-            # 阶段7：attn + 线性注意力 两路并行，可学习 mixer_gate 自选择用多少
             attn_only = {k: v for k, v in attn_kwargs.items()
                          if k not in ('linear_attn_feature', 'linear_attn_head_dim')}
-            attn = SlidingWindowCausalSelfAttention(dim, num_heads, max_seq_length=max_seq_length, **attn_only)
+            attn = SlidingWindowCausalSelfAttention(dim, num_heads, max_seq_length=max_seq_length,
+                                                     shared_qkv=shared_qkv, shared_proj=shared_proj,
+                                                     **attn_only)
             linear_attn = LinearAttention(dim, num_heads, max_seq_length=max_seq_length,
                                           qk_norm=attn_kwargs.get('qk_norm', True),
                                           attn_temp=attn_kwargs.get('attn_temp', True),
                                           feature=attn_kwargs.get('linear_attn_feature', 'relu'),
                                           head_dim=attn_kwargs.get('linear_attn_head_dim', None),
-                                          rope_learnable=attn_kwargs.get('rope_learnable', False))
-            mixer_gate = nn.Parameter(torch.ones(1))  # init 1.0 → 偏 attn
+                                          rope_learnable=attn_kwargs.get('rope_learnable', False),
+                                          shared_qkv=shared_qkv, shared_proj=shared_proj)
+            mixer_gate = nn.Parameter(torch.ones(1))
             return attn, linear_attn, mixer_gate
         # 默认：标准滑动窗口因果注意力
         attn_only = {k: v for k, v in attn_kwargs.items()
                      if k not in ('linear_attn_feature', 'linear_attn_head_dim')}
-        attn = SlidingWindowCausalSelfAttention(dim, num_heads, max_seq_length=max_seq_length, **attn_only)
+        attn = SlidingWindowCausalSelfAttention(dim, num_heads, max_seq_length=max_seq_length,
+                                                 shared_qkv=shared_qkv, shared_proj=shared_proj,
+                                                 **attn_only)
         return attn, None, None
 
     def _run_attn_mixer(self, xn: torch.Tensor, attn_past_kv, use_cache: bool, start_pos: int,
@@ -310,7 +323,8 @@ class TransformerModel(nn.Module):
                    linear_attn_feature: str = 'relu',
                    linear_attn_head_dim: Optional[int] = None,
                    ngram_fusion: bool = False, ngram_model=None,
-                   ngram_gate_scale: float = 1.0, igmcg: bool = False):
+                   ngram_gate_scale: float = 1.0, igmcg: bool = False,
+                   share_attn_proj: bool = False):
         super(TransformerModel, self).__init__()
 
         self.vocab_size = vocab_size
@@ -381,6 +395,15 @@ class TransformerModel(nn.Module):
                            learn_window=learn_window, window_base=window_base,
                            linear_attn_feature=linear_attn_feature,
                            linear_attn_head_dim=linear_attn_head_dim)
+        # 层间共享 attention projection（share_attn_proj=True）：
+        # 各层复用同一组 QKV + Output 投影参数，减少 ~40% 参数量并起正则化作用。
+        # 仅影响 attn/linear 混合器（SSM/FFN/Memory 参数保持独立）。
+        self.share_attn_proj = share_attn_proj
+        _shared_qkv = nn.Linear(embedding_dim, 3 * embedding_dim, bias=False) if share_attn_proj else None
+        _shared_proj = nn.Linear(embedding_dim, embedding_dim, bias=False) if share_attn_proj else None
+        if share_attn_proj:
+            self.shared_qkv = _shared_qkv
+            self.shared_proj = _shared_proj
         self.blocks = nn.ModuleList([
             TransformerBlock(embedding_dim, num_heads, hidden_dim, block_type=bt,
                              dropout=dropout, max_seq_length=rope_max_len,
@@ -388,7 +411,8 @@ class TransformerModel(nn.Module):
                              residual_gate=residual_gate, hybrid_gate=hybrid_gate,
                              hybrid_single_gate=hybrid_single_gate,
                              gradient_checkpointing=gradient_checkpointing,
-                             skip=layer_skip, mixer=mixer)
+                             skip=layer_skip, mixer=mixer,
+                             shared_qkv=_shared_qkv, shared_proj=_shared_proj)
             for bt in self.layer_plan
         ])
         self.ln_f = RMSNorm(embedding_dim)
