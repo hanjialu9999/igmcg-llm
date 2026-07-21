@@ -6,7 +6,6 @@ import math
 import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
 from torch.nn.functional import scaled_dot_product_attention
-import threading
 from typing import Optional, List, Tuple, Any, Dict, Callable
 
 from models.constants import MASK_FILL_VALUE, ROPE_BASE
