@@ -355,8 +355,6 @@ class SlidingWindowCausalSelfAttention(nn.Module):
         T = q.size(2)
         self._build_masks(T, dev)
         Tkv = k.size(2)
-        # 训练路径把记忆拼到 K/V 之前（记忆在前，窗口/全量在后）
-        Treal = k_orig_cols  # 真实序列 KV 长度（记忆已在上方面经 inject_memory 拼接，此处仅作语义记录）
         # 统一构造 (1,1,T,Tkv) 注意力掩码：记忆段全 0（全局可检索），
         # 主序列段按 causal / window / rel_bias 遮蔽
         # 静态部分（窗口/因果掩码）仅依赖 (T, Tkv, mem_cols)，缓存复用避免每步每头重建
@@ -638,23 +636,7 @@ class AxialLinearAttention(LinearMixerBase):
         den = torch.einsum('bhtd,bhtd->bht', qf, z_all).unsqueeze(-1).clamp_min(1e-6)
         return num / den  # (B,H,T,D)
 
-    def _linear_attn_1d_rnn(self, q_t, k_t, v_t, S, z, qk_norm_mod=None, log_temp_mod=None):
-        """增量解码（T=1）RNN 路径。"""
-        if qk_norm_mod is not None:
-            q_t = qk_norm_mod(q_t)
-            k_t = qk_norm_mod(k_t)
-        if log_temp_mod is not None:
-            q_t = q_t * torch.exp(log_temp_mod)
-            k_t = k_t * torch.exp(log_temp_mod)
-        qf = self._feat(q_t)
-        kf = self._feat(k_t)
-        S = S + torch.einsum('bhd,bhe->bhde', kf[:, :, 0, :], v_t[:, :, 0, :])
-        z = z + kf[:, :, 0, :]
-        num = torch.einsum('bhd,bhde->bhe', qf[:, :, 0, :], S)
-        den = torch.einsum('bhd,bhd->bh', qf[:, :, 0, :], z).unsqueeze(-1).clamp_min(1e-6)
-        return num / den, S, z  # (B,H,D), S, z
-
-    def _axial_forward(self, x: torch.Tensor, use_cache: bool = False, start_pos: int = 0):
+    def _axial_forward(self, x: torch.Tensor, start_pos: int = 0):
         """轴向 2D 线性注意力：reshpe 1D → 2D → 行注意力 → 列注意力 → 融合 → reshape → proj。"""
         B, T, C = x.shape
         row, col = self._infer_grid(T)
@@ -739,7 +721,13 @@ class AxialLinearAttention(LinearMixerBase):
             out = self.proj((num / den).transpose(1, 2).reshape(B, 1, H * D))
             return out, (k, v, S, z)
         # 全量路径：轴向 2D 线性注意力
-        fused = self._axial_forward(x, use_cache=False, start_pos=start_pos)
+        if memory_kv is not None:
+            import warnings
+            warnings.warn(
+                "AxialLinearAttention 全量路径暂不支持 memory_kv 注入，记忆信息被忽略。",
+                stacklevel=2,
+            )
+        fused = self._axial_forward(x, start_pos=start_pos)
         return self.proj(fused), None
 
 
