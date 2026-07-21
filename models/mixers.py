@@ -1,6 +1,5 @@
 from __future__ import annotations
 import math
-import threading
 from typing import Optional, List, Tuple, Any, Dict, Callable
 import torch
 import torch.nn as nn
@@ -11,6 +10,55 @@ from models.constants import MASK_FILL_VALUE, ROPE_BASE
 from models.norms import RMSNorm
 from models.rope import RotaryEmbedding
 from models.memory import MemoryBank
+
+
+def _parallel_prefix_scan(
+    a: torch.Tensor, b: torch.Tensor,
+    past_state: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Hillis-Steele 并行前缀扫描：h_t = a_t * h_{t-1} + b_t。
+
+    a, b: (B, L, d_inner, d_state)。返回 h: (B, L, d_inner, d_state)。
+    半群 (A, B)⊙(A', B') = (A·A', A'·B + B') 满足结合律；
+    Hillis-Steele 含扫描：每轮把左邻 2^k 步的变换合并进来，offset 从 1 翻倍到 <L。
+    单位元为 (A=1, B=0)，越界位置用单位元填充。
+
+    如果提供 past_state (B, d_inner, d_state)，将其作为 h_{-1} 用于计算 h_0 = a_0 * past_state + b_0。
+    """
+    L = a.shape[1]
+    if a.requires_grad:
+        A, B = a, b
+        offset = 1
+        while offset < L:
+            A_prev = A.roll(offset, dims=1)
+            A_prev[:, :offset] = 1.0
+            B_prev = B.roll(offset, dims=1)
+            B_prev[:, :offset] = 0.0
+            A, B = A_prev * A, A * B_prev + B
+            offset <<= 1
+    else:
+        A = a.clone()
+        B = b.clone()
+        A_prev = torch.empty_like(A)
+        B_prev = torch.empty_like(B)
+        A_new = torch.empty_like(A)
+        B_new = torch.empty_like(B)
+        offset = 1
+        while offset < L:
+            A_prev.copy_(A.roll(offset, dims=1))
+            A_prev[:, :offset] = 1.0
+            B_prev.copy_(B.roll(offset, dims=1))
+            B_prev[:, :offset] = 0.0
+            torch.mul(A_prev, A, out=A_new)
+            torch.mul(A, B_prev, out=B_new)
+            B_new.add_(B)
+            A.copy_(A_new)
+            B.copy_(B_new)
+            offset <<= 1
+    if past_state is not None:
+        past_expanded = past_state.unsqueeze(1).expand(-1, L, -1, -1)
+        B = B + A * past_expanded
+    return B
 
 
 def apply_qk_norm_and_temp(q: torch.Tensor, k: torch.Tensor,
@@ -971,55 +1019,8 @@ class MambaSSM(nn.Module):
         return y_t, None, None
 
     def _selective_scan(self, a: torch.Tensor, b: torch.Tensor, past_state: Optional[torch.Tensor] = None) -> torch.Tensor:
-        """并行前缀扫描计算 h_t = a_t * h_{t-1} + b_t（h_0=0 或 past_state）。
-
-        a, b: (B, L, d_inner, d_state)。返回 h: (B, L, d_inner, d_state)。
-        半群 (A, B)⊙(A', B') = (A·A', A'·B + B') 满足结合律；
-        Hillis-Steele 含扫描：每轮把左邻 2^k 步的变换合并进来，offset 从 1 翻倍到 <L。
-        单位元为 (A=1, B=0)，越界位置用单位元填充。
-        
-        如果提供 past_state (B, d_inner, d_state)，将其作为 h_{-1} 用于计算 h_0 = a_0 * past_state + b_0。
-        """
-        L = a.shape[1]
-        # Standard parallel prefix scan (Hillis-Steele) assuming h_0 = 0
-        # 训练时用普通运算（支持 autograd），推理时用预分配缓冲区（减少分配开销）
-        if a.requires_grad:
-            A, B = a, b
-            offset = 1
-            while offset < L:
-                A_prev = A.roll(offset, dims=1)
-                A_prev[:, :offset] = 1.0
-                B_prev = B.roll(offset, dims=1)
-                B_prev[:, :offset] = 0.0
-                A, B = A_prev * A, A * B_prev + B
-                offset <<= 1
-        else:
-            A = a.clone()
-            B = b.clone()
-            A_prev = torch.empty_like(A)
-            B_prev = torch.empty_like(B)
-            A_new = torch.empty_like(A)
-            B_new = torch.empty_like(B)
-            offset = 1
-            while offset < L:
-                A_prev.copy_(A.roll(offset, dims=1))
-                A_prev[:, :offset] = 1.0
-                B_prev.copy_(B.roll(offset, dims=1))
-                B_prev[:, :offset] = 0.0
-                torch.mul(A_prev, A, out=A_new)
-                torch.mul(A, B_prev, out=B_new)
-                B_new.add_(B)
-                A.copy_(A_new)
-                B.copy_(B_new)
-                offset <<= 1
-        
-        # If we have past_state, incorporate it: A is already the prefix product
-        if past_state is not None:
-            # A[:, t] = a_t * a_{t-1} * ... * a_0（标准扫描已得出，无需重算）
-            past_expanded = past_state.unsqueeze(1).expand(-1, L, -1, -1)
-            B = B + A * past_expanded
-        
-        return B
+        """并行前缀扫描计算 h_t = a_t * h_{t-1} + b_t（h_0=0 或 past_state）。"""
+        return _parallel_prefix_scan(a, b, past_state)
 
 
 class SwiGLU(nn.Module):
@@ -1063,6 +1064,8 @@ class MambaSSMWithCAST(nn.Module):
         self.d_state = d_state
         self.dt_rank = dt_rank
         self.conv_kernel = conv_kernel
+        self.a_log_init_range = a_log_init_range
+        self.D_init = D_init
         self.norm = RMSNorm(dim)
         self.in_proj = nn.Linear(dim, 2 * d_inner, bias=False)
         self.conv = nn.Conv1d(d_inner, d_inner, kernel_size=conv_kernel,
@@ -1083,41 +1086,8 @@ class MambaSSMWithCAST(nn.Module):
         self.proper_init()
 
     def _selective_scan(self, a, b, past_state=None):
-        """并行前缀扫描（复用 MambaSSM 的 Hillis-Steele 实现）。"""
-        L = a.shape[1]
-        if a.requires_grad:
-            A, B = a, b
-            offset = 1
-            while offset < L:
-                A_prev = A.roll(offset, dims=1)
-                A_prev[:, :offset] = 1.0
-                B_prev = B.roll(offset, dims=1)
-                B_prev[:, :offset] = 0.0
-                A, B = A_prev * A, A * B_prev + B
-                offset <<= 1
-        else:
-            A = a.clone()
-            B = b.clone()
-            A_prev = torch.empty_like(A)
-            B_prev = torch.empty_like(B)
-            A_new = torch.empty_like(A)
-            B_new = torch.empty_like(B)
-            offset = 1
-            while offset < L:
-                A_prev.copy_(A.roll(offset, dims=1))
-                A_prev[:, :offset] = 1.0
-                B_prev.copy_(B.roll(offset, dims=1))
-                B_prev[:, :offset] = 0.0
-                torch.mul(A_prev, A, out=A_new)
-                torch.mul(A, B_prev, out=B_new)
-                B_new.add_(B)
-                A.copy_(A_new)
-                B.copy_(B_new)
-                offset <<= 1
-        if past_state is not None:
-            past_expanded = past_state.unsqueeze(1).expand(-1, L, -1, -1)
-            B = B + A * past_expanded
-        return B
+        """并行前缀扫描（复用模块级 _parallel_prefix_scan）。"""
+        return _parallel_prefix_scan(a, b, past_state)
 
     def proper_init(self):
         nn.init.xavier_uniform_(self.in_proj.weight)
@@ -1125,8 +1095,9 @@ class MambaSSMWithCAST(nn.Module):
         nn.init.xavier_uniform_(self.x_proj.weight)
         nn.init.xavier_uniform_(self.dt_proj.weight)
         nn.init.constant_(self.dt_proj.bias, 0.1)
-        nn.init.uniform_(self.A_log, -1.0, 1.0)
+        nn.init.uniform_(self.A_log, *self.a_log_init_range)
         nn.init.ones_(self.D)
+        self.D.data.mul_(self.D_init)
 
     def _compute_cast_delta(self, x: torch.Tensor) -> torch.Tensor:
         """从输入 x 的局部统计身份推导 A_delta。"""
