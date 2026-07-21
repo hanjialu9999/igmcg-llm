@@ -138,3 +138,27 @@
 - 原：`col=ceil(sqrt(T))`, `row=ceil(T/col)`（偏向宽序列）
 - 新：`s=isqrt(T)`, `row=ceil(T/s)`, `col=s`（最接近正方形，空间局部性最强）
 - 示例：T=32 → 原 6×6(pad=4)，新 6×5(pad=2)，padding 减半
+
+---
+
+## 22. 新 Mixer 类型（2026-07-21，commit dd64afe）
+
+### DifferentialAttention（mixer='diff'）
+- **原理**：两组独立 QKV 投影，计算两组注意力，差分消除噪声
+- **公式**：`out = (softmax(Q1·K1^T) - λ·softmax(Q2·K2^T)) · V`
+- **特点**：
+  - λ 可学习（sigmoid 约束到 (0,1)），初始化 0.5
+  - 两组 QKV 独立投影（qkv 共享 V，qkv2 独立 Q/K）
+  - 复杂度 O(T²)（标准注意力），但差分机制更关注显著特征
+  - 支持增量解码（缓存 k1, k2, v 三元组）
+  - 支持 QK-Norm、温度、记忆注入
+
+### 当前可用 mixer 列表
+| mixer | 复杂度 | 特点 |
+|-------|--------|------|
+| attn | O(T²) | 标准滑动窗口因果注意力 |
+| linear | O(T·D²) | 线性注意力，RNN 增量 |
+| linear2d | O(T·√T) | 2D 轴向线性注意力 |
+| attn_linear | O(T²)+O(T·D²) | attn+linear 并行混合 |
+| hybrid_linear2d | O(T·√T)+O(T·D·Ds) | linear2d+SSM 并行 |
+| diff | O(T²) | 差分注意力（新增） |

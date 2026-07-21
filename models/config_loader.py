@@ -108,6 +108,7 @@ def build_model(config: Dict[str, Any], device: Optional[torch.device] = None,
         share_attn_proj=bool(mc.get('share_attn_proj', False)),
         share_ffn=bool(mc.get('share_ffn', False)),
         share_norm=bool(mc.get('share_norm', False)),
+        ssm_type=mc.get('ssm_type', 'standard'),
     )
     # mixer 参数校验：非法值会静默退化为标准 attn，导致用户配置不生效
     _VALID_MIXERS = {'attn', 'linear', 'linear2d', 'attn_linear', 'hybrid_linear2d', 'diff'}

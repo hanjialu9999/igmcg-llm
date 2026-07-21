@@ -16,8 +16,8 @@ from models.norms import RMSNorm
 from models.rope import RotaryEmbedding
 from models.memory import MemoryBank
 from models.mixers import (SlidingWindowCausalSelfAttention, LinearAttention,
-                           AxialLinearAttention, DifferentialAttention, MambaSSM, SwiGLU,
-                           apply_qk_norm_and_temp)
+                           AxialLinearAttention, DifferentialAttention, MambaSSM,
+                           MambaSSMWithCAST, SwiGLU, apply_qk_norm_and_temp)
 from models.sampling import (apply_repetition_penalty, sample_next_token,
                              _decode_one_step)
 from models.layers import CharMergeLayer
@@ -79,7 +79,11 @@ class TransformerBlock(nn.Module):
                     mixer, dim, num_heads, max_seq_length, attn_kwargs,
                     shared_qkv=shared_qkv, shared_proj=shared_proj)
         if block_type in ('ssm', 'hybrid'):
-            self.ssm = MambaSSM(dim, **ssm_kwargs)
+            _ssm_type = ssm_kwargs.pop('ssm_type', 'standard')
+            if _ssm_type == 'cast':
+                self.ssm = MambaSSMWithCAST(dim, **ssm_kwargs)
+            else:
+                self.ssm = MambaSSM(dim, **ssm_kwargs)
         self.ln2 = shared_lns[1] if shared_lns is not None else RMSNorm(dim)
         self.ffn = shared_ffn if shared_ffn is not None else SwiGLU(dim, hidden_dim)
         # ②/⑥ 每层可学习残差门控：x = x + gate * f(x)（init 1.0，默认行为不变）
@@ -356,7 +360,8 @@ class TransformerModel(nn.Module):
                    ngram_gate_scale: float = 1.0, igmcg: bool = False,
                    share_attn_proj: bool = False,
                    share_ffn: bool = False,
-                   share_norm: bool = False):
+                   share_norm: bool = False,
+                   ssm_type: str = 'standard'):
         super(TransformerModel, self).__init__()
 
         self.vocab_size = vocab_size
@@ -418,6 +423,7 @@ class TransformerModel(nn.Module):
             dt_proj_bias_init=ssm_dt_proj_bias_init,
             a_log_init_range=ssm_a_log_init_range,
             D_init=ssm_D_init,
+            ssm_type=ssm_type,
         )
         attn_kwargs = dict(window=attn_window, rel_bias=attn_rel_bias,
                            qk_norm=qk_norm, attn_temp=attn_temp,
