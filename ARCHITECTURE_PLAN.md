@@ -161,4 +161,14 @@
 | linear2d | O(T·√T) | 2D 轴向线性注意力 |
 | attn_linear | O(T²)+O(T·D²) | attn+linear 并行混合 |
 | hybrid_linear2d | O(T·√T)+O(T·D·Ds) | linear2d+SSM 并行 |
-| diff | O(T²) | 差分注意力（新增） |
+| diff | O(T²) | 差分注意力（CVPR 2025） |
+
+### SSM 类型
+| ssm_type | 特点 |
+|----------|------|
+| standard | 标准 MambaSSM（静态 A） |
+| cast | CAST 增强（上下文动态调制 A） |
+
+### 位置感知特征映射
+- AxialLinearAttention 支持 `enable_pos_aware_feat()`，每个网格位置独立的 elu/reLU 混合比例
+- 零初始化→初始行为等价于标准特征映射
