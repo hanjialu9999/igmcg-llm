@@ -114,4 +114,27 @@
 3. ✅ 第三步：linear2d + SSM 混合
 4. ✅ 第四步：全链路线性化验证
 5. ✅ 第五步：6项性能优化
-6. ✅ 第六步：架构缺陷审查与修复
+6. ✅ 第六步：架构缺陷审查与修复（151 tests）
+7. ✅ 第七步：架构整合优化（惰性重算+share_ffn+share_norm+Grid自适应）
+
+---
+
+## 21. 架构整合优化详情（2026-07-21，commit b34c952）
+
+### Memory Bank 惰性重算
+- 问题：每层 write 后立即 `_recompute_kv_cache()`，最后一层 write 后的重算无用（写完不读）
+- 方案：write 标记 `_kv_dirty=True`，get_kv 按需重算
+- 收益：推理时每 token 省去最后一层无用的 decompress + mem_k/mem_v 投影
+
+### 共享机制扩展
+| 共享项 | 配置 | 参数 | 效果 |
+|--------|------|------|------|
+| share_attn_proj | QKV/O 投影 | 3*D² | 压缩 ~40% attn 参数 |
+| share_ffn | SwiGLU w1/w2/w3 | 3*D*H | 压缩 FFN 参数，正则化 |
+| share_norm | RMSNorm ln1/ln2 | 2*D | 统一归一化分布 |
+| MemoryBank | compress/decompress | 2*D*C | 已跨层共享（单实例） |
+
+### Grid Shape 自适应
+- 原：`col=ceil(sqrt(T))`, `row=ceil(T/col)`（偏向宽序列）
+- 新：`s=isqrt(T)`, `row=ceil(T/s)`, `col=s`（最接近正方形，空间局部性最强）
+- 示例：T=32 → 原 6×6(pad=4)，新 6×5(pad=2)，padding 减半

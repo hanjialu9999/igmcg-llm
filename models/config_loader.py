@@ -110,7 +110,7 @@ def build_model(config: Dict[str, Any], device: Optional[torch.device] = None,
         share_norm=bool(mc.get('share_norm', False)),
     )
     # mixer 参数校验：非法值会静默退化为标准 attn，导致用户配置不生效
-    _VALID_MIXERS = {'attn', 'linear', 'linear2d', 'attn_linear', 'hybrid_linear2d'}
+    _VALID_MIXERS = {'attn', 'linear', 'linear2d', 'attn_linear', 'hybrid_linear2d', 'diff'}
     _mixer_raw = mc.get('mixer', 'attn')
     _mixer_val = 'attn_linear' if _mixer_raw == 'hybrid' else _mixer_raw
     if _mixer_val not in _VALID_MIXERS:

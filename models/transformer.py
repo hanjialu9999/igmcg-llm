@@ -16,7 +16,8 @@ from models.norms import RMSNorm
 from models.rope import RotaryEmbedding
 from models.memory import MemoryBank
 from models.mixers import (SlidingWindowCausalSelfAttention, LinearAttention,
-                           AxialLinearAttention, MambaSSM, SwiGLU, apply_qk_norm_and_temp)
+                           AxialLinearAttention, DifferentialAttention, MambaSSM, SwiGLU,
+                           apply_qk_norm_and_temp)
 from models.sampling import (apply_repetition_penalty, sample_next_token,
                              _decode_one_step)
 from models.layers import CharMergeLayer
@@ -134,6 +135,13 @@ class TransformerBlock(nn.Module):
                                         attn_temp=attn_kwargs.get('attn_temp', True),
                                         feature=attn_kwargs.get('linear_attn_feature', 'relu'),
                                         shared_qkv=shared_qkv, shared_proj=shared_proj)
+            return attn, None, None
+        if mixer == 'diff':
+            # 差分注意力：两组注意力差值消除噪声，增强关键特征
+            attn = DifferentialAttention(dim, num_heads, max_seq_length=max_seq_length,
+                                         qk_norm=attn_kwargs.get('qk_norm', True),
+                                         attn_temp=attn_kwargs.get('attn_temp', True),
+                                         shared_qkv=shared_qkv, shared_proj=shared_proj)
             return attn, None, None
         if mixer == 'attn_linear':
             attn_only = {k: v for k, v in attn_kwargs.items()
