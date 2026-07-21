@@ -74,6 +74,7 @@ class MemoryBank(nn.Module):
         # slots 重建 → 缓存失效
         self._kv_cache = None
         self._kv_cache_slots = None
+        self._kv_dirty = True
 
     def write(self, x: torch.Tensor) -> None:
         """x: (B, T, D) 当前层表示，soft 写入记忆。"""
@@ -125,9 +126,9 @@ class MemoryBank(nn.Module):
             # 记忆 divergence（slots 差 ~0.6）。归一化改为在读取时（_recompute_kv_cache）
             # 统一做一次，与写入粒度无关，保证全量/增量记忆槽逐位一致。
             self.slots = self.slots + update
-        # write 已更新 slots → 立即解压并重算 K/V 缓存（而非延迟到下次 get_kv 时重算），
-        # 每个 block 调 get_kv 直接命中缓存，避免跨层重复解压（DML 小算子启动税显著）。
-        self._recompute_kv_cache()
+        # write 已更新 slots → 标记缓存脏，延迟到下次 get_kv 时按需重算（惰性重算）。
+        # 避免：(1) 最后一层 write 后的无用重算（写完不读）；(2) 多层重复解压开销。
+        self._kv_dirty = True
 
     def _recompute_kv_cache(self):
         # 读取时统一 L2 归一化（与写入粒度无关，保证全量/增量记忆一致；幂等于已归一化情形）
@@ -139,14 +140,13 @@ class MemoryBank(nn.Module):
     def get_kv(self) -> Tuple[torch.Tensor, torch.Tensor, Optional[Dict[str, Any]]]:
         """返回记忆的 K/V：(B, M, head_dim) 及检索元信息（门控/稀疏）。
 
-        直接复用已对齐设备的 slots，不在热路径做 .to（避免 DML 设备别名导致的每步拷贝）。
-        slots 未变时复用缓存 K/V（write 后已立即重算），避免多块重复解压。
+        惰性重算：write() 标记 _kv_dirty=True，此处按需重算（slots 未变且非脏时直接复用缓存）。
+        避免：(1) 最后一层 write 后无用重算；(2) 多层重复解压。
         """
-        if getattr(self, '_kv_cache', None) is not None and self._kv_cache_slots is self.slots:
-            k, v = self._kv_cache
-        else:
+        if getattr(self, '_kv_dirty', True) or getattr(self, '_kv_cache', None) is None or self._kv_cache_slots is not self.slots:
             self._recompute_kv_cache()
-            k, v = self._kv_cache
+            self._kv_dirty = False
+        k, v = self._kv_cache
         meta = None
         if self.retrieval_enabled or self.sparse_topk > 0:
             meta = {

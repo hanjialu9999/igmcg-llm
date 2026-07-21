@@ -551,8 +551,12 @@ class AxialLinearAttention(nn.Module):
         if self.grid_size is not None:
             return self.grid_size
         import math
-        col = int(math.ceil(math.sqrt(T)))
-        row = math.ceil(T / col)
+        # 优先最接近正方形（空间局部性最强），用 isqrt 作为基准
+        s = math.isqrt(T)
+        row, col = s, math.ceil(T / s)
+        # 如果 row < col，交换使 row ≥ col（行数≥列数，列注意力覆盖距离更远）
+        if row < col:
+            row, col = col, row
         return row, col
 
     def _linear_attn_1d(self, q, k, v, qk_norm_mod=None, log_temp_mod=None):
