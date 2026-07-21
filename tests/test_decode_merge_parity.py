@@ -37,6 +37,35 @@ def test_decode_one_step_matches_inline_forward():
     assert cur_pos2 == 1
 
 
+def test_decode_one_step_temperature_applied():
+    """回归：_decode_one_step 在 temperature_applied=True 时必须跳过 forward 内部温度缩放
+    （传 temperature=1.0），否则与 sample_next_token(temperature_applied=True) 组合会导致
+    双重除温（非 IGMCG 路径 ngram_fusion 关闭时的回归点）。"""
+    m, v, ng = _ngram_model()
+    device = 'cpu'
+    tok = 5
+    temp = 0.8
+    # temperature_applied=True → _decode_one_step 应传 temperature=1.0 给 forward
+    m.reset_ngram_state()
+    inp = torch.tensor([[tok]], dtype=torch.long, device=device)
+    logits_ref, _ = m.forward(inp, past_key_values=None, use_cache=True, temperature=1.0)
+    m.reset_ngram_state()
+    _, logits_applied, _ = _decode_one_step(m, tok, None, 0, device=device,
+                                            temperature=temp, temperature_applied=True)
+    diff_applied = (logits_ref - logits_applied).abs().max().item()
+    assert diff_applied < 1e-6, \
+        f"temperature_applied=True 未跳过温度缩放：diff={diff_applied}"
+    # temperature_applied=False → 应传 temperature=0.8 给 forward
+    m.reset_ngram_state()
+    logits_ref_temp, _ = m.forward(inp, past_key_values=None, use_cache=True, temperature=temp)
+    m.reset_ngram_state()
+    _, logits_not_applied, _ = _decode_one_step(m, tok, None, 0, device=device,
+                                                 temperature=temp, temperature_applied=False)
+    diff_not = (logits_ref_temp - logits_not_applied).abs().max().item()
+    assert diff_not < 1e-6, \
+        f"temperature_applied=False 温度缩放不一致：diff={diff_not}"
+
+
 def test_generate_deterministic_fixed_seed():
     """model.generate 在固定 seed 下多次调用必须确定性输出（无随机性漂移）。"""
     m, v, ng = _ngram_model()

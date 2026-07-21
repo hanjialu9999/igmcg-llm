@@ -71,12 +71,19 @@ def sample_next_token(logits_t: torch.Tensor, *, temperature: float,
     return torch.multinomial(probs, num_samples=1).item()
 def _decode_one_step(model: "TransformerModel", next_token: int,
                       past: Optional[Any], cur_pos: int, *, device: str,
-                      use_cache: bool = True, temperature: float = 1.0) -> Tuple[Any, torch.Tensor, int]:
+                      use_cache: bool = True, temperature: float = 1.0,
+                      temperature_applied: bool = False) -> Tuple[Any, torch.Tensor, int]:
     """单步续前向（KV-cache 驱动）原语，供 model.generate 与 scripts/generate.py
     的批量解码共用，消除两套解码主循环重复的「input_ids=[[tok]] -> forward(past)
-    -> cur_pos+=1」驱动逻辑。语义与原 generate 循环体完全一致（数值不变）。"""
+    -> cur_pos+=1」驱动逻辑。语义与原 generate 循环体完全一致（数值不变）。
+
+    当 temperature_applied=True 时（ngram_fusion 路径），传 temperature=1.0 给 forward
+    以跳过内部温度缩放（forward 内部总是做 z/τ），让采样端统一处理，避免双重除温。
+    注意：forward 无 temperature_applied 参数，温度缩放由 forward 自身完成；此处仅控制
+    传入值。"""
     input_ids = torch.tensor([[next_token]], dtype=torch.long, device=device)
+    _temp = 1.0 if temperature_applied else temperature
     logits, past = model.forward(input_ids, past_key_values=past, use_cache=use_cache,
-                                 temperature=temperature)
+                                 temperature=_temp)
     cur_pos += 1
     return past, logits, cur_pos
