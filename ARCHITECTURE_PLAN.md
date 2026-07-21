@@ -172,3 +172,44 @@
 ### 位置感知特征映射
 - AxialLinearAttention 支持 `enable_pos_aware_feat()`，每个网格位置独立的 elu/reLU 混合比例
 - 零初始化→初始行为等价于标准特征映射
+
+## 23. ModelConfig schema 重构（2026-07-21，commit ea60f73）
+
+### 改动
+- 新增 `models/model_config.py`：`ModelConfig` dataclass + `SSMConfig` / `AttnConfig` / `MemoryConfig` 子配置
+- `from_dict(mc)` 替代 config_loader 中 42 个 `mc.get()` 散参数
+- `__post_init__` 自动校验必填字段、枚举值、范围约束
+- `TransformerModel.from_config(cfg)` 从 ModelConfig 构建，保留旧 `__init__` 向后兼容
+
+### 配置校验规则
+| 字段 | 约束 |
+|------|------|
+| vocab_size / embedding_dim / num_heads / num_layers / hidden_dim / max_seq_length | > 0 |
+| mixer | ∈ {attn, linear, linear2d, attn_linear, hybrid_linear2d, diff} |
+| ssm_type | ∈ {standard, cast} |
+| a_log_init_range | 长度 2 |
+
+## 24. 架构代码质量改进（2026-07-21，commit 30f8d04）
+
+### 提取 _parallel_prefix_scan
+- 模块级函数，MambaSSM 与 MambaSSMWithCAST 共用
+- 消除 ~45 行重复代码，修复 CAST init 硬编码 bug（a_log_init_range / D_init）
+
+### 提取 _apply_ngram_fusion
+- TransformerModel.forward 内联 ~60 行 n-gram/IGMCG 融合逻辑提取为独立方法
+- forward 主体从 ~140 行缩减到 ~80 行
+
+### 死代码清理
+- 删除 mixers.py 的 `import threading`（未使用）
+
+## 25. 待推进：架构接口重构（下一轮专项）
+
+### BlockState dataclass
+- 替代裸元组嵌套 `Tuple[Optional[Tuple[Optional[Tuple[T,T]], T, T]]]`
+- 涉及 15+ 处索引访问（mixers.py 8处 + transformer.py 7处）
+- 风险中等，需 parity 测试矩阵
+
+### LinearMixerBase 基类
+- LinearAttention / AxialLinearAttention / DifferentialAttention 共享 ~80 行重复
+- __init__ 初始化、_feat、project_and_norm、_rt、set_enhancements_active
+- 风险低，需验证 ModuleList 序列化兼容
