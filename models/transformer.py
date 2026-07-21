@@ -40,7 +40,9 @@ class TransformerBlock(nn.Module):
                  skip: bool = False, mixer: str = 'attn',
                  hybrid_single_gate: bool = False,
                  shared_qkv: Optional[nn.Linear] = None,
-                 shared_proj: Optional[nn.Linear] = None):
+                 shared_proj: Optional[nn.Linear] = None,
+                 shared_ffn: Optional[SwiGLU] = None,
+                 shared_lns: Optional[Tuple[RMSNorm, RMSNorm]] = None):
         super().__init__()
         self.block_type = block_type
         self.drop = nn.Dropout(dropout)
@@ -53,7 +55,10 @@ class TransformerBlock(nn.Module):
         self._rt: Dict[str, bool] = {"residual_gate": True, "hybrid_gate": True}
         self.gradient_checkpointing = gradient_checkpointing
         # Both attn and ssm blocks need a pre-norm layer
-        self.ln1 = RMSNorm(dim)
+        if shared_lns is not None:
+            self.ln1, self.ln2 = shared_lns
+        else:
+            self.ln1 = RMSNorm(dim)
         if block_type in ('attn', 'hybrid'):
             # 阶段7 token mixer 选择：attn(默认) / linear(纯线性注意力) /
             # linear2d(2D 轴向线性注意力, O(T·√T)) /
@@ -74,8 +79,8 @@ class TransformerBlock(nn.Module):
                     shared_qkv=shared_qkv, shared_proj=shared_proj)
         if block_type in ('ssm', 'hybrid'):
             self.ssm = MambaSSM(dim, **ssm_kwargs)
-        self.ln2 = RMSNorm(dim)
-        self.ffn = SwiGLU(dim, hidden_dim)
+        self.ln2 = shared_lns[1] if shared_lns is not None else RMSNorm(dim)
+        self.ffn = shared_ffn if shared_ffn is not None else SwiGLU(dim, hidden_dim)
         # ②/⑥ 每层可学习残差门控：x = x + gate * f(x)（init 1.0，默认行为不变）
         if residual_gate:
             # hybrid 块的第一子层用 hybrid_attn_gate/hybrid_ssm_gate，sub1_gate 无用，跳过分配
@@ -341,7 +346,9 @@ class TransformerModel(nn.Module):
                    linear_attn_head_dim: Optional[int] = None,
                    ngram_fusion: bool = False, ngram_model=None,
                    ngram_gate_scale: float = 1.0, igmcg: bool = False,
-                   share_attn_proj: bool = False):
+                   share_attn_proj: bool = False,
+                   share_ffn: bool = False,
+                   share_norm: bool = False):
         super(TransformerModel, self).__init__()
 
         self.vocab_size = vocab_size
@@ -421,6 +428,14 @@ class TransformerModel(nn.Module):
         if share_attn_proj:
             self.shared_qkv = _shared_qkv
             self.shared_proj = _shared_proj
+        # 层间共享 FFN（share_ffn=True）：各层复用同一组 SwiGLU 参数
+        _shared_ffn = SwiGLU(embedding_dim, hidden_dim) if share_ffn else None
+        if share_ffn:
+            self.shared_ffn = _shared_ffn
+        # 层间共享 LayerNorm（share_norm=True）：各层复用同一组 RMSNorm 参数
+        _shared_lns = (RMSNorm(embedding_dim), RMSNorm(embedding_dim)) if share_norm else None
+        if share_norm:
+            self.shared_lns = nn.ModuleList(_shared_lns)
         self.blocks = nn.ModuleList([
             TransformerBlock(embedding_dim, num_heads, hidden_dim, block_type=bt,
                              dropout=dropout, max_seq_length=rope_max_len,
@@ -429,7 +444,8 @@ class TransformerModel(nn.Module):
                              hybrid_single_gate=hybrid_single_gate,
                              gradient_checkpointing=gradient_checkpointing,
                              skip=layer_skip, mixer=mixer,
-                             shared_qkv=_shared_qkv, shared_proj=_shared_proj)
+                             shared_qkv=_shared_qkv, shared_proj=_shared_proj,
+                             shared_ffn=_shared_ffn, shared_lns=_shared_lns)
             for bt in self.layer_plan
         ])
         self.ln_f = RMSNorm(embedding_dim)

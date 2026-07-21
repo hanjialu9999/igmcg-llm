@@ -233,3 +233,74 @@ def test_config_loader_rejects_invalid_mixer():
         assert False, "Should have raised ValueError for invalid mixer"
     except ValueError as e:
         assert 'mixer' in str(e).lower()
+
+
+# ─── 第八轮架构整合回归测试 ───────────────────────────────────────────────
+
+def test_share_ffn_layers_share_parameters():
+    """share_ffn=True 时，所有 block 的 FFN 应引用同一组参数。"""
+    m = TransformerModel(vocab_size=200, embedding_dim=64, num_heads=4, num_layers=3,
+                         hidden_dim=128, max_seq_length=32, share_ffn=True)
+    ffn_ids = [id(blk.ffn) for blk in m.blocks]
+    assert len(set(ffn_ids)) == 1, f"share_ffn=True but FFNs are different: {ffn_ids}"
+    x = torch.randint(0, 200, (1, 8))
+    with torch.no_grad():
+        out = m(x)
+    assert out.shape == (1, 8, 200)
+    assert torch.isfinite(out).all()
+
+
+def test_share_norm_layers_share_parameters():
+    """share_norm=True 时，所有 block 的 ln1/ln2 应引用同一组参数。"""
+    m = TransformerModel(vocab_size=200, embedding_dim=64, num_heads=4, num_layers=3,
+                         hidden_dim=128, max_seq_length=32, share_norm=True)
+    ln1_ids = [id(blk.ln1) for blk in m.blocks]
+    ln2_ids = [id(blk.ln2) for blk in m.blocks]
+    assert len(set(ln1_ids)) == 1, f"share_norm=True but ln1s differ: {ln1_ids}"
+    assert len(set(ln2_ids)) == 1, f"share_norm=True but ln2s differ: {ln2_ids}"
+    x = torch.randint(0, 200, (1, 8))
+    with torch.no_grad():
+        out = m(x)
+    assert out.shape == (1, 8, 200)
+    assert torch.isfinite(out).all()
+
+
+def test_memory_lazy_recompute():
+    """Memory Bank 惰性重算：write 后不立即重算，get_kv 时按需重算。"""
+    from models.memory import MemoryBank
+    mb = MemoryBank(dim=64, num_slots=8, comp_dim=16, head_dim=64)
+    mb.reset(2, torch.device('cpu'), torch.float32)
+    x = torch.randn(2, 4, 64)
+    mb.write(x)
+    # write 后 _kv_dirty 应为 True
+    assert getattr(mb, '_kv_dirty', False) is True, "write should set _kv_dirty=True"
+    k, v, _ = mb.get_kv()
+    assert k.shape == (2, 8, 64)
+    assert v.shape == (2, 8, 64)
+    # get_kv 后 _kv_dirty 应为 False
+    assert mb._kv_dirty is False, "get_kv should set _kv_dirty=False"
+    # 再次 write 应重新标记 dirty
+    mb.write(x)
+    assert mb._kv_dirty is True, "second write should set _kv_dirty=True"
+
+
+def test_share_ffn_and_attn_proj_combined():
+    """同时启用 share_ffn + share_attn_proj，模型可正常前向。"""
+    m = TransformerModel(vocab_size=200, embedding_dim=64, num_heads=4, num_layers=2,
+                         hidden_dim=128, max_seq_length=32, share_ffn=True, share_attn_proj=True)
+    x = torch.randint(0, 200, (1, 8))
+    with torch.no_grad():
+        out = m(x)
+    assert out.shape == (1, 8, 200)
+    assert torch.isfinite(out).all()
+
+
+def test_linear2d_grid_shape_isqrt():
+    """AxialLinearAttention._infer_grid 应优先最接近正方形。"""
+    from models.mixers import AxialLinearAttention
+    m = AxialLinearAttention(dim=64, num_heads=4, max_seq_length=64)
+    row, col = m._infer_grid(32)
+    assert row * col >= 32, f"grid {row}x{col} too small for T=32"
+    assert row >= col, f"row {row} < col {col}, should be row >= col"
+    # 接近正方形：row/col 比应 < 2
+    assert row / col < 2.0, f"grid {row}x{col} not close to square"
