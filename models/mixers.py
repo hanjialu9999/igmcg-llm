@@ -499,6 +499,187 @@ class LinearAttention(nn.Module):
         return self.proj(out), present
 
 
+class AxialLinearAttention(nn.Module):
+    """2D 轴向线性注意力：将 1D 序列视为 row×col 网格，先行后列各做线性注意力，
+    输出加权融合。复杂度 O(T·√T)，兼顾效率与 2D 空间归纳偏置。
+
+    与 LinearAttention 同接口（project_and_norm + attend），可直接替换为 mixer='linear2d'。
+    支持 KV-cache：增量解码时仅处理单 token，不展开网格（退化为等效 1D 线性注意力）。
+
+    参数:
+        grid_size: (row, col) 网格尺寸。为 None 时自动取最接近的整数平方根。
+        gate_init: 行/列融合门控初始偏置（>0 偏向列，<0 偏向行）。
+    """
+
+    def __init__(self, dim: int, num_heads: int, qk_norm: bool = True, attn_temp: bool = True,
+                 max_seq_length: int = 64, feature: str = 'relu', head_dim: Optional[int] = None,
+                 rope_learnable: bool = False, grid_size: Optional[Tuple[int, int]] = None,
+                 gate_init: float = 0.0,
+                 shared_qkv: Optional[nn.Linear] = None, shared_proj: Optional[nn.Linear] = None):
+        super().__init__()
+        self.num_heads = num_heads
+        self.head_dim = head_dim or (dim // num_heads)
+        self.max_seq_length = max_seq_length
+        self.feature = feature
+        self.grid_size = grid_size  # (row, col) or None for auto
+        # 与 LinearAttention 同结构的共享/独立 QKV/Output 投影
+        self.qkv = shared_qkv if shared_qkv is not None else nn.Linear(dim, 3 * self.num_heads * self.head_dim, bias=False)
+        self.proj = shared_proj if shared_proj is not None else nn.Linear(self.num_heads * self.head_dim, dim, bias=False)
+        # 行/列各自独立的投影（不共享，各有各的 QKV 空间）
+        self.qkv_row = nn.Linear(dim, 3 * self.num_heads * self.head_dim, bias=False)
+        self.proj_row = nn.Linear(self.num_heads * self.head_dim, dim, bias=False)
+        self.qkv_col = nn.Linear(dim, 3 * self.num_heads * self.head_dim, bias=False)
+        self.proj_col = nn.Linear(self.num_heads * self.head_dim, dim, bias=False)
+        # 行/列融合门控：sigmoid(gate) * row_out + (1-sigmoid(gate)) * col_out
+        self.gate = nn.Parameter(torch.tensor(gate_init))
+        # RoPE / QK-Norm / Temp（与 LinearAttention 一致）
+        self.rope = RotaryEmbedding(self.head_dim, learnable=rope_learnable)
+        self.qk_norm_enabled = qk_norm
+        if qk_norm:
+            self.qk_norm = RMSNorm(self.head_dim)
+            self.qk_norm_row = RMSNorm(self.head_dim)
+            self.qk_norm_col = RMSNorm(self.head_dim)
+        self.attn_temp_enabled = attn_temp
+        if attn_temp:
+            self.log_temp = nn.Parameter(torch.zeros(1))
+            self.log_temp_row = nn.Parameter(torch.zeros(1))
+            self.log_temp_col = nn.Parameter(torch.zeros(1))
+        self._rt: Dict[str, bool] = {"qk_norm": True, "attn_temp": True}
+
+    def _feat(self, x: torch.Tensor) -> torch.Tensor:
+        if self.feature == 'elu':
+            return torch.nn.functional.elu(x) + 1.0
+        return torch.nn.functional.relu(x) + 1e-6
+
+    def _infer_grid(self, T: int) -> Tuple[int, int]:
+        if self.grid_size is not None:
+            return self.grid_size
+        import math
+        col = int(math.ceil(math.sqrt(T)))
+        row = math.ceil(T / col)
+        return row, col
+
+    def _linear_attn_1d(self, q, k, v, qk_norm_mod=None, log_temp_mod=None):
+        """单轴线性注意力：cumsum 向量化（全量路径），返回 (B,H,T,D)。"""
+        B, H, T, D = q.shape
+        if qk_norm_mod is not None:
+            q = qk_norm_mod(q)
+            k = qk_norm_mod(k)
+        if log_temp_mod is not None:
+            q = q * torch.exp(log_temp_mod)
+            k = k * torch.exp(log_temp_mod)
+        qf = self._feat(q)
+        kf = self._feat(k)
+        kv_all = torch.einsum('bhtd,bhte->bhtde', kf, v)
+        S_all = torch.cumsum(kv_all, dim=2)
+        z_all = torch.cumsum(kf, dim=2)
+        num = torch.einsum('bhtd,bhtde->bhte', qf, S_all)
+        den = torch.einsum('bhtd,bhtd->bht', qf, z_all).unsqueeze(-1).clamp_min(1e-6)
+        return num / den  # (B,H,T,D)
+
+    def _linear_attn_1d_rnn(self, q_t, k_t, v_t, S, z, qk_norm_mod=None, log_temp_mod=None):
+        """增量解码（T=1）RNN 路径。"""
+        if qk_norm_mod is not None:
+            q_t = qk_norm_mod(q_t)
+            k_t = qk_norm_mod(k_t)
+        if log_temp_mod is not None:
+            q_t = q_t * torch.exp(log_temp_mod)
+            k_t = k_t * torch.exp(log_temp_mod)
+        qf = self._feat(q_t)
+        kf = self._feat(k_t)
+        S = S + torch.einsum('bhd,bhe->bhde', kf[:, :, 0, :], v_t[:, :, 0, :])
+        z = z + kf[:, :, 0, :]
+        num = torch.einsum('bhd,bhde->bhe', qf[:, :, 0, :], S)
+        den = torch.einsum('bhd,bhd->bh', qf[:, :, 0, :], z).unsqueeze(-1).clamp_min(1e-6)
+        return num / den, S, z  # (B,H,D), S, z
+
+    def project_and_norm(self, x: torch.Tensor, start_pos: int = 0):
+        # 主投影（用于增量解码或非轴向模式），轴向模式下由 _axial_forward 内部使用
+        B, T, C = x.shape
+        qkv = self.qkv(x).reshape(B, T, 3, self.num_heads, self.head_dim)
+        qkv = qkv.permute(2, 0, 3, 1, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]
+        q, k = apply_qk_norm_and_temp(
+            q, k, self._rt,
+            self.qk_norm if self.qk_norm_enabled else None,
+            self.log_temp if self.attn_temp_enabled else None)
+        q, k = self.rope(q, k, start_pos=start_pos, max_len=self.max_seq_length)
+        return q, k, v
+
+    def _axial_forward(self, x: torch.Tensor, use_cache: bool = False, start_pos: int = 0):
+        """轴向 2D 线性注意力：reshpe 1D → 2D → 行注意力 → 列注意力 → 融合 → reshape → proj。"""
+        B, T, C = x.shape
+        row, col = self._infer_grid(T)
+        pad_len = row * col - T
+        if pad_len > 0:
+            x = torch.nn.functional.pad(x, (0, 0, 0, pad_len))  # 补零到 row*col
+        x2d = x.reshape(B, row, col, C)
+
+        # ── 行注意力：沿 col 维度做线性注意力 ──
+        x_row = x2d.reshape(B * row, col, C)
+        qkv_r = self.qkv_row(x_row).reshape(B * row, col, 3, self.num_heads, self.head_dim)
+        qkv_r = qkv_r.permute(2, 0, 3, 1, 4)
+        qr, kr, vr = qkv_r[0], qkv_r[1], qkv_r[2]
+        qr, kr = apply_qk_norm_and_temp(
+            qr, kr, self._rt,
+            self.qk_norm_row if self.qk_norm_enabled else None,
+            self.log_temp_row if self.attn_temp_enabled else None)
+        hr = self._linear_attn_1d(qr, kr, vr,
+                                   qk_norm_mod=None, log_temp_mod=None)  # 已在上面处理
+        out_row = self.proj_row(hr.transpose(1, 2).reshape(B * row, col, self.num_heads * self.head_dim))
+        out_row = out_row.reshape(B, row, col, C)
+
+        # ── 列注意力：沿 row 维度做线性注意力 ──
+        x_col = x2d.permute(0, 2, 1, 3).reshape(B * col, row, C)  # (B*col, row, C)
+        qkv_c = self.qkv_col(x_col).reshape(B * col, row, 3, self.num_heads, self.head_dim)
+        qkv_c = qkv_c.permute(2, 0, 3, 1, 4)
+        qc, kc, vc = qkv_c[0], qkv_c[1], qkv_c[2]
+        qc, kc = apply_qk_norm_and_temp(
+            qc, kc, self._rt,
+            self.qk_norm_col if self.qk_norm_enabled else None,
+            self.log_temp_col if self.attn_temp_enabled else None)
+        hc = self._linear_attn_1d(qc, kc, vc,
+                                   qk_norm_mod=None, log_temp_mod=None)
+        out_col = self.proj_col(hc.transpose(1, 2).reshape(B * col, row, self.num_heads * self.head_dim))
+        out_col = out_col.reshape(B, col, row, C).permute(0, 2, 1, 3)  # → (B, row, col, C)
+
+        # ── 融合 ──
+        g = torch.sigmoid(self.gate)
+        fused = g * out_row + (1 - g) * out_col  # (B, row, col, C)
+        fused = fused.reshape(B, row * col, C)[:, :T, :]  # 去掉 padding
+        return fused  # (B, T, C)
+
+    def forward(self, x: torch.Tensor, past_kv=None, use_cache: bool = False, start_pos: int = 0,
+                memory_kv=None):
+        B, T, C = x.shape
+        # 增量解码（T=1）：退化为等效 1D 线性注意力（不展开网格）
+        if use_cache and T == 1:
+            q, k, v = self.project_and_norm(x, start_pos)
+            H, D = self.num_heads, self.head_dim
+            if past_kv is not None and len(past_kv) >= 4 and past_kv[2] is not None:
+                S, z = past_kv[2], past_kv[3]
+                kf_t = self._feat(k[:, :, 0, :])
+                v_t = v[:, :, 0, :]
+                S = S + torch.einsum('bhd,bhe->bhde', kf_t, v_t)
+                z = z + kf_t
+                num = torch.einsum('bhd,bhde->bhe', self._feat(q[:, :, 0, :]), S)
+                den = torch.einsum('bhd,bhd->bh', self._feat(q[:, :, 0, :]), z).unsqueeze(-1).clamp_min(1e-6)
+                out = self.proj((num / den).transpose(1, 2).reshape(B, 1, H * D))
+                return out, (k, v, S, z)
+            # 首步：初始化 S/z
+            qf = self._feat(q)
+            kf = self._feat(k)
+            S = torch.einsum('bhd,bhe->bhde', kf[:, :, 0, :], v[:, :, 0, :])
+            z = kf[:, :, 0, :]
+            num = torch.einsum('bhd,bhde->bhe', qf[:, :, 0, :], S)
+            den = torch.einsum('bhd,bhd->bh', qf[:, :, 0, :], z).unsqueeze(-1).clamp_min(1e-6)
+            out = self.proj((num / den).transpose(1, 2).reshape(B, 1, H * D))
+            return out, (k, v, S, z)
+        # 全量路径：轴向 2D 线性注意力
+        fused = self._axial_forward(x, use_cache=False, start_pos=start_pos)
+        return self.proj(fused), None
+
+
 class MambaSSM(nn.Module):
     """Mamba-like 选择性状态空间模型（线性复杂度长序列建模）。
       门控 + 输入依赖的 Δ/B/C，零阶保持离散化后沿时间递推。

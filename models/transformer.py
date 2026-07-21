@@ -16,7 +16,7 @@ from models.norms import RMSNorm
 from models.rope import RotaryEmbedding
 from models.memory import MemoryBank
 from models.mixers import (SlidingWindowCausalSelfAttention, LinearAttention,
-                           MambaSSM, SwiGLU, apply_qk_norm_and_temp)
+                           AxialLinearAttention, MambaSSM, SwiGLU, apply_qk_norm_and_temp)
 from models.sampling import (apply_repetition_penalty, sample_next_token,
                              _decode_one_step)
 from models.layers import CharMergeLayer
@@ -56,6 +56,7 @@ class TransformerBlock(nn.Module):
         self.ln1 = RMSNorm(dim)
         if block_type in ('attn', 'hybrid'):
             # 阶段7 token mixer 选择：attn(默认) / linear(纯线性注意力) /
+            # linear2d(2D 轴向线性注意力, O(T·√T)) /
             # attn_linear(attn+线性注意力 两路并行，可学 mixer_gate 自选择比例)。
             # 旧配置字符串 'hybrid' 等价于 'attn_linear'（向后兼容）。
             if mixer == 'hybrid':
@@ -113,6 +114,14 @@ class TransformerBlock(nn.Module):
                                    attn_temp=attn_kwargs.get('attn_temp', True),
                                    feature=attn_kwargs.get('linear_attn_feature', 'relu'),
                                    shared_qkv=shared_qkv, shared_proj=shared_proj)
+            return attn, None, None
+        if mixer == 'linear2d':
+            # 2D 轴向线性注意力：O(T·√T)，适合序列长度为完全平方数或接近的场景
+            attn = AxialLinearAttention(dim, num_heads, max_seq_length=max_seq_length,
+                                        qk_norm=attn_kwargs.get('qk_norm', True),
+                                        attn_temp=attn_kwargs.get('attn_temp', True),
+                                        feature=attn_kwargs.get('linear_attn_feature', 'relu'),
+                                        shared_qkv=shared_qkv, shared_proj=shared_proj)
             return attn, None, None
         if mixer == 'attn_linear':
             attn_only = {k: v for k, v in attn_kwargs.items()
