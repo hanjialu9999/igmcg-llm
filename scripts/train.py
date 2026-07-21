@@ -249,8 +249,15 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
     if progress is not None:
         progress.close()
 
-    # Flush any leftover accumulated gradients
+    # Flush any leftover accumulated gradients (rescale if partial bucket)
     if accumulated % grad_accum_steps != 0:
+        actual_accum = accumulated % grad_accum_steps
+        if actual_accum != grad_accum_steps:
+            # 梯度被除以了 grad_accum_steps，但只有 actual_accum 步贡献，需修正比例
+            scale = grad_accum_steps / actual_accum
+            for p in model.parameters():
+                if p.grad is not None:
+                    p.grad.mul_(scale)
         step_optimizer()
 
     return (loss_sum / loss_count).item() if loss_count else 0.0
@@ -264,8 +271,8 @@ def validate(model, dataloader, criterion, device):
     
     with torch.no_grad():
         for batch in dataloader:
-            input_ids = batch['input_ids'].to(device)
-            target_ids = batch['target_ids'].to(device)
+            input_ids = batch['input_ids'].to(device, non_blocking=True)
+            target_ids = batch['target_ids'].to(device, non_blocking=True)
             
             # Forward pass
             logits = model(input_ids)
@@ -616,7 +623,6 @@ def main(config_path='configs/pretrain.yaml', resume=False):
     cleanup_old_checkpoints(checkpoint_dir, keep_last_n=5)
     
     # Save final model and vocab
-    final_model_path = os.path.join(checkpoint_dir, 'final_model.pt')
     # CPU-offload 后再保存，确保任意设备（含 DML/CUDA）都能用 weights_only=True 加载
     final_model_path, vocab_path = save_final_model(
         model, vocab, checkpoint_dir, config['model'])

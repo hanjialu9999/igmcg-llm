@@ -1,5 +1,6 @@
 from __future__ import annotations
-from typing import Optional, List, Callable
+from typing import Optional, List, Callable, Any, Tuple
+from collections import Counter
 import torch
 
 
@@ -13,7 +14,6 @@ def apply_repetition_penalty(logits: torch.Tensor, generated_ids: List[int],
     """
     if penalty <= 0 or not generated_ids:
         return logits
-    from collections import Counter
     freq = Counter(generated_ids)
     vocab_size = logits.shape[-1]
     prev_toks = torch.tensor(list(freq.keys()), dtype=torch.long, device=device)
@@ -42,7 +42,7 @@ def sample_next_token(logits_t: torch.Tensor, *, temperature: float,
     `temperature_applied`：当上游已对主干 logits 应用过温度（n-gram 融合路径，forward 内
     log_softmax(z/τ)），此处不再整体除以 τ（否则会错误缩放 n-gram 先验）。此时若提供了
     未温度化的 raw_logits，回退分支仍用 raw_logits/τ 以恢复正确主干分布。"""
-    lt = logits_t if temperature_applied else logits_t / temperature
+    lt = logits_t.clone() if temperature_applied else logits_t / temperature
     apply_repetition_penalty(lt, generated_ids, repetition_penalty, device)
     if ngram_fn is not None and ngram_weight != 0.0:
         lt = lt + ngram_weight * ngram_fn(generated_ids, device)
@@ -53,7 +53,7 @@ def sample_next_token(logits_t: torch.Tensor, *, temperature: float,
     else:
         lt[eos_id] = lt[eos_id] + eos_penalty
     if top_k > 0 and top_k < vocab_size:
-        top_k_vals = torch.topk(lt, min(top_k, vocab_size))[0]
+        top_k_vals = torch.topk(lt, top_k)[0]
         threshold = top_k_vals[..., -1]
         lt[lt < threshold] = float('-inf')
     if torch.isinf(lt).all():

@@ -52,6 +52,7 @@ class MemoryBank(nn.Module):
         if retrieval:
             self.retrieval_gate = nn.Parameter(torch.zeros(1))
         self._init_slots()
+        self._forget_active: bool = True
 
     def _init_slots(self):
         # 记忆槽以压缩空间零初始化（forward 首步由 reset 填充）
@@ -68,7 +69,7 @@ class MemoryBank(nn.Module):
         别名不一致会导致后续 .to() 每步产生大量设备拷贝，故在此一次对齐到位，
         get_kv/write 热路径不再做 .to，消除拷贝开销。
         """
-        dev = self.compress.weight.device
+        dev = self.compress.weight.device if device is None else device
         self.slots = torch.zeros(batch, self.num_slots, self.comp_dim,
                                  device=dev, dtype=dtype)
         # slots 重建 → 缓存失效
