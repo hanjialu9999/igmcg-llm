@@ -77,7 +77,7 @@ def build_model(config: Dict[str, Any], device: Optional[torch.device] = None,
         # 阶段6：可学习滑动窗口（默认关，向后兼容；开启需重训）
         learn_window=mc.get('learn_window', False),
         window_base=mc.get('window_base', 64),
-        # 阶段7：token mixer 选择（attn | linear | attn_linear，默认 attn 向后兼容）。
+        # 阶段7：token mixer 选择（attn | linear | linear2d | attn_linear | hybrid_linear2d，默认 attn 向后兼容）。
         # 旧字符串 'hybrid' 等价于 'attn_linear'（attn+线性注意力并行），由 TransformerBlock 归一。
         mixer=('attn_linear' if mc.get('mixer', 'attn') == 'hybrid' else mc.get('mixer', 'attn')),
         linear_attn_feature=mc.get('linear_attn_feature', 'relu'),
@@ -107,6 +107,12 @@ def build_model(config: Dict[str, Any], device: Optional[torch.device] = None,
         igmcg=bool(mc.get('igmcg', False)),
         share_attn_proj=bool(mc.get('share_attn_proj', False)),
     )
+    # mixer 参数校验：非法值会静默退化为标准 attn，导致用户配置不生效
+    _VALID_MIXERS = {'attn', 'linear', 'linear2d', 'attn_linear', 'hybrid_linear2d'}
+    _mixer_raw = mc.get('mixer', 'attn')
+    _mixer_val = 'attn_linear' if _mixer_raw == 'hybrid' else _mixer_raw
+    if _mixer_val not in _VALID_MIXERS:
+        raise ValueError(f"未知 mixer='{_mixer_raw}'（归一化后='{_mixer_val}'），可选 {_VALID_MIXERS}")
     # 机制组合校验：mixer='attn_linear'（旧名 'hybrid'，attn+线性注意力并行）仅在
     # block_type='attn' 的层真正融合线性注意力；若 layer_plan 含 'hybrid'（SSM×注意力混合块），
     # 该块不会调用 linear_attn/mixer_gate，导致二者成为永不更新的死参数（占显存与 checkpoint 体积）。

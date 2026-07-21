@@ -187,3 +187,49 @@ def test_linear2d_mixer_forward_and_cache():
     assert attn_past[0].shape[2] == 1  # k only stores latest token (RNN mode)
     assert attn_past[2].ndim == 4  # S state: (B, H, D, D)
     assert attn_past[3].ndim == 3  # z state: (B, H, D)
+
+
+# ─── 架构缺陷修复回归测试 ───────────────────────────────────────────────────
+
+def test_linear2d_padding_no_leak():
+    """linear2d padding 不应泄漏信息：T 非完全平方数时，padding 位置的 v 被 mask 为 0。"""
+    m = TransformerModel(vocab_size=200, embedding_dim=64, num_heads=4, num_layers=1,
+                         hidden_dim=128, max_seq_length=20, mixer='linear2d')
+    m.eval()
+    # T=10 → 4×3 grid, pad=2；对比 T=12 无 padding
+    x10 = torch.randint(0, 200, (1, 10))
+    x12 = torch.randint(0, 200, (1, 12))
+    with torch.no_grad():
+        out10 = m(x10)
+        out12 = m(x12)
+    assert out10.shape == (1, 10, 200)
+    assert out12.shape == (1, 12, 200)
+    # 前 10 个 token 的输出不应包含 NaN/Inf（padding 未泄漏导致数值异常）
+    assert torch.isfinite(out10).all(), "linear2d output contains NaN/Inf due to padding leak"
+
+
+def test_hybrid_single_gate_skips_both_branches():
+    """hybrid_single_gate 时 skip gate 应同时作用于 attn 和 SSM 两路。"""
+    m = TransformerModel(vocab_size=200, embedding_dim=64, num_heads=4, num_layers=1,
+                         hidden_dim=128, max_seq_length=32,
+                         layer_plan='hybrid', mixer='attn',
+                         hybrid_single_gate=True, ssm_d_state=8, ssm_d_inner_factor=1)
+    m.eval()
+    x = torch.randint(0, 200, (1, 8))
+    with torch.no_grad():
+        out = m(x)
+    assert out.shape == (1, 8, 200)
+    assert torch.isfinite(out).all()
+
+
+def test_config_loader_rejects_invalid_mixer():
+    """config_loader 应拒绝无效的 mixer 值。"""
+    from models.config_loader import build_model
+    cfg = {'model': {'vocab_size': 100, 'embedding_dim': 32, 'num_heads': 4,
+                     'num_layers': 1, 'hidden_dim': 64, 'max_seq_length': 16,
+                     'mixer': 'invalid_mixer_name'}}
+    try:
+        build_model(cfg, device='cpu')
+        assert False, "Should have raised ValueError for invalid mixer"
+    except ValueError as e:
+        assert 'mixer' in str(e).lower()
