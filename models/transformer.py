@@ -748,5 +748,6 @@ class TransformerModel(nn.Module):
                     break
                 past, logits, cur_pos = _decode_one_step(
                     self, next_token, past, cur_pos, device=device, use_cache=True,
-                    temperature=temperature)
+                    temperature=temperature,
+                    temperature_applied=getattr(self, 'ngram_fusion_enabled', False))
         return generated
