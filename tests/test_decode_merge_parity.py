@@ -433,3 +433,68 @@ def test_rmsnorm_learnable_weight():
     loss = out.sum()
     loss.backward()
     assert norm.weight.grad is not None, "weight.grad should not be None"
+
+
+# ─── ModelConfig schema 校验测试 ──────────────────────────────────────────
+
+def test_model_config_from_dict():
+    """ModelConfig.from_dict 从 config 字典正确构建。"""
+    from models.model_config import ModelConfig
+    mc = {
+        'vocab_size': 200, 'embedding_dim': 64, 'num_heads': 4,
+        'num_layers': 2, 'hidden_dim': 128, 'max_seq_length': 512,
+        'ssm_type': 'standard', 'mixer': 'attn',
+    }
+    cfg = ModelConfig.from_dict(mc)
+    assert cfg.vocab_size == 200
+    assert cfg.embedding_dim == 64
+    assert cfg.ssm.ssm_type == 'standard'
+    assert cfg.attn.mixer == 'attn'
+
+def test_model_config_validation_rejects_bad_vocab():
+    """ModelConfig 拒绝 vocab_size=0。"""
+    from models.model_config import ModelConfig
+    import pytest
+    with pytest.raises(AssertionError):
+        ModelConfig(vocab_size=0, embedding_dim=64, num_heads=4,
+                    num_layers=2, hidden_dim=128, max_seq_length=512)
+
+def test_model_config_validation_rejects_bad_mixer():
+    """ModelConfig 拒绝未知 mixer 类型。"""
+    from models.model_config import AttnConfig
+    import pytest
+    with pytest.raises(ValueError, match="未知 mixer"):
+        AttnConfig(mixer='INVALID')
+
+def test_model_config_hybrid_alias():
+    """mixer='hybrid' 自动归一化为 'attn_linear'。"""
+    from models.model_config import AttnConfig
+    cfg = AttnConfig(mixer='hybrid')
+    assert cfg.mixer == 'attn_linear'
+
+def test_model_config_build_model():
+    """ModelConfig.from_dict → TransformerModel.from_config 完整构建链。"""
+    from models.model_config import ModelConfig
+    mc = {
+        'vocab_size': 200, 'embedding_dim': 64, 'num_heads': 4,
+        'num_layers': 2, 'hidden_dim': 128, 'max_seq_length': 512,
+        'ssm_type': 'standard', 'mixer': 'attn',
+    }
+    cfg = ModelConfig.from_dict(mc)
+    model = TransformerModel.from_config(cfg)
+    assert model.vocab_size == 200
+    assert model.embedding_dim == 64
+    assert len(model.blocks) == 2
+
+def test_config_loader_build_model():
+    """config_loader.build_model 通过 ModelConfig 正确构建。"""
+    from models.config_loader import build_model
+    config = {
+        'model': {
+            'vocab_size': 200, 'embedding_dim': 64, 'num_heads': 4,
+            'num_layers': 2, 'hidden_dim': 128, 'max_seq_length': 512,
+        }
+    }
+    model = build_model(config)
+    assert model.vocab_size == 200
+    assert len(model.blocks) == 2
