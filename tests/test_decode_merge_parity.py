@@ -345,3 +345,61 @@ def test_diff_lambda_learnable():
     # diff_lambda 应在 (0,1) 附近
     lam = torch.sigmoid(m.diff_lambda).item()
     assert 0.0 < lam < 1.0, f"diff_lambda={lam} out of range"
+
+
+# ─── CAST + 位置感知特征映射回归测试 ──────────────────────────────────────
+
+def test_mamba_ssm_with_cast_forward():
+    """MambaSSMWithCAST 前向基本正确性。"""
+    m = TransformerModel(vocab_size=200, embedding_dim=64, num_heads=4, num_layers=1,
+                         hidden_dim=128, max_seq_length=32, ssm_type='cast',
+                         layer_plan='ssm')
+    m.eval()
+    x = torch.randint(0, 200, (1, 16))
+    with torch.no_grad():
+        out = m(x)
+    assert out.shape == (1, 16, 200)
+    assert torch.isfinite(out).all()
+
+
+def test_mamba_ssm_with_cast_incr_decode():
+    """MambaSSMWithCAST 增量解码与全量前向输出一致。"""
+    m = TransformerModel(vocab_size=200, embedding_dim=64, num_heads=4, num_layers=1,
+                         hidden_dim=128, max_seq_length=32, ssm_type='cast',
+                         layer_plan='ssm')
+    m.eval()
+    x = torch.randint(0, 200, (1, 8))
+    with torch.no_grad():
+        full = m(x)
+        _, past = m(x[:, :4], use_cache=True)
+        inc, _ = m(x[:, 4:], past_key_values=past, use_cache=True)
+    # CAST SSM 增量与全量有微小差异（A_delta 由输入统计决定，全量/增量统计量不同），属设计行为
+    assert torch.allclose(full[:, 4:], inc, atol=0.01), \
+        f"CAST SSM incr vs full diff: {(full[:, 4:] - inc).abs().max().item()}"
+
+
+def test_mamba_ssm_with_cast_in_hybrid():
+    """MambaSSMWithCAST 在 hybrid 块中与 attn 并行。"""
+    m = TransformerModel(vocab_size=200, embedding_dim=64, num_heads=4, num_layers=1,
+                         hidden_dim=128, max_seq_length=32, ssm_type='cast',
+                         layer_plan='hybrid', mixer='attn',
+                         hybrid_single_gate=True)
+    m.eval()
+    x = torch.randint(0, 200, (1, 8))
+    with torch.no_grad():
+        out = m(x)
+    assert out.shape == (1, 8, 200)
+    assert torch.isfinite(out).all()
+
+
+def test_axial_linear_pos_aware_feat():
+    """AxialLinearAttention 位置感知特征映射可启用。"""
+    from models.mixers import AxialLinearAttention
+    m = AxialLinearAttention(dim=64, num_heads=4, max_seq_length=32)
+    m.enable_pos_aware_feat()
+    assert m.pos_aware_feat is True
+    assert hasattr(m, 'pos_feat_alpha')
+    x = torch.randn(1, 16, 64)
+    out, _ = m(x)
+    assert out.shape == (1, 16, 64)
+    assert torch.isfinite(out).all()

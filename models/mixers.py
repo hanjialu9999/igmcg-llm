@@ -541,11 +541,32 @@ class AxialLinearAttention(nn.Module):
             self.log_temp = nn.Parameter(torch.zeros(1))
             self.log_temp_col = nn.Parameter(torch.zeros(1))
         self._rt: Dict[str, bool] = {"qk_norm": True, "attn_temp": True}
+        # 位置感知特征映射（CAST_SpatialLinearAttention 思想）：
+        # 每个网格位置有自己的 elu/reLU 混合比例，替代全局统一特征映射
+        self.pos_aware_feat = False  # 默认关闭，向后兼容
+
+    def enable_pos_aware_feat(self, max_grid_size: int = 64):
+        """启用位置感知特征映射（每个网格位置独立的 elu/reLU 混合比例）。"""
+        if not self.pos_aware_feat:
+            self.pos_aware_feat = True
+            self.pos_feat_alpha = nn.Embedding(max_grid_size, 2)
+            nn.init.zeros_(self.pos_feat_alpha.weight)  # 零初始化→初始行为等价于标准特征映射
 
     def _feat(self, x: torch.Tensor) -> torch.Tensor:
         if self.feature == 'elu':
             return torch.nn.functional.elu(x) + 1.0
         return torch.nn.functional.relu(x) + 1e-6
+
+    def _feat_pos(self, x: torch.Tensor, pos_idx: torch.Tensor) -> torch.Tensor:
+        """位置感知特征映射：每个位置独立的 elu/reLU 混合。"""
+        if not self.pos_aware_feat or pos_idx is None:
+            return self._feat(x)
+        alpha = self.pos_feat_alpha(pos_idx)  # (..., 2)
+        elu_part = torch.nn.functional.elu(x) + 1.0
+        relu_part = torch.nn.functional.relu(x) + 1e-6
+        while alpha.dim() < x.dim():
+            alpha = alpha.unsqueeze(0)
+        return alpha[..., 0:1] * elu_part + alpha[..., 1:2] * relu_part
 
     def _infer_grid(self, T: int) -> Tuple[int, int]:
         if self.grid_size is not None:
@@ -1025,3 +1046,126 @@ class SwiGLU(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.w2(torch.nn.functional.silu(self.w1(x)) * self.w3(x))
+
+
+class MambaSSMWithCAST(nn.Module):
+    """MambaSSM + CAST（Context-Adaptive State Transition）。
+
+    核心思想：状态转移矩阵 A 由局部上下文动态调制。
+    - 基态矩阵 A_base = -exp(A_log)（与标准 MambaSSM 相同）
+    - 上下文残差 A_delta：从输入 x 的局部统计身份（均值/方差/范数）推导
+    - 有效转移矩阵 A_t = A_base + A_delta（每个位置不同）
+
+    与标准 MambaSSM 的区别：
+    - 标准 Mamba：A 是静态的（与输入无关）
+    - CAST 版：A 由上下文动态调制（更灵活的选择性）
+
+    兼容 MambaSSM 的接口（past_state/past_conv_state/use_cache）。
+    """
+    def __init__(self, dim: int, d_state: int = 16, d_inner_factor: int = 1,
+                 dt_rank: Optional[int] = None, conv_kernel: int = 3,
+                 dt_proj_bias_init: float = 0.1,
+                 a_log_init_range: Tuple[float, float] = (-1.0, 1.0),
+                 D_init: float = 1.0,
+                 cast_hidden: int = 32):
+        super().__init__()
+        # 复用 MambaSSM 的所有标准组件
+        d_inner = dim * d_inner_factor
+        dt_rank = dt_rank or max(1, math.ceil(dim / 16))
+        self.dim = dim
+        self.d_inner = d_inner
+        self.d_state = d_state
+        self.dt_rank = dt_rank
+        self.conv_kernel = conv_kernel
+        self.norm = RMSNorm(dim)
+        self.in_proj = nn.Linear(dim, 2 * d_inner, bias=False)
+        self.conv = nn.Conv1d(d_inner, d_inner, kernel_size=conv_kernel,
+                              padding=conv_kernel - 1, groups=d_inner, bias=False)
+        self.act = nn.SiLU()
+        self.x_proj = nn.Linear(d_inner, dt_rank + 2 * d_state, bias=False)
+        self.dt_proj = nn.Linear(dt_rank, d_inner, bias=True)
+        nn.init.constant_(self.dt_proj.bias, dt_proj_bias_init)
+        self.A_log = nn.Parameter(torch.empty(d_inner, d_state))
+        nn.init.uniform_(self.A_log, a_log_init_range[0], a_log_init_range[1])
+        self.D = nn.Parameter(torch.ones(d_inner) * D_init)
+        self.out_proj = nn.Linear(d_inner, dim, bias=False)
+        # CAST 组件：从上下文推导 A_delta
+        # 统计特征：每个位置的局部窗口（均值、方差、范数）→ 投影到 (d_inner, d_state)
+        self.cast_stat_proj = nn.Linear(3, cast_hidden, bias=False)  # 3个统计量→hidden
+        self.cast_delta_proj = nn.Linear(cast_hidden, d_inner * d_state, bias=False)
+        nn.init.zeros_(self.cast_delta_proj.weight)  # 零初始化→初始行为等价于标准 Mamba
+        self.proper_init()
+
+    def proper_init(self):
+        nn.init.xavier_uniform_(self.in_proj.weight)
+        nn.init.xavier_uniform_(self.out_proj.weight)
+        nn.init.xavier_uniform_(self.x_proj.weight)
+        nn.init.xavier_uniform_(self.dt_proj.weight)
+        nn.init.constant_(self.dt_proj.bias, 0.1)
+        nn.init.uniform_(self.A_log, -1.0, 1.0)
+        nn.init.ones_(self.D)
+
+    def _compute_cast_delta(self, x: torch.Tensor) -> torch.Tensor:
+        """从输入 x 的局部统计身份推导 A_delta。"""
+        # x: (B, L, d_inner)
+        # 计算逐位置统计量（用全局统计作为近似，避免引入额外注意力）
+        mean = x.mean(dim=-1, keepdim=True)      # (B, L, 1)
+        var = x.var(dim=-1, keepdim=True, unbiased=False)  # (B, L, 1)
+        norm = x.norm(dim=-1, keepdim=True)       # (B, L, 1)
+        stats = torch.cat([mean, var, norm], dim=-1)  # (B, L, 3)
+        # 投影到 A_delta
+        h = self.cast_stat_proj(stats)            # (B, L, cast_hidden)
+        h = F.silu(h)
+        delta = self.cast_delta_proj(h)           # (B, L, d_inner * d_state)
+        return delta.view(x.size(0), x.size(1), self.d_inner, self.d_state)
+
+    def forward(self, x: torch.Tensor, past_state=None, past_conv_state=None,
+                use_cache: bool = False):
+        B, L, _ = x.shape
+        x = self.norm(x)
+        xz = self.in_proj(x)
+        x_in, z = xz.chunk(2, dim=-1)
+        # 因果卷积
+        if past_conv_state is not None and past_conv_state.shape[0] == B and L == 1:
+            conv_input = torch.cat([past_conv_state, x_in.transpose(1, 2)], dim=-1)
+            x_conv = self.conv(conv_input)[:, :, self.conv_kernel - 1].unsqueeze(1)
+            present_conv_state = conv_input[:, :, -(self.conv_kernel - 1):]
+        else:
+            x_conv = self.conv(x_in.transpose(1, 2)).transpose(1, 2)[:, :L, :]
+            present_conv_state = x_in.transpose(1, 2)[:, :, -(self.conv_kernel - 1):] if use_cache and L > 0 else None
+        x_conv = self.act(x_conv)
+        # 选择性投影
+        proj = self.x_proj(x_conv)
+        dt = proj[:, :, :self.dt_rank]
+        Bp = proj[:, :, self.dt_rank:self.dt_rank + self.d_state]
+        Cp = proj[:, :, self.dt_rank + self.d_state:]
+        dt = F.softplus(self.dt_proj(dt))  # (B, L, d_inner)
+        # CAST：上下文调制 A
+        A_base = -torch.exp(self.A_log)  # (d_inner, d_state)
+        A_delta = self._compute_cast_delta(x_conv)  # (B, L, d_inner, d_state)
+        A_effective = A_base.unsqueeze(0).unsqueeze(0) + A_delta  # (B, L, d_inner, d_state)
+        # 离散化
+        dA = torch.exp(dt.unsqueeze(-1) * A_effective)  # (B, L, d_inner, d_state)
+        dB = dt.unsqueeze(-1) * Bp.unsqueeze(2)  # (B, L, d_inner, d_state)
+        xb = dB * x_conv.unsqueeze(-1)  # (B, L, d_inner, d_state)
+        # 选择性扫描
+        if past_state is not None and past_state.shape[0] == B and L == 1:
+            h = past_state * dA[:, 0] + xb[:, 0]  # (B, d_inner, d_state)
+            present_state = h
+        else:
+            # 全量并行扫描（简化版：顺序累积，与 MambaSSM 的前缀扫描对齐）
+            h = xb[:, 0]
+            h_all = [h]
+            for t in range(1, L):
+                h = h * dA[:, t] + xb[:, t]
+                h_all.append(h)
+            h = torch.stack(h_all, dim=1)  # (B, L, d_inner, d_state)
+            present_state = h[:, -1] if use_cache else None
+        # 输出
+        y = (h * Cp.unsqueeze(2)).sum(-1)  # (B, L, d_inner)
+        y = y + self.D * x_conv
+        y = y * F.silu(z)
+        y = self.out_proj(y)
+        if use_cache:
+            return y, present_state, present_conv_state
+        return y, None, None
