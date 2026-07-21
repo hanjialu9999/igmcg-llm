@@ -164,3 +164,26 @@ def test_share_attn_proj_cache_matches_shared_params():
     # past per layer = ((k,v), mem, ngram); attn key shape = (B, heads, T_cached, head_dim)
     k0 = past2[0][0][0]  # layer 0, attn key
     assert k0.shape[2] == 5  # 4+1 tokens cached
+
+
+def test_linear2d_mixer_forward_and_cache():
+    """linear2d mixer 全量前向（T 为完全平方数）+ 增量缓存路径均须产出正确形状。"""
+    m = TransformerModel(vocab_size=200, embedding_dim=64, num_heads=4, num_layers=2,
+                         hidden_dim=128, max_seq_length=36, mixer='linear2d')
+    m.eval()
+    x16 = torch.randint(0, 200, (2, 16))
+    x36 = torch.randint(0, 200, (2, 36))
+    with torch.no_grad():
+        out16 = m(x16)
+        out36 = m(x36)
+    assert out16.shape == (2, 16, 200)
+    assert out36.shape == (2, 36, 200)
+    # 增量缓存：linear2d 用 RNN 状态 (S,z) 而非全量 KV，故 k 仅含最新 1 token
+    with torch.no_grad():
+        _, past = m(x16[:, :8], use_cache=True)
+        _, past2 = m(x16[:, 8:9], past_key_values=past, use_cache=True)
+    attn_past = past2[0][0]  # (k, v, S, z)
+    assert len(attn_past) == 4  # linear2d cache is 4-tuple
+    assert attn_past[0].shape[2] == 1  # k only stores latest token (RNN mode)
+    assert attn_past[2].ndim == 4  # S state: (B, H, D, D)
+    assert attn_past[3].ndim == 3  # z state: (B, H, D)
