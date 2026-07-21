@@ -111,7 +111,9 @@ def build_model(config: Dict[str, Any], device: Optional[torch.device] = None,
     # block_type='attn' 的层真正融合线性注意力；若 layer_plan 含 'hybrid'（SSM×注意力混合块），
     # 该块不会调用 linear_attn/mixer_gate，导致二者成为永不更新的死参数（占显存与 checkpoint 体积）。
     # 发出告警避免静默无效训练。
-    if mc.get('mixer', 'attn') in ('hybrid', 'attn_linear') and mc.get('layer_plan', None) is not None:
+    # 注意：mixer='hybrid_linear2d' 不适用此校验——hybrid 块内 linear2d 作 token mixer + SSM 并行。
+    _mixer = mc.get('mixer', 'attn')
+    if _mixer in ('hybrid', 'attn_linear') and mc.get('layer_plan', None) is not None:
         layer_plan = mc.get('layer_plan', None)
         hybrid_blocks = [p for p in layer_plan.replace(',', ' ').split() if p == 'hybrid']
         if hybrid_blocks:
