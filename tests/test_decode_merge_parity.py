@@ -568,3 +568,77 @@ def test_cast_ssm_uses_custom_d_init():
     ssm = MambaSSMWithCAST(dim=64, D_init=2.5)
     assert torch.allclose(ssm.D.data, torch.ones_like(ssm.D) * 2.5, atol=0.01), \
         f"D={ssm.D.data.mean().item()}, expected 2.5"
+
+
+# ─── BlockState 测试 ──────────────────────────────────────────────────────
+
+def test_block_state_from_tuple():
+    """BlockState.from_tuple 正确解析旧三元组。"""
+    from models.state import BlockState
+    k = torch.randn(1, 4, 8, 16)
+    v = torch.randn(1, 4, 8, 16)
+    ssm_h = torch.randn(1, 64, 16)
+    ssm_c = torch.randn(1, 64, 2)
+    old_tuple = ((k, v), ssm_h, ssm_c)
+    bs = BlockState.from_tuple(old_tuple)
+    assert bs.attn_kv == (k, v)
+    assert bs.ssm_hidden is ssm_h
+    assert bs.ssm_conv is ssm_c
+
+def test_block_state_from_none():
+    """BlockState.from_tuple(None) 返回 None。"""
+    from models.state import BlockState
+    assert BlockState.from_tuple(None) is None
+
+def test_block_state_to_tuple_roundtrip():
+    """BlockState → to_tuple → from_tuple 往返一致。"""
+    from models.state import BlockState
+    k = torch.randn(1, 4, 8, 16)
+    v = torch.randn(1, 4, 8, 16)
+    original = ((k, v), None, None)
+    bs = BlockState.from_tuple(original)
+    roundtripped = bs.to_tuple()
+    assert roundtripped[0] == (k, v)
+    assert roundtripped[1] is None
+    assert roundtripped[2] is None
+
+def test_block_state_start_pos():
+    """BlockState.start_pos 从 attn_kv k 的 T 维度推断。"""
+    from models.state import BlockState
+    k = torch.randn(1, 4, 10, 16)  # T=10
+    v = torch.randn(1, 4, 10, 16)
+    bs = BlockState(attn_kv=(k, v))
+    assert bs.start_pos == 10
+
+def test_block_state_is_fresh():
+    """BlockState.is_fresh 在全 None 时为 True。"""
+    from models.state import BlockState
+    assert BlockState().is_fresh
+    assert not BlockState(attn_kv=(torch.randn(1,1,1,1), torch.randn(1,1,1,1))).is_fresh
+
+
+# ─── LinearMixerBase 测试 ────────────────────────────────────────────────
+
+def test_linear_mixer_base_inheritance():
+    """LinearAttention 和 AxialLinearAttention 继承 LinearMixerBase。"""
+    from models.mixers import LinearMixerBase, LinearAttention, AxialLinearAttention
+    assert issubclass(LinearAttention, LinearMixerBase)
+    assert issubclass(AxialLinearAttention, LinearMixerBase)
+
+def test_linear_mixer_base_shared_methods():
+    """LinearAttention 和 AxialLinearAttention 共享 project_and_norm 和 _feat。"""
+    from models.mixers import LinearAttention, AxialLinearAttention
+    la = LinearAttention(dim=64, num_heads=4)
+    ala = AxialLinearAttention(dim=64, num_heads=4)
+    # 两者应有相同的 project_and_norm 方法（来自基类）
+    assert type(la).project_and_norm is type(ala).project_and_norm
+    # 两者应有相同的 _feat 方法（来自基类）
+    assert type(la)._feat is type(ala)._feat
+
+def test_axial_linear_extra_attributes():
+    """AxialLinearAttention 有独有属性 qkv_col/proj_col/gate。"""
+    from models.mixers import AxialLinearAttention
+    ala = AxialLinearAttention(dim=64, num_heads=4)
+    assert hasattr(ala, 'qkv_col')
+    assert hasattr(ala, 'proj_col')
+    assert hasattr(ala, 'gate')

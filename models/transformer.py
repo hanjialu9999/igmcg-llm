@@ -20,13 +20,14 @@ from models.mixers import (SlidingWindowCausalSelfAttention, LinearAttention,
 from models.sampling import (apply_repetition_penalty, sample_next_token,
                              _decode_one_step)
 from models.layers import CharMergeLayer
+from models.state import BlockState
 
 # 向后兼容：保留原模块级符号的外部可见性（其它模块仍从 models.transformer 导入）
 __all__ = [
     "RMSNorm", "RotaryEmbedding", "MemoryBank",
     "SlidingWindowCausalSelfAttention", "LinearAttention", "MambaSSM", "SwiGLU",
     "apply_qk_norm_and_temp", "apply_repetition_penalty", "sample_next_token",
-    "_decode_one_step", "CharMergeLayer",
+    "_decode_one_step", "CharMergeLayer", "BlockState",
     "TransformerBlock", "_parse_layer_plan", "TransformerModel",
 ]
 
@@ -673,28 +674,21 @@ class TransformerModel(nn.Module):
             x = self.char_merge(x)
         if past_key_values is None:
             past_key_values = [None] * len(self.blocks)
-        presents: List[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]] = []
+        # 将旧元组包装为 BlockState（向后兼容：from_tuple 处理 None 和旧格式）
+        block_states = [BlockState.from_tuple(pk) for pk in past_key_values]
+        presents: List[Optional[BlockState]] = []
         start_pos = 0
         if use_cache:
-            for pk in past_key_values:
-                if pk is not None:
-                    # pk is (attn_kv, ssm_state, ssm_conv_state)
-                    if pk[0] is not None:
-                        start_pos = pk[0][0].size(2)
-                        break
+            for bs in block_states:
+                if bs is not None and bs.attn_kv is not None:
+                    start_pos = bs.start_pos
+                    break
         ssm_states: List[Optional[torch.Tensor]] = []
         ssm_conv_states: List[Optional[torch.Tensor]] = []
         if use_cache:
-            # Extract SSM past states
-            for pk in past_key_values:
-                if pk is not None and pk[1] is not None:
-                    ssm_states.append(pk[1])
-                else:
-                    ssm_states.append(None)
-                if pk is not None and pk[2] is not None:
-                    ssm_conv_states.append(pk[2])
-                else:
-                    ssm_conv_states.append(None)
+            for bs in block_states:
+                ssm_states.append(bs.ssm_hidden if bs is not None else None)
+                ssm_conv_states.append(bs.ssm_conv if bs is not None else None)
         else:
             ssm_states = [None] * len(self.blocks)
             ssm_conv_states = [None] * len(self.blocks)
@@ -723,17 +717,15 @@ class TransformerModel(nn.Module):
                         blk.attn._cached_T = -1
 
         for i, block in enumerate(self.blocks):
-            # 阶段8.2：推理期静态剪枝——被 prune_layers 标记的层直接跳过（直通，无计算）。
-            # 仅推理模式生效；训练模式（self.training）下忽略剪枝，避免静态剪枝状态
-            # 残留到训练/验证造成静默质量退化（prune_layers 是持久标记，非自动重置）。
             if (not self.training) and getattr(self, '_pruned_layers', None) and i in self._pruned_layers:
-                presents.append(past_key_values[i] if past_key_values is not None else None)
+                presents.append(block_states[i])
                 continue
             ssm_past_state = ssm_states[i] if use_cache else None
             ssm_past_conv_state = ssm_conv_states[i] if use_cache else None
-            # 检查点（仅重算力部分）已在 block 内部按 self.gradient_checkpointing 处理，此处直接调用
-            x, present = block(x, past_key_values[i], use_cache, start_pos, ssm_past_state, ssm_past_conv_state, memory)
-            presents.append(present)
+            # block 内部仍用旧元组接口（TransformerBlock.forward 未改），传入 block_states[i].to_tuple()
+            x, present = block(x, block_states[i].to_tuple() if block_states[i] is not None else None,
+                               use_cache, start_pos, ssm_past_state, ssm_past_conv_state, memory)
+            presents.append(BlockState.from_tuple(present))
         x = self.ln_f(x)
         # 阶段8.1：n-gram 神经融合——z_neural + g_t·ngram_vec。ngram_vec 是固定统计缓冲
         # （.detach() 不引梯度，主干 z_neural 仍吃完整 CE 梯度、不被缩放 → 不塌缩）。
@@ -744,10 +736,10 @@ class TransformerModel(nn.Module):
                 x, src, use_cache, past_key_values,
                 temperature, igmcg_force_off, intuition)
             if use_cache:
-                return fused, presents
+                return fused, [bs.to_tuple() if bs is not None else None for bs in presents]
             return fused
         if use_cache:
-            return self.output_head(x), presents
+            return self.output_head(x), [bs.to_tuple() if bs is not None else None for bs in presents]
         return self.output_head(x)
 
     def reset_ngram_state(self) -> None:

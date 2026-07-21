@@ -462,12 +462,10 @@ class SlidingWindowCausalSelfAttention(nn.Module):
         return torch.matmul(attn, v)                             # (B, H, Tq, D)
 
 
-class LinearAttention(nn.Module):
-    """线性注意力（线性复杂度 token mixer，O(N) 推理，天然兼容 KV-cache）。
+class LinearMixerBase(nn.Module):
+    """线性注意力系 mixer 的共享基础设施（LinearAttention / AxialLinearAttention）。
 
-    特征映射 φ=elu(x)+1 后，注意力写为 S = Σ φ(K)⊗V 的递推（因果：按时间累积），
-    较 softmax 注意力省去 O(N²) 的 scores 矩阵，长序列/小 iGPU 下显著省算力。
-    与 SlidingWindowCausalSelfAttention 同接口（project_and_norm + attend），便于混合门控。
+    提供 __init__ 初始化、_feat、project_and_norm、_rt 开关，子类只需实现 forward 核心逻辑。
     """
 
     def __init__(self, dim: int, num_heads: int, qk_norm: bool = True, attn_temp: bool = True,
@@ -479,11 +477,8 @@ class LinearAttention(nn.Module):
         self.head_dim = head_dim or (dim // num_heads)
         self.max_seq_length = max_seq_length
         self.feature = feature
-        # 层间共享：传入 shared_qkv/shared_proj 时复用外部投影
         self.qkv = shared_qkv if shared_qkv is not None else nn.Linear(dim, 3 * self.num_heads * self.head_dim, bias=False)
         self.proj = shared_proj if shared_proj is not None else nn.Linear(self.num_heads * self.head_dim, dim, bias=False)
-        # 与 attn 分支的 RotaryEmbedding 保持同一 rope_learnable 配置，
-        # 避免 attn_linear 混合块内两路 RoPE 静默不一致（仅 rope_learnable=True 时显式分叉）。
         self.rope = RotaryEmbedding(self.head_dim, learnable=rope_learnable)
         self.qk_norm_enabled = qk_norm
         if qk_norm:
@@ -503,13 +498,29 @@ class LinearAttention(nn.Module):
         qkv = self.qkv(x).reshape(B, T, 3, self.num_heads, self.head_dim)
         qkv = qkv.permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]
-        # ① QK-Norm + ⑤ 可学习温度（与 SlidingWindowCausalSelfAttention 共享预处理）
         q, k = apply_qk_norm_and_temp(
             q, k, self._rt,
             self.qk_norm if self.qk_norm_enabled else None,
             self.log_temp if self.attn_temp_enabled else None)
         q, k = self.rope(q, k, start_pos=start_pos, max_len=self.max_seq_length)
         return q, k, v
+
+    def set_enhancements_active(self, spec):
+        if isinstance(spec, bool):
+            self._rt = {"qk_norm": spec, "attn_temp": spec}
+        elif isinstance(spec, dict):
+            for k, v in spec.items():
+                if k in self._rt:
+                    self._rt[k] = bool(v)
+
+
+class LinearAttention(LinearMixerBase):
+    """线性注意力（线性复杂度 token mixer，O(N) 推理，天然兼容 KV-cache）。
+
+    特征映射 φ=elu(x)+1 后，注意力写为 S = Σ φ(K)⊗V 的递推（因果：按时间累积），
+    较 softmax 注意力省去 O(N²) 的 scores 矩阵，长序列/小 iGPU 下显著省算力。
+    与 SlidingWindowCausalSelfAttention 同接口（project_and_norm + attend），便于混合门控。
+    """
 
     def forward(self, x: torch.Tensor, past_kv=None, use_cache: bool = False, start_pos: int = 0,
                 memory_kv=None):
@@ -546,7 +557,7 @@ class LinearAttention(nn.Module):
         return self.proj(out), present
 
 
-class AxialLinearAttention(nn.Module):
+class AxialLinearAttention(LinearMixerBase):
     """2D 轴向线性注意力：将 1D 序列视为 row×col 网格，先行后列各做线性注意力，
     输出加权融合。复杂度 O(T·√T)，兼顾效率与 2D 空间归纳偏置。
 
@@ -563,47 +574,26 @@ class AxialLinearAttention(nn.Module):
                  rope_learnable: bool = False, grid_size: Optional[Tuple[int, int]] = None,
                  gate_init: float = 0.0,
                  shared_qkv: Optional[nn.Linear] = None, shared_proj: Optional[nn.Linear] = None):
-        super().__init__()
-        self.num_heads = num_heads
-        self.head_dim = head_dim or (dim // num_heads)
-        self.max_seq_length = max_seq_length
-        self.feature = feature
-        self.grid_size = grid_size  # (row, col) or None for auto
-        # 共享/独立 QKV/Output 投影：main + row 共享（4 个 Linear，而非 6 个）
-        # main（增量解码）和 row 轴共享同一组投影；col 轴独立投影。
-        self.qkv = shared_qkv if shared_qkv is not None else nn.Linear(dim, 3 * self.num_heads * self.head_dim, bias=False)
-        self.proj = shared_proj if shared_proj is not None else nn.Linear(self.num_heads * self.head_dim, dim, bias=False)
-        # row 轴复用 main 投影；col 轴独立投影
+        super().__init__(dim, num_heads, qk_norm, attn_temp, max_seq_length, feature,
+                         head_dim, rope_learnable, shared_qkv, shared_proj)
+        self.grid_size = grid_size
+        # col 轴独立投影（row 轴复用基类的 qkv/proj）
         self.qkv_col = nn.Linear(dim, 3 * self.num_heads * self.head_dim, bias=False)
         self.proj_col = nn.Linear(self.num_heads * self.head_dim, dim, bias=False)
-        # 行/列融合门控：sigmoid(gate) * row_out + (1-sigmoid(gate)) * col_out
         self.gate = nn.Parameter(torch.tensor(gate_init))
-        # RoPE / QK-Norm / Temp（与 LinearAttention 一致）
-        self.rope = RotaryEmbedding(self.head_dim, learnable=rope_learnable)
-        self.qk_norm_enabled = qk_norm
+        # col 轴独立的 QK-Norm / Temp
         if qk_norm:
-            self.qk_norm = RMSNorm(self.head_dim)
             self.qk_norm_col = RMSNorm(self.head_dim)
-        self.attn_temp_enabled = attn_temp
         if attn_temp:
-            self.log_temp = nn.Parameter(torch.zeros(1))
             self.log_temp_col = nn.Parameter(torch.zeros(1))
-        self._rt: Dict[str, bool] = {"qk_norm": True, "attn_temp": True}
-        # 位置感知特征映射（CAST_SpatialLinearAttention 思想）：
-        # 每个网格位置有自己的 elu/reLU 混合比例，替代全局统一特征映射
-        self.pos_aware_feat = False  # 默认关闭，向后兼容
+        self.pos_aware_feat = False
 
     def enable_pos_aware_feat(self, max_grid_size: int = 64):
         """启用位置感知特征映射（每个网格位置独立的 elu/reLU 混合比例）。"""
         if not self.pos_aware_feat:
             self.pos_aware_feat = True
             self.pos_feat_alpha = nn.Embedding(max_grid_size, 2)
-            nn.init.zeros_(self.pos_feat_alpha.weight)  # 零初始化→初始行为等价于标准特征映射
-
-    def _feat(self, x: torch.Tensor) -> torch.Tensor:
-        if self.feature == 'elu':
-            return torch.nn.functional.elu(x) + 1.0
-        return torch.nn.functional.relu(x) + 1e-6
+            nn.init.zeros_(self.pos_feat_alpha.weight)
 
     def _feat_pos(self, x: torch.Tensor, pos_idx: torch.Tensor) -> torch.Tensor:
         """位置感知特征映射：每个位置独立的 elu/reLU 混合。"""
@@ -663,19 +653,6 @@ class AxialLinearAttention(nn.Module):
         num = torch.einsum('bhd,bhde->bhe', qf[:, :, 0, :], S)
         den = torch.einsum('bhd,bhd->bh', qf[:, :, 0, :], z).unsqueeze(-1).clamp_min(1e-6)
         return num / den, S, z  # (B,H,D), S, z
-
-    def project_and_norm(self, x: torch.Tensor, start_pos: int = 0):
-        # 主投影（用于增量解码或非轴向模式），轴向模式下由 _axial_forward 内部使用
-        B, T, C = x.shape
-        qkv = self.qkv(x).reshape(B, T, 3, self.num_heads, self.head_dim)
-        qkv = qkv.permute(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]
-        q, k = apply_qk_norm_and_temp(
-            q, k, self._rt,
-            self.qk_norm if self.qk_norm_enabled else None,
-            self.log_temp if self.attn_temp_enabled else None)
-        q, k = self.rope(q, k, start_pos=start_pos, max_len=self.max_seq_length)
-        return q, k, v
 
     def _axial_forward(self, x: torch.Tensor, use_cache: bool = False, start_pos: int = 0):
         """轴向 2D 线性注意力：reshpe 1D → 2D → 行注意力 → 列注意力 → 融合 → reshape → proj。"""
