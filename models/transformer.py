@@ -221,18 +221,19 @@ class TransformerBlock(nn.Module):
             else:
                 ssm_h, ssm_present_state, ssm_present_conv_state = self.ssm(xn, past_state=ssm_past_state, past_conv_state=ssm_past_conv_state, use_cache=use_cache)
             h_eff = (sk * h) if sk is not None else h
+            ssm_eff = (sk * ssm_h) if sk is not None else ssm_h
             if self.hybrid_single_gate and self._rt.get("hybrid_gate", True):
                 # 阶段8.4：单动态门控 —— g_t 逐位置混合 attn/ssm 两路（凸组合）。
                 # g_t=sigmoid(W_g·ln1(x)) ∈(0,1)，out = g_t·attn_h + (1-g_t)·ssm_h。
                 g = torch.sigmoid(self.hybrid_mix(xn)).to(x.device)  # (B,T,1)
-                mixed = g * h_eff + (1.0 - g) * ssm_h              # (B,T,D)
+                mixed = g * h_eff + (1.0 - g) * ssm_eff             # (B,T,D)
                 x = x + self.drop(mixed)
             elif self.hybrid_gate_enabled and self._rt["hybrid_gate"]:
                 # ⭐A 混合块：attn 与 ssm 两路各自可学习门控，让模型自决每层偏重
                 x = x + self.drop(self.hybrid_attn_gate * h_eff) \
-                      + self.drop(self.hybrid_ssm_gate * ssm_h)
+                      + self.drop(self.hybrid_ssm_gate * ssm_eff)
             else:
-                x = x + self.drop(h_eff) + self.drop(ssm_h)
+                x = x + self.drop(h_eff) + self.drop(ssm_eff)
             if use_cache:
                 present = (attn_present, ssm_present_state, ssm_present_conv_state)
         # 块输出后写入可学习压缩记忆（记忆存压缩表示，由 LM loss 监督）

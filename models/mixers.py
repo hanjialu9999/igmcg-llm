@@ -562,8 +562,10 @@ class AxialLinearAttention(nn.Module):
             q = qk_norm_mod(q)
             k = qk_norm_mod(k)
         if log_temp_mod is not None:
-            q = q * torch.exp(log_temp_mod)
-            k = k * torch.exp(log_temp_mod)
+            # 与 apply_qk_norm_and_temp 一致：exp(-0.5*log_temp) 分别作用于 q,k
+            scale = torch.exp(-0.5 * log_temp_mod)
+            q = q * scale
+            k = k * scale
         qf = self._feat(q)
         kf = self._feat(k)
         kv_all = torch.einsum('bhtd,bhte->bhtde', kf, v)
@@ -611,6 +613,12 @@ class AxialLinearAttention(nn.Module):
             x = torch.nn.functional.pad(x, (0, 0, 0, pad_len))  # 补零到 row*col
         x2d = x.reshape(B, row, col, C)
 
+        # padding mask：True 表示 padded 位置，v 设为 0 防止信息泄漏
+        pad_mask = None
+        if pad_len > 0:
+            pad_mask = torch.zeros(B, row * col, dtype=x.dtype, device=x.device)
+            pad_mask[:, T:] = float('-inf')  # 用于屏蔽 padded v 的贡献
+
         # ── 行注意力：沿 col 维度做线性注意力（复用 main 投影） ──
         x_row = x2d.reshape(B * row, col, C)
         qkv_r = self.qkv(x_row).reshape(B * row, col, 3, self.num_heads, self.head_dim)
@@ -620,8 +628,12 @@ class AxialLinearAttention(nn.Module):
             qr, kr, self._rt,
             self.qk_norm if self.qk_norm_enabled else None,
             self.log_temp if self.attn_temp_enabled else None)
+        # 屏蔽 padded v：reshape 为 (B*row, col) 后 expand 到 (B*row, H, col, D)
+        if pad_mask is not None:
+            row_mask = pad_mask.reshape(B * row, col).unsqueeze(1).unsqueeze(-1)
+            vr = vr * (row_mask.exp())  # exp(-inf)=0 → padded v 变为 0
         hr = self._linear_attn_1d(qr, kr, vr,
-                                   qk_norm_mod=None, log_temp_mod=None)  # 已在上面处理
+                                   qk_norm_mod=None, log_temp_mod=None)
         out_row = self.proj(hr.transpose(1, 2).reshape(B * row, col, self.num_heads * self.head_dim))
         out_row = out_row.reshape(B, row, col, C)
 
@@ -634,6 +646,10 @@ class AxialLinearAttention(nn.Module):
             qc, kc, self._rt,
             self.qk_norm_col if self.qk_norm_enabled else None,
             self.log_temp_col if self.attn_temp_enabled else None)
+        # 列注意力的 padding mask：按列重排后，padded 位置在同一列的不同行
+        if pad_mask is not None:
+            col_mask = pad_mask.reshape(B, row, col).permute(0, 2, 1).reshape(B * col, row).unsqueeze(1).unsqueeze(-1)
+            vc = vc * (col_mask.exp())
         hc = self._linear_attn_1d(qc, kc, vc,
                                    qk_norm_mod=None, log_temp_mod=None)
         out_col = self.proj_col(hc.transpose(1, 2).reshape(B * col, row, self.num_heads * self.head_dim))
