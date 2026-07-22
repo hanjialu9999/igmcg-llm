@@ -364,7 +364,7 @@ def main(config_path='configs/pretrain.yaml', resume=False):
     # 阶段8.1：n-gram 神经融合——用训练语料（与模型训练同一份分布）构建统计 n-gram 缓冲，
     # 传入 build_model 供可学习门控融合（缺省关；开启时 ngram_fusion=True 且 ngram_corpus 指向语料）。
     # 构建逻辑统一收敛到 models.checkpoint.build_ngram_model，避免与 generate.py 重复实现。
-    from models.checkpoint import build_ngram_model
+    from models.checkpoint import build_ngram_model, safe_torch_load
     _ngram_model = build_ngram_model(vocab, config['model'])
     model = build_model(config, device=device, ngram_model=_ngram_model)
 
@@ -456,7 +456,7 @@ def main(config_path='configs/pretrain.yaml', resume=False):
         resume_epoch, resume_path = find_latest_checkpoint(checkpoint_dir)
         if resume_path is not None:
             print(f"\n[Resume] 从 {resume_path} (epoch {resume_epoch}) 续训")
-            ckpt = torch.load(resume_path, map_location='cpu', weights_only=True)
+            ckpt = safe_torch_load(resume_path, map_location='cpu')
             model.load_state_dict(ckpt['model_state_dict'])
             optimizer.load_state_dict(ckpt['optimizer_state_dict'])
             # optimizer.load_state_dict 直接赋值 CPU 张量，需迁移至训练设备，否则首步 optimizer.step 崩溃

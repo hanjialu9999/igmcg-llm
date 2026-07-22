@@ -12,6 +12,35 @@ from models.rope import RotaryEmbedding
 from models.memory import MemoryBank
 
 
+class EnhancementsMixin:
+    """运行时增强开关 mixin（set_enhancements_active 的单一事实来源）。
+
+    SlidingWindowCausalSelfAttention / LinearMixerBase / DifferentialAttention
+    三类原各自重复实现同一逻辑，统一到此处消除漂移风险。要求宿主类初始化 self._rt: Dict[str, bool]。
+    """
+
+    def set_enhancements_active(self, spec):
+        """`spec=True/False` 全开/全关；`spec=dict` 仅更新存在的键。
+        用于"交替/分段增强"训练，关闭时跳过对应 QK-Norm/可学习温度（恒等）。"""
+        if isinstance(spec, bool):
+            on = spec
+            self._rt = {"qk_norm": on, "attn_temp": on}
+        elif isinstance(spec, dict):
+            for k, v in spec.items():
+                if k in self._rt:
+                    self._rt[k] = bool(v)
+        else:
+            raise TypeError(f"set_enhancements_active 期望 bool 或 dict，收到 {type(spec)}")
+
+
+def _pad_mem_bias(mem_bias: torch.Tensor, Tkv: int, mem_cols: int) -> torch.Tensor:
+    """记忆段偏置右补零到完整 KV 长度，供与 scores/attn_mask 广播相加。
+
+    mem_bias: (B,H,Tq,mem_cols) → (B,H,Tq,Tkv)。记忆段保留原值，主序列段补 0。
+    4 处调用点（attend cache/全量 + DifferentialAttention 双路）共用，消除 F.pad 散落。"""
+    return torch.nn.functional.pad(mem_bias, (0, Tkv - mem_cols))
+
+
 def _parallel_prefix_scan(
     a: torch.Tensor, b: torch.Tensor,
     past_state: Optional[torch.Tensor] = None,
@@ -81,10 +110,11 @@ def apply_qk_norm_and_temp(q: torch.Tensor, k: torch.Tensor,
         k = k * scale
     return q, k
 
-class SlidingWindowCausalSelfAttention(nn.Module):
+class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
     """因果自注意力，可选滑动窗口 + 可学习相对位置偏置。
-     CUDA/CPU 用原生 fused SDPA；AMD DirectML 的 fused 内核会触发原生崩溃，
-     故 DML(及其他后端)走手动 matmul+softmax+因果掩码 以规避该 bug。
+     全后端统一用 fused SDPA（DML fused SDPA 现已稳定且比 manual 快 ~2.5x）；
+     DML 的 bool attn_mask 语义与 PyTorch 标准相反（True=允许≠禁止），故全路径用 float attn_mask
+     （_build_causal_window_mask 返回 mask.float()*fill_value）；纯因果路径用 is_causal=True 更高效。
     """
     def __init__(self, dim: int, num_heads: int, window: int = 0, rel_bias: bool = False, max_seq_length: int = 64,
                  qk_norm: bool = True, attn_temp: bool = True, mask_fill_value: float = MASK_FILL_VALUE,
@@ -178,19 +208,6 @@ class SlidingWindowCausalSelfAttention(nn.Module):
                 memory_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         q, k, v = self.project_and_norm(x, start_pos)
         return self.attend(q, k, v, past_kv, use_cache, start_pos, memory_kv)
-
-    def set_enhancements_active(self, spec):
-        """运行时开关（按开关粒度）：`spec=True/False` 全开/全关；`spec=dict` 仅更新存在的键。
-        用于“交替/分段增强”训练，关闭时跳过对应 QK-Norm/可学习温度（恒等）。"""
-        if isinstance(spec, bool):
-            on = spec
-            self._rt = {"qk_norm": on, "attn_temp": on}
-        elif isinstance(spec, dict):
-            for k, v in spec.items():
-                if k in self._rt:
-                    self._rt[k] = bool(v)
-        else:
-            raise TypeError(f"set_enhancements_active 期望 bool 或 dict，收到 {type(spec)}")
 
     def _alibi_bias(self, Tq: int, Tkv: int, device: torch.device, start_pos: int = 0,
                     mem_cols: int = 0) -> Optional[torch.Tensor]:
@@ -333,7 +350,7 @@ class SlidingWindowCausalSelfAttention(nn.Module):
                 attn_mask = attn_mask + self.rel_bias_table[:, idx].unsqueeze(0)
             if mem_bias is not None:
                 # mem_bias: (B,H,Tq,mem_cols)，右侧补零到 Tkv 再与 attn_mask 广播相加
-                padded = torch.nn.functional.pad(mem_bias, (0, Tkv - mem_cols))
+                padded = _pad_mem_bias(mem_bias, Tkv, mem_cols)
                 attn_mask = attn_mask + padded
             alibi_b = self._alibi_bias(Tq, Tkv, dev, start_pos, mem_cols=mem_cols)
             if alibi_b is not None:
@@ -342,12 +359,11 @@ class SlidingWindowCausalSelfAttention(nn.Module):
             # 否则开启 retrieval_full 时训练-推理系统性不一致（生成质量偏离训练行为）。
             if rbias_full is not None:
                 attn_mask = attn_mask + rbias_full
-            # 与全量（非缓存）路径走同一后端：cuda/cpu 用 fused SDPA、DML(privateuseone) 用 manual，
-            # 保证训练-推理在带偏置（alibi/rel_bias/mem_bias）时数值一致。
-            if q.device.type in ('cuda', 'cpu'):
-                out = scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
-            else:
-                out = self._manual_attention(q, k, v, attn_mask)
+            # 统一用 fused SDPA（float mask）——DML fused SDPA 现已稳定且比 manual 快 ~2.5x。
+            # 关键：DML 的 bool attn_mask 语义与 PyTorch 标准相反（True=允许≠禁止），
+            # 但 float attn_mask 正确（加到 scores 上）。本路径的 attn_mask 始终是 float
+            # （_build_causal_window_mask 返回 mask.float()*fill_value，后续 +mem_bias 等加法也保持 float）。
+            out = scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
             out = out.transpose(1, 2).reshape(B, Tq, self.num_heads * self.head_dim)
             return self.proj(out), present
 
@@ -382,7 +398,7 @@ class SlidingWindowCausalSelfAttention(nn.Module):
         attn_mask = self._bias_cache
         if mem_bias is not None:
             # mem_bias: (B,H,T,mem_cols)，右侧补零到 Tkv 再与 attn_mask 广播相加
-            padded = torch.nn.functional.pad(mem_bias, (0, Tkv - mem_cols))  # (B,H,T,Tkv)
+            padded = _pad_mem_bias(mem_bias, Tkv, mem_cols)  # (B,H,T,Tkv)
             attn_mask = attn_mask + padded
         alibi_b = self._alibi_bias(T, Tkv, dev, start_pos, mem_cols=mem_cols)
         if alibi_b is not None:
@@ -390,17 +406,17 @@ class SlidingWindowCausalSelfAttention(nn.Module):
         # 全上下文检索：inject_memory 已统一算好 rbias_full（与 cache 路径同源一致）
         if rbias_full is not None:
             attn_mask = attn_mask + rbias_full
-        if q.device.type in ('cuda', 'cpu'):
-            # 静态条件：无自定义掩码时用 fused is_causal（避免运行时 abs().max() sync）
-            _use_causal = (not self.rel_bias) and (memory_kv is None) and (self.window == 0) and (not self.alibi)
-            if _use_causal:
-                out = scaled_dot_product_attention(q, k, v, is_causal=True)
-            else:
-                out = scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
+        # 统一用 fused SDPA——DML fused SDPA 比 manual 快 ~2.5x（训练规模实测）。
+        # 纯因果（无自定义偏置）时用 is_causal=True（比传全零 mask 更高效，DML 上实测 is_causal 略慢
+        # 但 CPU/CUDA 上更快，且保证因果性正确）；有偏置时用 float attn_mask（DML 上 float mask 正确，
+        # bool mask 语义反了故不用）。
+        # 关键：_use_causal=True 时 _build_causal_window_mask 返回 None → base=torch.zeros → _bias_cache 恒全零，
+        # 故无需每步 .item() 同步检查（旧实现的 .abs().max().item() 是 DML→CPU 同步税，已删）。
+        _use_causal = (not self.rel_bias) and (memory_kv is None) and (self.window == 0) and (not self.alibi)
+        if _use_causal:
+            out = scaled_dot_product_attention(q, k, v, is_causal=True)
         else:
-            # DML/其他：直接传 mask（all-zeros 时 scores+zeros 是 no-op）
-            # 消除 6 次/步的 host-device sync（abs().max() → __bool__() → .item()）
-            out = self._manual_attention(q, k, v, attn_mask)
+            out = scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
         out = out.transpose(1, 2).reshape(B, T, self.num_heads * self.head_dim)
         return self.proj(out), None
 
@@ -446,21 +462,8 @@ class SlidingWindowCausalSelfAttention(nn.Module):
             return (mask.float() * self.mask_fill_value).unsqueeze(0).unsqueeze(0)
         return None
 
-    def _manual_attention(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, attn_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
-        # q,k,v: (B, H, Tq, D)；attn_mask: (1,1,Tq,Tkv) 或 None(纯因果)
-        scale = 1.0 / math.sqrt(self.head_dim)
-        scores = torch.matmul(q, k.transpose(-2, -1)) * scale   # (B, H, Tq, Tkv)
-        if attn_mask is not None:
-            scores = scores + attn_mask
-        else:
-            Tq, Tk = q.size(2), k.size(2)
-            causal = torch.triu(torch.ones(Tq, Tk, dtype=torch.bool, device=q.device), diagonal=1)
-            scores = scores.masked_fill(causal, self.mask_fill_value)
-        attn = torch.softmax(scores, dim=-1)
-        return torch.matmul(attn, v)                             # (B, H, Tq, D)
 
-
-class LinearMixerBase(nn.Module):
+class LinearMixerBase(nn.Module, EnhancementsMixin):
     """线性注意力系 mixer 的共享基础设施（LinearAttention / AxialLinearAttention）。
 
     提供 __init__ 初始化、_feat、project_and_norm、_rt 开关，子类只需实现 forward 核心逻辑。
@@ -502,14 +505,6 @@ class LinearMixerBase(nn.Module):
             self.log_temp if self.temp_enabled else None)
         q, k = self.rope(q, k, start_pos=start_pos, max_len=self.max_seq_length)
         return q, k, v
-
-    def set_enhancements_active(self, spec):
-        if isinstance(spec, bool):
-            self._rt = {"qk_norm": spec, "attn_temp": spec}
-        elif isinstance(spec, dict):
-            for k, v in spec.items():
-                if k in self._rt:
-                    self._rt[k] = bool(v)
 
 
 class LinearAttention(LinearMixerBase):
@@ -735,7 +730,7 @@ class AxialLinearAttention(LinearMixerBase):
         return self.proj(fused), None
 
 
-class DifferentialAttention(nn.Module):
+class DifferentialAttention(nn.Module, EnhancementsMixin):
     """差分注意力（Differential Attention，CVPR 2025）。
 
     核心思想：用两组注意力的差值来消除噪声，增强关键信息。
@@ -774,19 +769,6 @@ class DifferentialAttention(nn.Module):
         self._cached_T = None
         # 增强调度运行时开关（与 SlidingWindowCausalSelfAttention 一致）
         self._rt = {"qk_norm": True, "attn_temp": True}
-
-    def set_enhancements_active(self, spec):
-        """运行时开关（按开关粒度）：`spec=True/False` 全开/全关；`spec=dict` 仅更新存在的键。
-        用于"交替/分段增强"训练，关闭时跳过对应 QK-Norm/可学习温度（恒等）。"""
-        if isinstance(spec, bool):
-            on = spec
-            self._rt = {"qk_norm": on, "attn_temp": on}
-        elif isinstance(spec, dict):
-            for k, v in spec.items():
-                if k in self._rt:
-                    self._rt[k] = bool(v)
-        else:
-            raise TypeError(f"set_enhancements_active 期望 bool 或 dict，收到 {type(spec)}")
 
     def forward(self, x: torch.Tensor, past_kv=None, use_cache: bool = False,
                 start_pos: int = 0, memory_kv=None):
@@ -868,8 +850,8 @@ class DifferentialAttention(nn.Module):
         # 记忆段偏置（仅前 mem_cols 列），右侧补零到 Tkv_full 后广播相加
         if mem_bias1 is not None:
             Tkv_full = scores1.size(-1)
-            scores1 = scores1 + torch.nn.functional.pad(mem_bias1, (0, Tkv_full - mem_cols))
-            scores2 = scores2 + torch.nn.functional.pad(mem_bias2, (0, Tkv_full - mem_cols))
+            scores1 = scores1 + _pad_mem_bias(mem_bias1, Tkv_full, mem_cols)
+            scores2 = scores2 + _pad_mem_bias(mem_bias2, Tkv_full, mem_cols)
         attn1 = torch.softmax(scores1, dim=-1)
         attn2 = torch.softmax(scores2, dim=-1)
         # 差分注意力

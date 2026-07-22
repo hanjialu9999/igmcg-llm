@@ -243,7 +243,10 @@ class NGramModel:
         """增量解码：给定 (B,ctx_len) 滚动上下文 与 (B,T) 新 token，
         仅计算新 token 各位置的逐阶 log 概率 (B,T,V,K)，不重建整段 ctx（避免 O(T^2)）。
         ctx2: (B, ctx_len)，其中 ctx_len = max_order-1，含历史 token 用于构建上下文窗口。
-        复用 _orders_cache：上下文相同的位置直接命中，与全量路径完全一致。"""
+        复用 _orders_cache：上下文相同的位置直接命中，与全量路径完全一致。
+
+        性能优化（仿 logprob_orders_matrix）：收集唯一上下文 → 批量 stack .to(device) →
+        index_select 一次性填充，消除逐 (b,t) .to(device) 的 DML 启动税。数值与逐位置循环等价。"""
         if new_ids.dim() == 1:
             new_ids = new_ids.unsqueeze(0)
         B, T = new_ids.shape
@@ -253,19 +256,44 @@ class NGramModel:
         # 拼接滚动上下文 + 新 token：[ctx0..ctx_{L-1}, new0..new_{T-1}]
         full = torch.cat([ctx2, new_ids], dim=1)                     # (B, ctx_len+T)
         full_cpu = full.cpu() if full.is_cuda or (hasattr(full, 'device') and full.device.type in ('cuda', 'privateuseone')) else full
-        out = torch.empty(B, T, V, K, device=device)
+        # 1) 收集每个位置的上下文键并去重（与 logprob_orders_matrix 同模式）
+        ctx_keys: List[Tuple[int, ...]] = []
+        pos_to_key: List[int] = []
+        uniq: Dict[Tuple[int, ...], int] = {}
         for b in range(B):
+            seq = full_cpu[b].tolist()
             for t in range(T):
-                ctx_tokens = full_cpu[b, t: t + ctx_len].tolist()
-                ck = tuple(ctx_tokens)
-                if ck in self._orders_cache:
-                    out[b, t] = self._orders_cache[ck].to(device)
-                else:
-                    v = self._compute_logprob_orders(ctx_tokens, V, device)
-                    if len(self._orders_cache) > self._orders_cache_max:
-                        self._orders_cache.clear()
-                    self._orders_cache[ck] = v.cpu()
-                    out[b, t] = v
+                ck = tuple(seq[t: t + ctx_len])
+                if ck not in uniq:
+                    uniq[ck] = len(ctx_keys)
+                    ctx_keys.append(ck)
+                pos_to_key.append(uniq[ck])
+        # 2) 仅对唯一上下文计算（命中缓存免算），缓存命中项批量传输
+        cached_idxs: List[int] = []
+        cached_cpu: List[torch.Tensor] = []
+        uncached_idxs: List[int] = []
+        for i, ck in enumerate(ctx_keys):
+            if ck in self._orders_cache:
+                cached_idxs.append(i)
+                cached_cpu.append(self._orders_cache[ck])
+            else:
+                uncached_idxs.append(i)
+        uniq_vecs: List[Optional[torch.Tensor]] = [None] * len(ctx_keys)
+        if cached_cpu:
+            cached_stack = torch.stack(cached_cpu, dim=0).to(device)  # (U_cached, V, K)
+            for j, idx in enumerate(cached_idxs):
+                uniq_vecs[idx] = cached_stack[j]
+        for idx in uncached_idxs:
+            ck = ctx_keys[idx]
+            v = self._compute_logprob_orders(list(ck), V, device)
+            if len(self._orders_cache) > self._orders_cache_max:
+                self._orders_cache.clear()
+            self._orders_cache[ck] = v.cpu()
+            uniq_vecs[idx] = v
+        # 3) 向量化填充：stack + index_select 一次性搬回 (B,T,V,K)
+        stacked = torch.stack(uniq_vecs, dim=0)  # (U, V, K)
+        key_idx_tensor = torch.tensor(pos_to_key, dtype=torch.long, device=device)
+        out = stacked.index_select(0, key_idx_tensor.view(-1)).view(B, T, V, K)
         return out
 
     # ------------------------------------------------------------------

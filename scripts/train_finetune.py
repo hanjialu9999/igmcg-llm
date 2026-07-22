@@ -17,6 +17,7 @@ from models.transformer import TransformerModel
 from models.config_loader import load_config, build_model, load_vocab
 from models.device import get_device, apply_cpu_threads
 from models.utils import save_checkpoint, cli_guard
+from models.checkpoint import safe_torch_load
 
 
 def load_vocab_from_json(vocab_path):
@@ -97,7 +98,7 @@ def train():
 
     if os.path.exists(model_path):
         print("加载权重参数...")
-        checkpoint = torch.load(model_path, map_location='cpu', weights_only=True)
+        checkpoint = safe_torch_load(model_path, map_location='cpu')
         if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
             missing, unexpected = model.load_state_dict(checkpoint['model_state_dict'], strict=False)
             print(f"OK 从 checkpoint 成功加载权重（missing={len(missing)}, unexpected={len(unexpected)}）")

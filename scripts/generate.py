@@ -20,7 +20,7 @@ sys.path.insert(0, str(project_root))
 
 from models.transformer import TransformerModel, apply_repetition_penalty, sample_next_token, _decode_one_step
 from models.config_loader import load_vocab
-from models.device import get_device
+from models.device import get_device, apply_cpu_threads
 from models.checkpoint import load_model, safe_torch_load
 from models.ngram import NGramModel
 from models.utils import cli_guard
@@ -419,8 +419,7 @@ def main():
 
     # CPU 生成时限制线程数以降功耗（单流自回归解码对线程数不敏感，省电明显）
     if args.cpu_threads and args.cpu_threads > 0:
-        torch.set_num_threads(max(1, args.cpu_threads))
-        torch.set_num_interop_threads(max(1, args.cpu_threads // 2))
+        apply_cpu_threads(args.cpu_threads)
 
     # Check if model exists
     if not Path(args.model).exists():
