@@ -1,4 +1,4 @@
-﻿# 冒烟训练配置：4000 行小训练，单 epoch，不做防过拟合
+# 冒烟训练配置：4000 行小训练，单 epoch，不做防过拟合
 # 目的：快速验证训练流程 + 对比多种生成方式（IGMCG 开/关、速度）
 model:
   vocab_size: 12000
@@ -53,11 +53,4 @@ paths:
 
 device: "auto"
 seed: 42
-
-generation:
-  temperature: 0.8
-  top_k: 50
-  repetition_penalty: 1.2
-  min_length: 3
-  eos_penalty: -5.0
 

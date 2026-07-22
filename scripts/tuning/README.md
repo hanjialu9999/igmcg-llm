@@ -8,7 +8,7 @@
 | `tune_topk.py` | 固定 `temperature` / `repetition_penalty`，扫描 `top_k`。 |
 | `showcase_optimal_params.py` | 汇总扫描结果，将最优 `temperature` / `top_k` / `repetition_penalty` **回写**到仓库根的 `chat_config.json`，供 `tools/dialogue_interactive.py` 直接使用（`scripts/chat.py` 仍走命令行参数）。 |
 
-> 推荐区间：temperature 0.6–0.8、top_k 40–50、repetition_penalty 1.4。
+> 推荐区间：temperature 0.6–0.8、top_k 40–50、repetition_penalty 2.0。
 
 ## 用法
 

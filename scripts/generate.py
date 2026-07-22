@@ -28,7 +28,7 @@ from models.utils import cli_guard
 
 def generate_text(model, vocab, prompt, max_length=30, temperature=0.8,
                    top_k=50, device='cpu', ngram=None, ngram_weight=0.0,
-                   min_length=3, eos_penalty=-5.0, repetition_penalty=1.4):
+                   min_length=3, eos_penalty=-5.0, repetition_penalty=2.0):
     """Generate text from prompt（可选融合 n-gram 统计先验做解码期双轨）"""
     tokens = vocab.encode(prompt)
     if tokens[-1] == vocab.eos_idx:
@@ -282,7 +282,7 @@ def _ngram_coherence(ngram_fn, ids, device):
 
 def generate_igmcg(model, vocab, prompt, intuition=None, num_candidates=4,
                     max_length=60, device='cpu', base_temp=0.7, top_k=30,
-                    ngram_fn=None, ngram_weight=0.0, repetition_penalty=1.4,
+                    ngram_fn=None, ngram_weight=0.0, repetition_penalty=2.0,
                     min_length=3, eos_penalty=-5.0,
                     coh_w=1.5, flu_w=0.15, style_w=0.15, rep_w=2.5):
     """IGMCG 多候选生成：返回 (最优文本, 各候选评分详情)。

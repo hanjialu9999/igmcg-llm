@@ -181,3 +181,58 @@ def test_mamba_selective_scan_roll_parity():
     h2_seq = torch.stack(h2_list, dim=1)
     assert torch.allclose(h2, h2_seq, atol=1e-5), \
         f"带 past_state 的选择性扫描不一致 max_diff={(h2-h2_seq).abs().max():.3e}"
+
+
+# ============================================================
+# Bug M3 回归：DifferentialAttention + memory 形状崩溃
+# ============================================================
+
+def test_differential_attention_with_memory_no_shape_error():
+    """M3 回归：mixer='diff' + memory_size>0 时前向不崩溃。
+
+    原 bug：scores 先算（B,H,T,Tkv）后注入 memory，导致 scores + mem_bias 形状
+    (B,H,T,Tkv) + (B,H,T,M) 不符。修复：先注入 memory（K/V 扩展为 M+Tkv）再算 scores。
+    """
+    m = TransformerModel(vocab_size=100, embedding_dim=32, hidden_dim=64,
+                         num_heads=4, num_layers=2, max_seq_length=32,
+                         mixer='diff', memory_size=16, memory_comp_dim=16,
+                         memory_retrieval=True)
+    m.eval()
+    x = torch.randint(0, 100, (1, 8))
+    with torch.no_grad():
+        out = m(x)
+    assert out.shape == (1, 8, 100)
+    assert torch.isfinite(out).all(), "输出含 nan/inf，差分+记忆路径数值不稳定"
+
+
+def test_differential_attention_memory_train_no_shape_error():
+    """M3 回归：训练模式下 diff+memory 前向不崩溃（验 backward 也通过）。"""
+    m = TransformerModel(vocab_size=100, embedding_dim=32, hidden_dim=64,
+                         num_heads=4, num_layers=2, max_seq_length=32,
+                         mixer='diff', memory_size=16, memory_comp_dim=16,
+                         memory_retrieval=True)
+    m.train()
+    x = torch.randint(0, 100, (1, 8))
+    y = torch.randint(0, 100, (1, 8))
+    out = m(x)
+    loss = torch.nn.functional.cross_entropy(out.reshape(-1, 100), y.reshape(-1))
+    loss.backward()  # 若形状不符会先在前向崩
+    assert torch.isfinite(loss).item()
+
+
+def test_differential_attention_memory_cache_parity():
+    """M3 回归：diff+memory 路径增量解码与全量前向数值一致（cache parity）。
+
+    原 bug 修复后 K/V 注入顺序对齐 SlidingWindowCausalSelfAttention，
+    cache/全量两条路径应数值一致（容差放宽到 0.15，因 DifferentialAttention 两组
+    独立 QKV 投影数值差异略大，详见 test_differential_attention_incr_decode 注释）。
+    """
+    m = TransformerModel(vocab_size=100, embedding_dim=32, hidden_dim=64,
+                         num_heads=4, num_layers=2, max_seq_length=32,
+                         mixer='diff', memory_size=16, memory_comp_dim=16,
+                         memory_retrieval=True)
+    full = _run_full(m, [1, 2, 3, 4, 5])
+    incr = _run_incremental(m, [1, 2, 3, 4, 5])
+    assert torch.allclose(full, incr, atol=0.15), \
+        f"diff+memory 增量/全量不一致 max_diff={(full-incr).abs().max():.3e}"
+

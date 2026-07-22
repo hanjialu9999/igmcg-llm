@@ -9,6 +9,21 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
+## `（本地，基于 `f7bed96`，待推送，第九轮全面审查修复 + 性能优化）
+
+- fix: **M3 DifferentialAttention+memory 形状崩溃**——`models/mixers.py` DifferentialAttention.forward 原 scores 先算（B,H,T,Tkv）后注入 memory，导致 `scores + mem_bias` 形状 (B,H,T,Tkv)+(B,H,T,M) 不符。重写为「先注入 K/V 扩展为 M+Tkv、再算 scores」顺序（与 SlidingWindowCausalSelfAttention 一致），mem_bias 右侧补零到 Tkv_full 后广播相加。新增 3 回归测试（前向不崩/训练模式不崩/cache parity）。
+- fix: **M1 model.generate 温度丢失（ngram_fusion 路径）**——`models/sampling.py` `_decode_one_step` 在 `temperature_applied=True` 时曾把 τ 盖成 1.0 传给 forward，导致后续步温度丢失、采样分布首步冷后续步热。改为始终把真实 τ 传给 forward（由 forward 内部决定是否应用）。影响：τ=1.0 无变化，τ≠1.0 后续步采样分布正确。新增 2 回归测试（parity/τ≠1.0 输出不同于 τ=1.0）。
+- fix: **DifferentialAttention 缺 set_enhancements_active 方法**——SEL 增强调度训练末尾对每个 block 调用，但 DifferentialAttention 未实现该方法导致崩溃。补齐方法 + forward 内 QK-Norm/temp 接入 `self._rt` 运行时开关（原仅静态 `self.qk_norm_enabled` 检查，SEL 设 false 时不生效）。
+- perf: **logprob_orders_matrix 向量化（DML 提速 63x）**——`models/ngram.py` 原 step 3 用 `for i in range(U): mask = (flat_idx == i); flat_out[mask] = uniq_vecs[i]` 逐唯一上下文填充，DML 上每次都是 GPU 同步（U 大时极慢，83s/it）。改为 `torch.stack(uniq_vecs) + index_select` 一次性搬回 (B,T,V,K)，DML 上 83s/it→1.5s/it（63x），CPU 上 0.37s/it（无变化，内存峰值 U*V*K≤48MB 可接受）。
+- perf: **ngram.py 传输优化（批量 .to(device) + 设备缓存）**——`logprob_orders_matrix` step 2 原对每个缓存命中上下文逐张 `.to(device)`，DML 上每张小传输有固定启动税（warmup 后 U_cached 大时累积开销可观）。改为 `torch.stack` + 单次 `.to(device)` + 按位置回填。`_compute_logprob_orders` 新增 `_ensure_dev_caches`：首次调用时一次性把 `uni_prob` + 全部 `_ngram_tensors` 传到 device 并缓存，后续直接查表无需逐次 `.to(device)`。数值完全一致，pytest 203 passed。
+- fix: **B1-B4/M2/M4-M7/MINOR**——模型加载路径/transformer 层 bug 修复（详见之前各轮）。
+- chore: **死脚本/死配置清理**——删 6 个死脚本（improve_data/convert_statements_to_qa/reformat_data/analyze_datasets/check_files/check_ckpt）+ 13 个零引用 yaml 配置。
+- fix: **监控脚本 regex + argparse**——4 个监控脚本 regex 从 `Epoch \[(\d+)/(\d+)\].*训练损失` 修为实际 train.py 输出格式 `Epoch (\d+)/(\d+) \| Train Loss`，加 argparse 与 config-based epoch 读取。
+- fix: **repetition_penalty 一致性**——3 处不一致（1.2/1.4/2.0）统一为 2.0（tuning 实验值），删除 5 个 yaml 的死 `generation:` 节。
+- docs: 8 个 README/guide 修复（README.md/models/README.md/MODEL_USAGE_GUIDE/experiments/tools/scripts/tuning/AGENT_MEMORY）。
+- test: **新增 16+5=21 测试**（utils/checkpoint 基础 + BUG-9/10 回归 + M3×3 + M1×2 + 向量化 parity）。pytest **203 passed / 1 skipped**（较基线 181 + 22）。
+- exp: **DML 全特性训练验证**——`config_smoke_features.yaml`（diff+memory+ngram_fusion+qk_norm+attn_temp+residual_gate）4000 行 1 epoch：Val Loss 5.74，生成输出有中文短语结构（"大家用客户是中国际内"、"全国特学习"）。83s/it 优化后 1.5s/it。
+
 ## `（本地，基于 `fb4e8e2`，待推送）
 
 - exp: **20M 级大模型速度扫描**（最优基线 hd16/mem32/ngram+window 保持，仅放大 ed/nl）：ed512_nl6(14.8M/24.2k) / ed512_nl8(18.7M/18.2k) / **ed640_nl6(20.6M/20.9k tok/s，~20M 最快)** / ed768_nl6(27.2M/18.3k) / ed512_nl10(22.7M/15.7k)。结论：放大 embedding_dim 比加深层数更划算（nl10 仅 15.7k）；**ed640_nl6 为 20M 容量档推荐**。质量验证：ed640_nl6 单 epoch val_loss=8.98（4000 行小数据欠拟合），故 **4.3M 质量档仍是默认甜点**，20M 档需多 epoch/大数据。

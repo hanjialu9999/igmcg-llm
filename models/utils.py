@@ -115,8 +115,12 @@ def save_checkpoint(model: torch.nn.Module,
 
 def cleanup_old_checkpoints(checkpoint_dir: str, keep_last_n: int = 5):
     """Clean up old checkpoints, keep only the best model and last N epochs."""
+    # 防御非数字文件名（如 model_epoch_final.pt）：isdigit 过滤后再排序，避免 int() 崩溃
+    def _epoch_num(p: str) -> int:
+        name = os.path.basename(p).split('_')[-1].split('.')[0]
+        return int(name) if name.isdigit() else -1
     epoch_files = sorted(glob.glob(os.path.join(checkpoint_dir, 'model_epoch_*.pt')),
-                         key=lambda p: int(os.path.basename(p).split('_')[-1].split('.')[0]))
+                        key=_epoch_num)
 
     if len(epoch_files) <= keep_last_n:
         print(f"Found {len(epoch_files)} checkpoint(s). No cleanup needed (keep_last_n={keep_last_n})")
@@ -127,8 +131,8 @@ def cleanup_old_checkpoints(checkpoint_dir: str, keep_last_n: int = 5):
     for file_path in files_to_delete:
         try:
             os.remove(file_path)
-            # Also remove corresponding config YAML
-            config_path = file_path.replace('.pt', '_config.yaml')
+            # Also remove corresponding config YAML（只去末尾 .pt，避免误伤路径中含 .pt 的目录）
+            config_path = file_path[:-3] + '_config.yaml'
             if os.path.exists(config_path):
                 os.remove(config_path)
             deleted_count += 1

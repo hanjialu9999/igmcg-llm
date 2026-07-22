@@ -25,7 +25,7 @@ if "%1"=="" (
 ) else if /i "%1"=="train" (
     "%PY%" "%ROOT%scripts\train.py" --config "%ROOT%configs\pretrain.yaml"
 ) else if /i "%1"=="finetune" (
-    "%PY%" "%ROOT%train_finetune.py"
+    "%PY%" "%ROOT%scripts\train_finetune.py"
 ) else if /i "%1"=="chat" (
     "%PY%" "%ROOT%scripts\chat.py"
 ) else if /i "%1"=="gen" (

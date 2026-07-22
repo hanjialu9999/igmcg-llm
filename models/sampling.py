@@ -77,13 +77,16 @@ def _decode_one_step(model: "TransformerModel", next_token: int,
     的批量解码共用，消除两套解码主循环重复的「input_ids=[[tok]] -> forward(past)
     -> cur_pos+=1」驱动逻辑。语义与原 generate 循环体完全一致（数值不变）。
 
-    当 temperature_applied=True 时（ngram_fusion 路径），传 temperature=1.0 给 forward
-    以跳过内部温度缩放（forward 内部总是做 z/τ），让采样端统一处理，避免双重除温。
-    注意：forward 无 temperature_applied 参数，温度缩放由 forward 自身完成；此处仅控制
-    传入值。"""
+    温度处理：始终把真实 temperature 传给 forward；forward 内部对 ngram_fusion 路径
+    自行应用 log_softmax(z/τ)（n-gram 先验不被温度缩放），对非融合路径忽略 τ。
+    调用方经 temperature_applied 标志告知 sample_next_token 是否在采样端再除 τ。
+    原 bug（已修）：temperature_applied=True 时此处曾把 τ 盖成 1.0，导致后续步
+    温度丢失、采样分布与首步不一致（τ=1.0 时无影响，τ≠1.0 时首步冷后续步热）。
+
+    注：temperature_applied 参数保留以维持调用方 API 兼容（generate.py 仍传它），
+    但不再影响 forward 接收的温度（始终透传真实 τ）。"""
     input_ids = torch.tensor([[next_token]], dtype=torch.long, device=device)
-    _temp = 1.0 if temperature_applied else temperature
     logits, past = model.forward(input_ids, past_key_values=past, use_cache=use_cache,
-                                 temperature=_temp)
+                                 temperature=temperature)
     cur_pos += 1
     return past, logits, cur_pos

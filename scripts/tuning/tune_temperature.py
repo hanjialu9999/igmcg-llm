@@ -14,8 +14,8 @@ import torch
 import json
 import argparse
 import numpy as np
-from models.config_loader import load_config, build_model, load_vocab
 from models.device import get_device
+from models.checkpoint import load_model
 
 parser = argparse.ArgumentParser(description='Temperature 调参')
 parser.add_argument('--model', default='checkpoints/final_model.pt')
@@ -23,13 +23,11 @@ parser.add_argument('--vocab', default='checkpoints/vocab.json')
 parser.add_argument('--device', default=None)
 args = parser.parse_args()
 
-vocab = load_vocab(args.vocab)
-
 device = get_device(args.device)
 
-model = build_model(load_config(), device=device)
-cp = torch.load(args.model, map_location='cpu', weights_only=True)
-model.load_state_dict(cp['model_state_dict'])
+# 复用 generate.load_model：从 *_config.yaml 透传增强开关（qk_norm/attn_temp 等），
+# 避免 state_dict 不匹配；strict=False 兼容旧权重。比 build_model(load_config()) 更贴合实际权重。
+model, vocab = load_model(args.model, args.vocab, device=device, quantize=False, compile_model=False)
 model.eval()
 
 test_questions = [

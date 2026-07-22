@@ -11,29 +11,21 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import torch
 import json
-from models.transformer import TransformerModel
-from models.config_loader import load_vocab, build_model
 from models.device import get_device
-import yaml
+from models.checkpoint import load_model
 import os
 
 device = get_device()
 
-# Load config
-with open('configs/pretrain.yaml', 'r', encoding='utf-8') as f:
-    config = yaml.safe_load(f)
-
-# Load vocabulary（复用 config_loader.load_vocab，正确处理 BPE/char 词表）
-vocab = load_vocab('checkpoints/vocab.json')
-
-def create_model():
-    return build_model(config, device=device)
+# 全局词表（每个 checkpoint 共用同一词表；final_model 与 model_epoch_*.pt 同源）
+_, vocab = load_model('checkpoints/final_model.pt', 'checkpoints/vocab.json', device=device) \
+    if os.path.exists('checkpoints/final_model.pt') else (None, None)
 
 def generate_response(model, user_input, temperature=0.7, top_k=50, repetition_penalty=2.0, max_length=20):
     """生成模型回复"""
     tokens = vocab.encode(user_input, add_special_tokens=False)
     tokens = [vocab.bos_idx] + tokens
-    
+
     with torch.no_grad():
         output_ids = model.generate(
             tokens,
@@ -43,20 +35,20 @@ def generate_response(model, user_input, temperature=0.7, top_k=50, repetition_p
             device=device,
             repetition_penalty=repetition_penalty
         )
-    
+
     response = vocab.decode(output_ids, skip_special=True)
     input_text = vocab.decode(tokens, skip_special=True)
-    
+
     if response.startswith(input_text):
         response = response[len(input_text):].strip()
-    
+
     return response if response else "..."
 
 # 找所有的checkpoint
 checkpoint_files = sorted([f for f in Path('checkpoints/').glob('*.pt') if 'epoch' in f.name])
 
 print("\n" + "="*80)
-print("🔍 对比不同Epoch模型的生成效果")
+print("对比不同Epoch模型的生成效果")
 print("="*80)
 
 test_prompt = "What is artificial intelligence"
@@ -68,25 +60,23 @@ models_to_test = [
 
 for model_file, label in models_to_test:
     checkpoint_path = f'checkpoints/{model_file}'
-    
+
     if not os.path.exists(checkpoint_path):
         continue
-    
-    print(f"\n📌 {label}: {model_file}")
+
+    print(f"\n{label}: {model_file}")
     print("-"*80)
-    
+
     try:
-        model = create_model()
-        checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=True)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        model = model.to(device)
+        # 每个 checkpoint 用 load_model 加载，自动从同目录 *_config.yaml 透传增强开关
+        model, _ = load_model(checkpoint_path, 'checkpoints/vocab.json', device=device)
         model.eval()
-        
+
         response = generate_response(model, test_prompt, temperature=0.7, top_k=50, max_length=25)
         print(f"Q: {test_prompt}")
         print(f"A: {response}")
-        
+
     except Exception as e:
-        print(f"❌ 加载失败: {e}")
+        print(f"加载失败: {e}")
 
 print("\n" + "="*80)

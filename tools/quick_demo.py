@@ -10,27 +10,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import torch
 import json
-from models.transformer import TransformerModel
-from models.config_loader import load_vocab, build_model
 from models.device import get_device
-import yaml
+from models.checkpoint import load_model
 
 device = get_device()
 
-# Load config
-with open('configs/pretrain.yaml', 'r', encoding='utf-8') as f:
-    config = yaml.safe_load(f)
-
-# Load vocabulary（复用 config_loader.load_vocab，正确处理 BPE/char 词表）
-vocab = load_vocab('checkpoints/vocab.json')
-
-# Initialize model
-model = build_model(config, device=device)
-
-# Load checkpoint
-checkpoint = torch.load('checkpoints/final_model.pt', map_location='cpu', weights_only=True)
-model.load_state_dict(checkpoint['model_state_dict'])
-model = model.to(device)
+# 复用 load_model：从 *_config.yaml 透传增强开关（qk_norm/attn_temp 等），
+# 避免 state_dict 不匹配；strict=False 兼容旧权重。比 build_model(load_config()) 更贴合实际权重。
+model, vocab = load_model('checkpoints/final_model.pt', 'checkpoints/vocab.json', device=device)
 model.eval()
 
 def deduplicate_response(text):

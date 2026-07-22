@@ -1,4 +1,4 @@
-﻿# 对比实验（全量 100MB / 39700 行）：SEL v2 8 段（1 全开 + 1 全关极端 + 6 局部）。
+# 对比实验（全量 100MB / 39700 行）：SEL v2 8 段（1 全开 + 1 全关极端 + 6 局部）。
 # attn_temp 仅全关段关，平时恒开；qk_norm/residual_gate 在段间切换、除全关段外永不完全全关。
 model:
   vocab_size: 12000
@@ -70,11 +70,4 @@ paths:
 
 device: "auto"
 seed: 42
-
-generation:
-  temperature: 0.8
-  top_k: 50
-  repetition_penalty: 1.2
-  min_length: 3
-  eos_penalty: -5.0
 

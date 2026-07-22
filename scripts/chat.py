@@ -32,7 +32,7 @@ def chat_generate(model, vocab, prompt, max_length, temperature, top_k, device):
     with torch.no_grad():
         generated = model.generate(tokens, max_length=max_length,
                                    temperature=temperature, top_k=top_k,
-                                   device=device, repetition_penalty=1.4,
+                                   device=device, repetition_penalty=2.0,
                                    min_length=8, eos_penalty=-5.0)
     new_ids = generated[len(tokens):]
     return vocab.decode(new_ids).strip()
