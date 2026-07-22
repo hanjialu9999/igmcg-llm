@@ -191,7 +191,7 @@ class TransformerBlock(nn.Module):
         if self.linear_attn is not None:
             # 阶段7：混合 mixer（attn + 线性注意力并行），mixer_gate 自选择比例
             lh, lpresent = self.linear_attn(xn, attn_past_kv, use_cache, start_pos, memory_kv=mem_kv)
-            mg = torch.sigmoid(self.mixer_gate).to(xn.device)
+            mg = torch.sigmoid(self.mixer_gate)
             h = mg * h + (1.0 - mg) * lh
             if use_cache and lpresent is not None:
                 # 两路 KV 缓存合并：把线性注意力状态 S 和分母累积 z 塞进 attn_kv 元组
@@ -213,7 +213,7 @@ class TransformerBlock(nn.Module):
         gate1 = (getattr(self, 'sub1_gate', None) if (self.residual_gate_enabled and self._rt["residual_gate"]) else None)
         gate2 = (self.ffn_gate if (self.residual_gate_enabled and self._rt["residual_gate"]) else None)
         # 阶段6：跳过层门控（skip_gate 经 sigmoid 映射到 (0,1)；_skip_active=False 时跳过失效恒为 1）
-        sk = torch.sigmoid(self.skip_gate).to(x.device) if (self.skip_enabled and getattr(self, '_skip_active', True)) else None
+        sk = torch.sigmoid(self.skip_gate) if (self.skip_enabled and getattr(self, '_skip_active', True)) else None
 
         if self.block_type == 'attn':
             # 阶段7 token mixer（attn / linear / attn_linear），统一经 _run_attn_mixer 运行，
@@ -242,7 +242,7 @@ class TransformerBlock(nn.Module):
             if self.hybrid_single_gate and self._rt.get("hybrid_gate", True):
                 # 阶段8.4：单动态门控 —— g_t 逐位置混合 attn/ssm 两路（凸组合）。
                 # g_t=sigmoid(W_g·ln1(x)) ∈(0,1)，out = g_t·attn_h + (1-g_t)·ssm_h。
-                g = torch.sigmoid(self.hybrid_mix(xn)).to(x.device)  # (B,T,1)
+                g = torch.sigmoid(self.hybrid_mix(xn))  # (B,T,1)
                 mixed = g * h_eff + (1.0 - g) * ssm_eff             # (B,T,D)
                 x = x + self.drop(mixed)
             elif self.hybrid_gate_enabled and self._rt["hybrid_gate"]:
@@ -600,7 +600,7 @@ class TransformerModel(nn.Module):
             elif isinstance(blk.attn, LinearAttention) and getattr(self, 'attn_window', 0) > 0:
                 # 线性注意力同样处理窗口内 token，按模型配置窗口计成本（再乘 0.3x 折扣）
                 eff_window = min(self.attn_window, self.max_seq_length)
-            if eff_window:
+            if isinstance(eff_window, torch.Tensor) or (isinstance(eff_window, int) and eff_window > 0):
                 wcost = eff_window / max(self.max_seq_length, 1)
                 layer_cost = layer_cost * wcost
             total = total + layer_cost

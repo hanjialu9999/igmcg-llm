@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import yaml
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, Union
 
 import torch
 from torch import nn
@@ -76,7 +76,7 @@ def build_ngram_model(vocab, model_config: Dict[str, Any]):
         return None
 
 
-def load_model(model_path, vocab_path, device: str = 'cpu',
+def load_model(model_path, vocab_path, device: 'Union[str, torch.device]' = 'cpu',
                quantize: bool = False, compile_model: bool = False):
     """Load trained model and vocabulary.
 
@@ -85,6 +85,9 @@ def load_model(model_path, vocab_path, device: str = 'cpu',
     compile_model=True 时对模型做 torch.compile（CUDA/CPU 有效）：融合 RMSNorm/RoPE/MatMul 等
     算子在自回归解码上通常带来 1.5~3× 吞吐提升；DML 设备自动跳过。
     """
+    # 规范化 device：字符串转 torch.device，统一使用 .type 属性
+    if isinstance(device, str):
+        device = torch.device(device)
     # Load vocabulary（复用 config_loader.load_vocab，正确处理 BPE/char 词表的 merges 等字段，
     # 与训练期保存逻辑对称；统一走 BaseTokenizer 单一分词事实来源）
     from models.config_loader import load_vocab, build_model
@@ -150,14 +153,14 @@ def load_model(model_path, vocab_path, device: str = 'cpu',
             print(f"[warn] 推理期剪枝失败，已跳过：{e}")
     model.eval()
 
-    if quantize and getattr(device, 'type', None) != 'dml':
+    if quantize and getattr(device, 'type', None) not in ('dml', 'privateuseone'):
         # 量化返回新模型对象，必须重新赋值；DML 无量化算子支持，已在上面跳过
         try:
             model = torch.quantization.quantize_dynamic(model, {nn.Linear}, dtype=torch.qint8)
         except Exception as e:
             print(f"[warn] int8 动态量化不可用，回退 fp32：{e}")
 
-    if compile_model and getattr(device, 'type', None) != 'dml':
+    if compile_model and getattr(device, 'type', None) not in ('dml', 'privateuseone'):
         try:
             model = torch.compile(model, dynamic=True)
         except Exception as e:
