@@ -78,7 +78,18 @@ class MemoryBank(nn.Module):
         self._kv_dirty = True
 
     def write(self, x: torch.Tensor) -> None:
-        """x: (B, T, D) 当前层表示，soft 写入记忆。"""
+        """x: (B, T, D) 当前层表示，soft 写入记忆。
+
+        forget_gate parity 修复：原实现每次 write() 调用施加一次 forget 衰减。
+        训练时每块 1 次 write(T 个 token) = 1 次衰减；增量解码每块 T 次 write(1 token) = T 次衰减。
+        衰减次数不同导致 train/infer divergence。修复：把 forget 衰减移入逐 token 循环，
+        按 token 数衰减（训练 1 次 write T token → 衰减 T 次；增量 T 次 write → 共 T 次），保证一致。
+
+        product_key 跨块顺序注意：product_key 模式下 gate 依赖 slots，slots 随写入变化。
+        训练是 block-major（block0 写全部 T token → block1 写），增量是 token-major（各 block 逐 token）。
+        两者 slots 演化路径不同 → 产生 divergence。这是已知架构限制，product_key 模式建议
+        仅在单层或 train/infer 同序时使用；多层 + 增量解码场景请用非 product_key 路径。
+        """
         B, T, D = x.shape
         # slots 即将变更 → 失效 K/V 缓存（get_kv 下次重算）
         self._kv_cache = None
@@ -88,13 +99,12 @@ class MemoryBank(nn.Module):
             if self.slots.device != x.device:
                 x = x.to(self.slots.device)
             self.reset(B, self.slots.device, x.dtype)
-        # 可学习遗忘（per-slot）：先按 forget_gate sigmoid→(0,1)^M 衰减各槽旧记忆，再叠加新信息。
-        # 运行时开关 _forget_active=False 时跳过（恒等保留，向后兼容）。
-        if self.forget_enabled and getattr(self, '_forget_active', True):
-            f = torch.sigmoid(self.forget_gate).view(1, -1, 1)  # (1, M, 1) 广播到 (B, M, comp_dim)
-            self.slots = f * self.slots
         # 压缩当前表示
         comp = self.compress(x)  # (B, T, comp_dim)
+        # forget 衰减因子（per-slot，逐 token 施加以保证 train/infer parity）
+        f_per_slot = None
+        if self.forget_enabled and getattr(self, '_forget_active', True):
+            f_per_slot = torch.sigmoid(self.forget_gate).view(1, -1, 1)  # (1, M, 1)
         # 写入权重：对每步表示，softmax 分配到 M 个槽。
         if self.product_key:
             # 阶段8.3：按内容相似度路由——新内容与各槽现有内容越相似，越写到该槽
@@ -108,6 +118,9 @@ class MemoryBank(nn.Module):
             slots = self.slots
             comp_t_all = comp  # (B, T, comp_dim)
             for t in range(T):
+                # forget 逐 token 施加（与增量解码逐 token write 一致）
+                if f_per_slot is not None:
+                    slots = f_per_slot * slots
                 ct = comp_t_all[:, t, :]                              # (B, comp_dim)
                 sim = torch.einsum('bc,bmc->bm', ct, slots)          # (B, M)
                 gate = torch.softmax(sim, dim=-1)                    # (B, M)
@@ -120,13 +133,27 @@ class MemoryBank(nn.Module):
             gate = torch.softmax(self.write_gate(x), dim=-1)  # (B, T, M)
             # 按 gate 把压缩表示累加到槽（加权求和，可微）
             update = torch.einsum('btm,btc->bmc', gate, comp)  # (B, M, comp_dim)
-            # 移动平均式软写入（保留历史记忆，新信息按 gate 权重叠加）
-            # 关键：此处【不】对 slots 做逐写归一化。原实现每次 write 后都 L2 归一化，
-            # 导致全量前向（一次写 T 个 token，归一化 1 次）与增量解码（逐 token 写，
-            # 每次归一化）的累加结果不一致（norm(a+b) ≠ norm(norm(a)+b)），产生训练-推理
-            # 记忆 divergence（slots 差 ~0.6）。归一化改为在读取时（_recompute_kv_cache）
-            # 统一做一次，与写入粒度无关，保证全量/增量记忆槽逐位一致。
-            self.slots = self.slots + update
+            # forget 逐 token 衰减：训练 1 次 write(T) → 衰减 T 次后累加 T 个 update；
+            # 增量 T 次 write(1) → 每次衰减 1 次后累加 1 个 update，共 T 次。两者等价。
+            if f_per_slot is not None:
+                # 逐 token 语义：slots_T = f^T * slots_0 + Σ_{t=0}^{T-1} f^{T-1-t} * update_t
+                # 向量化：f_per_slot (1,M,1)；衰减权重 (M,T) 其中 [m,t]=f[m]^(T-1-t)
+                # gate (B,T,M) 需按 (m,t) 衰减 → decay (M,T) 转置成 (T,M) 后广播乘
+                f_vec = f_per_slot.squeeze(0).squeeze(-1)  # (M,)
+                t_idx = torch.arange(T, device=f_per_slot.device, dtype=f_per_slot.dtype)
+                decay_mt = f_vec.unsqueeze(1) ** (T - 1 - t_idx).unsqueeze(0)  # (M, T)
+                decayed_gate = gate * decay_mt.t().unsqueeze(0)  # (B, T, M)
+                weighted_update = torch.einsum('btm,btc->bmc', decayed_gate, comp)  # (B, M, comp_dim)
+                f_pow = f_per_slot ** T  # (1, M, 1) = f^T
+                self.slots = f_pow * self.slots + weighted_update
+            else:
+                # 移动平均式软写入（保留历史记忆，新信息按 gate 权重叠加）
+                # 关键：此处【不】对 slots 做逐写归一化。原实现每次 write 后都 L2 归一化，
+                # 导致全量前向（一次写 T 个 token，归一化 1 次）与增量解码（逐 token 写，
+                # 每次归一化）的累加结果不一致（norm(a+b) ≠ norm(norm(a)+b)），产生训练-推理
+                # 记忆 divergence（slots 差 ~0.6）。归一化改为在读取时（_recompute_kv_cache）
+                # 统一做一次，与写入粒度无关，保证全量/增量记忆槽逐位一致。
+                self.slots = self.slots + update
         # write 已更新 slots → 标记缓存脏，延迟到下次 get_kv 时按需重算（惰性重算）。
         # 避免：(1) 最后一层 write 后的无用重算（写完不读）；(2) 多层重复解压开销。
         self._kv_dirty = True

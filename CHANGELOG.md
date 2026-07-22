@@ -9,6 +9,35 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
+## `（本地，基于 `f7bed96`，待推送，第十轮 fused SDPA + forget parity + 去重 + 创新想法）
+
+- perf: **DML fused SDPA 全面启用（~22x 训练提速）**——`models/mixers.py` 原注释称 DML fused SDPA 崩溃，实测 torch 2.4.1 + torch_directml 0.2.5 已稳定可用。关键发现：DML bool attn_mask 语义与 PyTorch 标准相反（True=允许≠禁止），但 float attn_mask 与 is_causal=True 正确。全路径改用 fused SDPA（纯因果用 is_causal=True，有偏置用 float attn_mask）。训练速度 1500ms/step → 68ms/step（~22x），删除 .item() 同步后 54.9ms/step。pytest 203 passed。
+- fix: **forget_gate train/infer parity**——`models/memory.py` 原 write() 每次 write() 调用施加一次 forget 衰减，训练（1 次 write T token = 1 次衰减）与增量解码（T 次 write = T 次衰减）衰减次数不同导致 divergence。修复：forget 衰减改为按 token 数施加（product_key 逐 token 循环内衰减；非 product_key 向量化 f^T·slots_0 + Σ f^{T-1-t}·update_t）。parity 测试：diff=4.47e-08（浮点误差级别，原显著发散）。
+- refactor: **EnhancementsMixin 合并 set_enhancements_active**——SlidingWindowCausalSelfAttention / LinearMixerBase / DifferentialAttention 三类原各自重复实现 set_enhancements_active，统一到 EnhancementsMixin（nn.Module + mixin 多继承）。删除 3 份重复（~25 行）。
+- refactor: **_pad_mem_bias 收口**——4 处重复的 `F.pad(mem_bias, (0, Tkv - mem_cols))` 提取到模块级 `_pad_mem_bias(mem_bias, Tkv, mem_cols)` 函数。
+- refactor: **死代码清理**——删除 `_manual_attention`（fused SDPA 全面启用后不再被调用的 fallback）。
+- perf: **logprob_orders_incremental 向量化**——`models/ngram.py` 原逐 (b,t) `.to(device)` 赋值，改为 stack + index_select 批量填充（仿 logprob_orders_matrix 模式）。消除 DML 启动税。
+- refactor: **train/finetune 用 safe_torch_load**——`scripts/train.py`、`scripts/train_finetune.py` 原 `torch.load(weights_only=True)` 改为 `safe_torch_load`（带全局白名单的安全加载）。
+- refactor: **generate.py 用 apply_cpu_threads**——原 `torch.set_num_threads` 改为 `apply_cpu_threads`（含边界保护）。
+- docs: **记忆因果写速度评估**——逐 token 因果写（消除 train/infer memory divergence）开销 14x（0.21ms→3.20ms/write），不值得实施。当前 memory.write 的 train/infer 差异为已知 trade-off（记忆 K/V 对所有 query 共享，训练时 query t 可见 token t 自己的写入）。文档标注此限制。
+- docs: **product_key 跨块顺序 divergence 标注**——product_key 模式下训练 block-major（block0 写全部 T token → block1）与增量 token-major（各 block 逐 token）slots 演化路径不同。opt-in 功能默认关，建议仅在单层或 train/infer 同序时使用。
+- review: **多轮 bug 审查**——3 轮审查 + 核对：1 真 bug（forget_gate parity，已修）；1 性能优化（.item() 同步，已删）；其余误报（sampling/state/CJK Ext G 过滤/CAST 增量 A_delta 均确认正确）。
+- exp: **可共享内容调研**——10 项发现：MambaSSMWithCAST.forward 重复（待 P1）、ngram 双路径骨架可抽（P2）、LinearAttention RNN 步可抽（P2）、AMP 决策可抽（P2）、DifferentialAttention mask 预分配可优化（P3）、optimizer state 迁移可抽（P3）等。已实施 P0/P1，余项按机会成本决定。
+
+### 新架构创新想法（待实施评估）
+
+1. **记忆驱动的动态路由 (Memory-Gated MoE)**：把 MemoryBank 的 M 个 slots 作为 "soft experts"，每个 query 根据与 slots 的相似度（现有 mlogits）动态路由到不同 FFN 计算路径。slots 既是压缩历史又是 expert 路由键，一物两用。相比标准 MoE 的固定 expert，记忆路由是内容驱动且随上下文演化的。
+
+2. **跨层记忆层级**：不同层共享记忆但用不同 comp_dim（低层 comp_dim=8 细粒度、高层 comp_dim=32 语义），形成层级记忆金字塔。低层捕获局部模式、高层捕获全局主题，类似人脑短期/长期记忆分化。
+
+3. **SSM 状态作为隐式记忆**：MambaSSM 的 h_t (B, d_inner, d_state) 本质是压缩历史，可把它的 state 作为额外记忆源注入 attention 的 KV（与 MemoryBank 并列）。SSM 状态是"连续演化"记忆，MemoryBank 是"离散槽"记忆，两者互补。
+
+4. **n-gram 触发的定向检索**：n-gram 命中时不仅做概率融合，还触发对记忆槽的定向检索（用 n-gram 上下文作为 query 检索相关 slots）。让符号先验（n-gram）与神经记忆（MemoryBank）深度耦合，而非仅在 logits 层相加。
+
+5. **DifferentialMemory：记忆差分检测信息更新**：用记忆的"旧版"（上一轮 slots）vs"新版"（本轮 slots）做差分，检测信息更新位置。差分大的位置 = 新信息注入点，可路由更多计算资源。借鉴 DifferentialAttention 的差分思想到记忆系统。
+
+6. **自适应计算深度（基于记忆饱和度）**：用 MemoryBank 的 slots 饱和度（norm 或熵）作为 skip gate 信号——slots 未饱和时跳过深层计算（信息少），饱和时走完整深度。让模型根据"已压缩了多少信息"动态决定计算量。
+
 ## `（本地，基于 `f7bed96`，待推送，第九轮全面审查修复 + 性能优化）
 
 - fix: **M3 DifferentialAttention+memory 形状崩溃**——`models/mixers.py` DifferentialAttention.forward 原 scores 先算（B,H,T,Tkv）后注入 memory，导致 `scores + mem_bias` 形状 (B,H,T,Tkv)+(B,H,T,M) 不符。重写为「先注入 K/V 扩展为 M+Tkv、再算 scores」顺序（与 SlidingWindowCausalSelfAttention 一致），mem_bias 右侧补零到 Tkv_full 后广播相加。新增 3 回归测试（前向不崩/训练模式不崩/cache parity）。
