@@ -29,8 +29,6 @@ python scripts/data_manager.py stats          # 仅查看统计
 也可对单个目录做更细的处理：
 
 ```bash
-python scripts/improve_data.py
-python scripts/reformat_data.py
 python scripts/data_manager.py                # 交互式菜单
 ```
 
@@ -49,7 +47,6 @@ python scripts/data_manager.py to-jsonl
 
 ```bash
 python scripts/convert_dialogue_to_qa.py
-python scripts/convert_statements_to_qa.py
 ```
 
 ## 词表

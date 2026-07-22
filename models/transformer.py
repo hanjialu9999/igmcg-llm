@@ -341,7 +341,7 @@ class TransformerModel(nn.Module):
                   #   rope_max_len     —— RoPE/注意力缓冲区的位置编码容量，向下传给各 block/attn 作其
                   #                       max_seq_length。默认与前者一致；显式配置时才单独覆盖。
                   #   两者经 config_loader 默认对齐（rope_max_len 缺省回退到 max_seq_length）。
-                 mask_fill_value: float = -1e9,
+                 mask_fill_value: float = MASK_FILL_VALUE,
                   qk_norm: bool = True, attn_temp: bool = True,
                     residual_gate: bool = True, hybrid_gate: bool = True,
                     hybrid_single_gate: bool = False,
@@ -597,7 +597,7 @@ class TransformerModel(nn.Module):
                 eff_window = (torch.sigmoid(blk.attn.log_window) * blk.attn.window_base)
             elif hasattr(blk, 'attn') and getattr(blk.attn, 'window', 0) > 0:
                 eff_window = min(blk.attn.window, self.max_seq_length)
-            elif isinstance(blk.attn, LinearAttention) and getattr(self, 'attn_window', 0) > 0:
+            elif hasattr(blk, 'attn') and isinstance(blk.attn, LinearAttention) and getattr(self, 'attn_window', 0) > 0:
                 # 线性注意力同样处理窗口内 token，按模型配置窗口计成本（再乘 0.3x 折扣）
                 eff_window = min(self.attn_window, self.max_seq_length)
             if isinstance(eff_window, torch.Tensor) or (isinstance(eff_window, int) and eff_window > 0):
@@ -789,7 +789,7 @@ class TransformerModel(nn.Module):
         return logp + gate * ngram_vec
 
     def generate(self, token_ids: List[int], max_length: int = 50, temperature: float = 1.0, top_k: int = 50,
-                  device: str = 'cpu', repetition_penalty: float = 1.2,
+                  device: str = 'cpu', repetition_penalty: float = 2.0,
                   ngram_fn: Optional[Callable[[List[int], str], torch.Tensor]] = None, ngram_weight: float = 0.0,
                   eos_id: int = 3, pad_id: int = 0, sep_id: int = 4,
                   min_length: int = 3, eos_penalty: float = -5.0) -> List[int]:

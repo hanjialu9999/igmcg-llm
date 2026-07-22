@@ -5,24 +5,17 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from models.config_loader import load_config, build_model
+from models.checkpoint import load_model
 
 
 def view_model_structure():
     """查看模型结构和参数信息"""
-    # 模型路径 - 默认查看训练产出的 final_model.pt
     model_path = "checkpoints/final_model.pt"
+    vocab_path = "checkpoints/vocab.json"
 
     print("正在加载模型...")
-    checkpoint = torch.load(model_path, map_location='cpu', weights_only=True)
-
-    # 兼容两种保存格式：完整模型对象 或 含 model_state_dict 的字典
-    if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
-        config = load_config()
-        model = build_model(config)
-        model.load_state_dict(checkpoint['model_state_dict'])
-    else:
-        model = checkpoint
+    # 复用 load_model：从 *_config.yaml 透传增强开关，避免 state_dict 不匹配
+    model, _ = load_model(model_path, vocab_path, device='cpu')
 
     print("\n" + "=" * 60)
     print("模型结构:")

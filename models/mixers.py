@@ -587,7 +587,11 @@ class AxialLinearAttention(LinearMixerBase):
         self.pos_aware_feat = False
 
     def enable_pos_aware_feat(self, max_grid_size: int = 64):
-        """启用位置感知特征映射（每个网格位置独立的 elu/reLU 混合比例）。"""
+        """启用位置感知特征映射（每个网格位置独立的 elu/reLU 混合比例）。
+
+        注意：当前 _linear_attn_1d 始终调 _feat（不调 _feat_pos），故启用后前向输出
+        实际不变；保留接口以备未来接入。详见审查报告 INFO-5。
+        """
         if not self.pos_aware_feat:
             self.pos_aware_feat = True
             self.pos_feat_alpha = nn.Embedding(max_grid_size, 2)
@@ -768,6 +772,21 @@ class DifferentialAttention(nn.Module):
         # 因果掩码缓冲区
         self.register_buffer('_causal_mask', torch.triu(torch.ones(1, 1, max_seq_length, max_seq_length, dtype=torch.bool), diagonal=1))
         self._cached_T = None
+        # 增强调度运行时开关（与 SlidingWindowCausalSelfAttention 一致）
+        self._rt = {"qk_norm": True, "attn_temp": True}
+
+    def set_enhancements_active(self, spec):
+        """运行时开关（按开关粒度）：`spec=True/False` 全开/全关；`spec=dict` 仅更新存在的键。
+        用于"交替/分段增强"训练，关闭时跳过对应 QK-Norm/可学习温度（恒等）。"""
+        if isinstance(spec, bool):
+            on = spec
+            self._rt = {"qk_norm": on, "attn_temp": on}
+        elif isinstance(spec, dict):
+            for k, v in spec.items():
+                if k in self._rt:
+                    self._rt[k] = bool(v)
+        else:
+            raise TypeError(f"set_enhancements_active 期望 bool 或 dict，收到 {type(spec)}")
 
     def forward(self, x: torch.Tensor, past_kv=None, use_cache: bool = False,
                 start_pos: int = 0, memory_kv=None):
@@ -780,14 +799,14 @@ class DifferentialAttention(nn.Module):
         # 第二组 Q/K（独立投影）
         qkv2 = self.qkv2(x)  # (B, T, 2*C)
         q2, k2 = qkv2.reshape(B, T, 2, H, D).unbind(dim=2)
-        # QK-Norm
-        if self.qk_norm_enabled:
+        # QK-Norm（受 SEL 运行时开关 _rt['qk_norm'] 控制）
+        if self.qk_norm_enabled and self._rt.get('qk_norm', True):
             q1 = self.qk_norm(q1)
             k1 = self.qk_norm(k1)
             q2 = self.qk_norm(q2)
             k2 = self.qk_norm(k2)
-        # 温度缩放
-        if self.temp_enabled:
+        # 温度缩放（受 SEL 运行时开关 _rt['attn_temp'] 控制）
+        if self.temp_enabled and self._rt.get('attn_temp', True):
             scale = torch.exp(-0.5 * self.log_temp)
             q1, q2 = q1 * scale, q2 * scale
             k1, k2 = k1 * scale, k2 * scale
@@ -814,25 +833,43 @@ class DifferentialAttention(nn.Module):
         else:
             k1_full, k2_full, v_full = k1, k2, v
             Tkv = T
-        # 注意力计算：两组独立 softmax
-        q1t = q1.transpose(1, 2)  # (B, H, T, D)
+        # transpose 到 (B, H, T, D) 供 attention 与 memory 注入使用
+        q1t = q1.transpose(1, 2)
         q2t = q2.transpose(1, 2)
         k1t = k1_full.transpose(1, 2)  # (B, H, Tkv, D)
         k2t = k2_full.transpose(1, 2)
         vt = v_full.transpose(1, 2)    # (B, H, Tkv, D)
+        # 记忆注入（若有）：先扩展 K/V（前缀拼记忆列），再算 scores，避免 scores 形状与
+        # 增长后的 K/V 不符（与 SlidingWindowCausalSelfAttention 顺序一致，原实现 scores 先算
+        # 导致 (B,H,T,Tkv) + (B,H,T,M) 形状崩溃）。
+        mem_cols = 0
+        if memory_kv is not None:
+            mk, mv, mem_meta = memory_kv
+            mem_cols = mk.size(1)
+            k1t, v_aug, mem_bias1 = self.__class__.inject_mem(
+                q1t, k1t, vt, mk, mv, mem_meta, self.mask_fill_value)
+            k2t, _, mem_bias2 = self.__class__.inject_mem(
+                q2t, k2t, vt, mk, mv, mem_meta, self.mask_fill_value)
+            vt = v_aug
+            # K/V 现在长度 Tkv+mem_cols，掩码需同步扩展（记忆列恒不遮蔽）
+            if mem_cols > 0:
+                Tkv_new = k1t.size(2)
+                if causal.shape[-1] < Tkv_new:
+                    # 原 causal 为 (1,1,T,Tkv)，左侧补 False（记忆列不遮蔽）
+                    pad = torch.zeros(1, 1, T, mem_cols, dtype=causal.dtype, device=causal.device)
+                    causal = torch.cat([pad, causal], dim=-1)
+        else:
+            mem_bias1 = mem_bias2 = None
+        # 注意力计算：两组独立 softmax
         scores1 = torch.matmul(q1t, k1t.transpose(-2, -1)) / math.sqrt(D)
         scores2 = torch.matmul(q2t, k2t.transpose(-2, -1)) / math.sqrt(D)
         scores1 = scores1.masked_fill(causal, self.mask_fill_value)
         scores2 = scores2.masked_fill(causal, self.mask_fill_value)
-        # 注入记忆 K/V（若有）—— 两组 K 都需同步增强，保持差分语义一致
-        if memory_kv is not None:
-            mk, mv, mem_meta = memory_kv
-            k1_aug, v_aug, mem_bias = self.__class__.inject_mem(q1t, k1t, vt, mk, mv, mem_meta, self.mask_fill_value)
-            k2_aug, _, _ = self.__class__.inject_mem(q2t, k2t, vt, mk, mv, mem_meta, self.mask_fill_value)
-            if mem_bias is not None:
-                scores1 = scores1 + mem_bias
-                scores2 = scores2 + mem_bias
-            k1t, k2t, vt = k1_aug, k2_aug, v_aug
+        # 记忆段偏置（仅前 mem_cols 列），右侧补零到 Tkv_full 后广播相加
+        if mem_bias1 is not None:
+            Tkv_full = scores1.size(-1)
+            scores1 = scores1 + torch.nn.functional.pad(mem_bias1, (0, Tkv_full - mem_cols))
+            scores2 = scores2 + torch.nn.functional.pad(mem_bias2, (0, Tkv_full - mem_cols))
         attn1 = torch.softmax(scores1, dim=-1)
         attn2 = torch.softmax(scores2, dim=-1)
         # 差分注意力
@@ -937,8 +974,11 @@ class MambaSSM(nn.Module):
             # 全量序列或 prefill：因果卷积后截断到前 L 个位置
             x_conv = self.conv(x_in.transpose(1, 2)).transpose(1, 2)[:, :L, :]  # (B, L, d_inner)
             if use_cache and L > 0:
-                # 保存最后 conv_kernel-1 个 token 供下一步增量使用
-                present_conv_state = x_in.transpose(1, 2)[:, :, -(self.conv_kernel - 1):]
+                # 保存最后 conv_kernel-1 个 token 供下一步增量使用。
+                # max(.,0) 防御 conv_kernel=1 时 -(1-1)=-0 等价于 0 导致返回全长序列（应空切片）
+                keep = max(self.conv_kernel - 1, 0)
+                present_conv_state = x_in.transpose(1, 2)[:, :, -keep:] if keep > 0 else \
+                    x_in.new_zeros(x_in.size(0), x_in.transpose(1, 2).size(1), 0)
             else:
                 present_conv_state = None
         

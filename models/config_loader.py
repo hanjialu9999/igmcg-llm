@@ -92,8 +92,7 @@ def load_vocab(vocab_path: str = 'checkpoints/vocab.json') -> 'BaseTokenizer':
     vocab.idx2word = {int(k): v for k, v in vocab_data['idx2word'].items()}
     vocab.merges = [tuple(m) for m in vocab_data.get('merges', [])]
     vocab.special_tokens = vocab_data.get('special_tokens', vocab.special_tokens)
-    # 重建 byte_tokens（用于 decode 还原字节级 token）
-    vocab.byte_tokens = [f'{BPETokenizer.BYTE_PREFIX}{b}' for b in range(256)]
+    # 注：原 byte_tokens 列表已删除（全仓零读取点，word2idx 里的 256 个 bytes:N 条目是有效数据）
     vocab.vocab_size = len(vocab.word2idx)
     vocab._symbol_cap = vocab.vocab_size - len(vocab.special_tokens) - 256
     return vocab

@@ -105,10 +105,14 @@ class RotaryEmbedding(nn.Module):
     def _rope_apply(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
         d = x.size(-1) // 2
         x1, x2 = x[..., :d], x[..., d:]
-        # 标准旋转公式：x1*cos - x2*sin, x1*sin + x2*cos（无 cat、无 neg 临时张量）
+        # 标准旋转公式：x1*cos - x2*sin, x1*sin + x2*cos（无 cat、无 neg 临时张量）。
+        # 两段用同一 cos[..., :d]（与公式一致）；不再依赖 emb=cat([freqs,freqs]) 使
+        # cos[..., :d] == cos[..., d:] 的副作用，避免未来改 emb 不复制时静默用错 cos 段。
+        cos_half = cos[..., :d]
+        sin_half = sin[..., :d]
         return torch.cat([
-            x1 * cos[..., :d] - x2 * sin[..., :d],
-            x1 * sin[..., :d] + x2 * cos[..., d:]
+            x1 * cos_half - x2 * sin_half,
+            x1 * sin_half + x2 * cos_half,
         ], dim=-1)
 
     def clear_cache(self):

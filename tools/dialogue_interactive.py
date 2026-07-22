@@ -15,17 +15,10 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from models.transformer import TransformerModel
-from models.config_loader import load_vocab, build_model
-import yaml
-
+from models.checkpoint import load_model
 from models.device import get_device
 
 device = get_device()  # 自动适配 CUDA / DirectML(AMD) / CPU
-
-# Load config
-with open('configs/pretrain.yaml', 'r', encoding='utf-8') as f:
-    config = yaml.safe_load(f)
 
 # Path for persisted dialogue parameters (single source of truth: chat_config.json)
 # 与 showcase_optimal_params.py / load_generation_config 默认路径保持一致（仓库根目录）
@@ -49,43 +42,41 @@ def load_gen_config():
             with open(params_path, 'r', encoding='utf-8') as pf:
                 saved = json.load(pf)
             gen_config.update(saved)
-            print(f"✅ Loaded persisted dialogue params from {params_path}")
+            print(f"Loaded persisted dialogue params from {params_path}")
         except Exception as e:
-            print(f"⚠️  Failed to load persisted params: {e}")
+            print(f"Failed to load persisted params: {e}")
 
 def save_gen_config():
     try:
         with open(params_path, 'w', encoding='utf-8') as pf:
             json.dump(gen_config, pf, indent=2)
-        print(f"💾 Generation parameters saved to {params_path}")
+        print(f"Generation parameters saved to {params_path}")
     except Exception as e:
-        print(f"⚠️  Could not save params: {e}")
+        print(f"Could not save params: {e}")
 
 # attempt to load any existing parameter overrides
 load_gen_config()
 
-# Load vocabulary（复用 config_loader.load_vocab，正确处理 BPE/char 词表）
-vocab = load_vocab('checkpoints/vocab.json')
-
-# Initialize model
-model = build_model(config, device=device)
-
-# Load checkpoint
-try:
-    checkpoint = torch.load('checkpoints/final_model.pt', map_location='cpu', weights_only=True)
-    model.load_state_dict(checkpoint['model_state_dict'])
-    print("✅ Loaded: final_model.pt (Best model)")
-except Exception as e:
-    print(f"⚠️  Warning: {e}")
-    try:
-        checkpoint = torch.load('checkpoints/model_epoch_50.pt', map_location='cpu', weights_only=True)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        print("✅ Loaded: model_epoch_50.pt")
-    except Exception:
-        print("❌ Error: No model checkpoint found!")
+# 加载模型 + 词表：复用 load_model 从 *_config.yaml 透传增强开关（qk_norm/attn_temp 等），
+# 避免 state_dict 不匹配；strict=False 兼容旧权重。比 build_model(load_config()) 更贴合实际权重。
+_model_path = 'checkpoints/final_model.pt'
+if not os.path.exists(_model_path):
+    # 回退到最近 epoch 检查点（与原 fallback 行为一致）
+    _epochs = sorted(Path('checkpoints/').glob('model_epoch_*.pt'),
+                     key=lambda p: int(p.stem.split('_')[-1]) if p.stem.split('_')[-1].isdigit() else -1)
+    if _epochs:
+        _model_path = str(_epochs[-1])
+    else:
+        print("Error: No model checkpoint found!")
         sys.exit(1)
 
-model = model.to(device)
+try:
+    model, vocab = load_model(_model_path, 'checkpoints/vocab.json', device=device)
+    print(f"Loaded: {_model_path}")
+except Exception as e:
+    print(f"Error loading model: {e}")
+    sys.exit(1)
+
 model.eval()
 
 print("\n" + "="*70)

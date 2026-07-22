@@ -114,6 +114,20 @@ class NGramModel:
         s = sum(ws)
         return [w / s for w in ws]
 
+    def _ensure_dev_caches(self, device):
+        """惰性设备缓存：首次访问某设备时，一次性把 uni_prob + ngram_tensors 传到 device。
+        后续 _compute_logprob_orders 直接用设备版本，免去逐次 .to(device) 的小传输开销
+        （DML 上每个 .to(device) 有固定启动税，U 个唯一上下文 × K-1 阶 = 数千次/步）。"""
+        dev_key = str(device)
+        if hasattr(self, '_dev_cache_key') and self._dev_cache_key == dev_key:
+            return
+        self._uni_dev_tensor = self.uni_prob.to(device)
+        self._ngt_dev: Dict = {}
+        for order, ctxs in self._ngram_tensors.items():
+            self._ngt_dev[order] = {ctx: (idx.to(device), p.to(device))
+                                     for ctx, (idx, p) in ctxs.items()}
+        self._dev_cache_key = dev_key
+
     def _compute_logprob_orders(self, ctx_tokens: List[int], V: int, device) -> torch.Tensor:
         """泛化版：返回各阶 n-gram 的 log 概率向量（未插值），shape (V, max_order)。
         ctx_tokens: 完整上下文 token 列表（最近 order-1 个 token），长度 >= max_order-1。
@@ -121,11 +135,14 @@ class NGramModel:
         各阶独立返回，由模型学 order 权重（自选 n 的数量/占比）做可微混合，
         替代固定 l1/l2/l3 插值。无对应上下文的阶用 unigram 兜底。
 
-        性能：计数已在 _build 期预存为 (idx_tensor, p_tensor)，运行时仅 .to(device) +
-        一次 scatter；各阶并行叠加到 (K-1, V) 背景矩阵后统一归一化，避免逐阶
+        性能：计数已在 _build 期预存为 (idx_tensor, p_tensor)，首次调用时一次性
+        传到 device 并缓存（_ensure_dev_caches），后续仅查表 + 一次 scatter；
+        各阶并行叠加到 (K-1, V) 背景矩阵后统一归一化，避免逐阶
         vec.clone()/vec.sum() 的重复全 V 设备 reduce。"""
         K = self.max_order
-        uni = self.uni_prob.to(device)           # (V,) 已归一化 unigram
+        # 设备缓存：uni_prob + ngram_tensors 一次性传到 device（惰性，仅首次）
+        self._ensure_dev_caches(device)
+        uni = self._uni_dev_tensor                     # (V,) 已归一化 unigram
         # (K-1, V) 背景：各高阶阶从 unigram 起步，逐阶独立叠加自身命中修正
         base = uni.unsqueeze(0).expand(K - 1, V).clone()   # (K-1, V)
         for k in range(1, K):
@@ -134,10 +151,8 @@ class NGramModel:
                 ctx = tuple(ctx_tokens[-(order - 1):])  # 最近 order-1 个 token
             else:
                 ctx = None
-            if ctx is not None and ctx in self._ngram_tensors.get(order, {}):
-                idx, p = self._ngram_tensors[order][ctx]
-                idx = idx.to(device)
-                p = p.to(device)
+            if ctx is not None and ctx in self._ngt_dev.get(order, {}):
+                idx, p = self._ngt_dev[order][ctx]     # 已在 device，无需 .to(device)
                 ws = self._interp_weights(order)
                 w = ws[-1]
                 # vec[idx] = w*p + (1-w)*uni[idx]，其余位置保持 uni
@@ -188,27 +203,40 @@ class NGramModel:
                     uniq[ck] = len(ctx_keys)
                     ctx_keys.append(ck)
         # 2) 仅对唯一上下文计算（命中缓存则免算），结果堆叠为 (U, V, K) 后搬设备
-        uniq_vecs = []
-        for ck in ctx_keys:
+        #    优化：缓存命中项的 .to(device) 批量传输——DML 上逐张小传输有固定开销，
+        #    warmup 后绝大多数上下文命中缓存，逐张 .to(device) 成为瓶颈。
+        #    改为 stack 一次 → .to(device) 一次 → unbind 回各位置。
+        cached_idxs: List[int] = []
+        cached_cpu: List[torch.Tensor] = []
+        uncached_idxs: List[int] = []
+        for i, ck in enumerate(ctx_keys):
             if ck in self._orders_cache:
-                uniq_vecs.append(self._orders_cache[ck].to(device))
+                cached_idxs.append(i)
+                cached_cpu.append(self._orders_cache[ck])
             else:
-                v = self._compute_logprob_orders(ck, V, device)  # (V, K) 已在 device
-                if len(self._orders_cache) > self._orders_cache_max:
-                    self._orders_cache.clear()
-                self._orders_cache[ck] = v.cpu()
-                uniq_vecs.append(v)
-        # 3) 逐唯一上下文填充输出张量，避免 stacked[key_idx] 的2倍峰值内存
-        #    （旧路径：stack(U,V,K) + fancy index → 额外 (B,T,V,K) 中间张量）
-        out = torch.empty(B, T, V, K, device=device)
+                uncached_idxs.append(i)
+
+        uniq_vecs: List[Optional[torch.Tensor]] = [None] * len(ctx_keys)
+        # 缓存命中：批量传输（单次 .to(device) 替代 U_cached 次）
+        if cached_cpu:
+            cached_stack = torch.stack(cached_cpu, dim=0).to(device)  # (U_cached, V, K)
+            for j, idx in enumerate(cached_idxs):
+                uniq_vecs[idx] = cached_stack[j]
+        # 未命中：逐个计算（结果已在 device）
+        for idx in uncached_idxs:
+            ck = ctx_keys[idx]
+            v = self._compute_logprob_orders(ck, V, device)  # (V, K) 已在 device
+            if len(self._orders_cache) > self._orders_cache_max:
+                self._orders_cache.clear()
+            self._orders_cache[ck] = v.cpu()
+            uniq_vecs[idx] = v
+        # 3) 向量化填充：stack 唯一上下文结果为 (U,V,K)，用 index_select 一次性搬回 (B*T,V,K)。
+        #    旧路径逐 i 做 mask + fancy index，在 DML 上每次都是 GPU 同步（U 大时极慢）。
+        #    stack(U,V,K) 峰值内存 = U*V*K = 8000*3*U bytes，U≤B*T=2048 时 ≤ 48MB，可接受。
+        stacked = torch.stack(uniq_vecs, dim=0)  # (U, V, K)
         key_idx_tensor = torch.tensor([uniq[ck] for ck in pos_to_key],
                                       dtype=torch.long, device=device)
-        flat_idx = key_idx_tensor.view(-1)
-        flat_out = out.view(-1, V, K)
-        for i in range(len(ctx_keys)):
-            mask = (flat_idx == i)
-            if mask.any():
-                flat_out[mask] = uniq_vecs[i]
+        out = stacked.index_select(0, key_idx_tensor.view(-1)).view(B, T, V, K)
         return out
 
     def logprob_orders_incremental(self, ctx2: torch.Tensor, new_ids: torch.Tensor, device):

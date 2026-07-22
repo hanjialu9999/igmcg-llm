@@ -38,24 +38,26 @@ def test_decode_one_step_matches_inline_forward():
 
 
 def test_decode_one_step_temperature_applied():
-    """回归：_decode_one_step 在 temperature_applied=True 时必须跳过 forward 内部温度缩放
-    （传 temperature=1.0），否则与 sample_next_token(temperature_applied=True) 组合会导致
-    双重除温（非 IGMCG 路径 ngram_fusion 关闭时的回归点）。"""
+    """回归：_decode_one_step 始终把真实 temperature 传给 forward（M1 修复后语义）。
+
+    原 bug：temperature_applied=True 时曾把 τ 盖成 1.0，导致后续步温度丢失、
+    采样分布与首步不一致。修复后：forward 始终收到真实 τ，由 forward 自身决定
+    是否应用（ngram 融合路径应用 log_softmax(z/τ)，非融合路径忽略 τ）。"""
     m, v, ng = _ngram_model()
     device = 'cpu'
     tok = 5
     temp = 0.8
-    # temperature_applied=True → _decode_one_step 应传 temperature=1.0 给 forward
+    # temperature_applied=True → 仍应把真实 τ 传给 forward（不再盖 1.0）
     m.reset_ngram_state()
     inp = torch.tensor([[tok]], dtype=torch.long, device=device)
-    logits_ref, _ = m.forward(inp, past_key_values=None, use_cache=True, temperature=1.0)
+    logits_ref, _ = m.forward(inp, past_key_values=None, use_cache=True, temperature=temp)
     m.reset_ngram_state()
     _, logits_applied, _ = _decode_one_step(m, tok, None, 0, device=device,
                                             temperature=temp, temperature_applied=True)
     diff_applied = (logits_ref - logits_applied).abs().max().item()
     assert diff_applied < 1e-6, \
-        f"temperature_applied=True 未跳过温度缩放：diff={diff_applied}"
-    # temperature_applied=False → 应传 temperature=0.8 给 forward
+        f"temperature_applied=True 应仍传真实 τ 给 forward：diff={diff_applied}"
+    # temperature_applied=False → 同样传真实 τ 给 forward
     m.reset_ngram_state()
     logits_ref_temp, _ = m.forward(inp, past_key_values=None, use_cache=True, temperature=temp)
     m.reset_ngram_state()
@@ -64,6 +66,10 @@ def test_decode_one_step_temperature_applied():
     diff_not = (logits_ref_temp - logits_not_applied).abs().max().item()
     assert diff_not < 1e-6, \
         f"temperature_applied=False 温度缩放不一致：diff={diff_not}"
+    # 关键回归：τ≠1.0 时 applied 与 not_applied 应产生相同 logits（不再盖 1.0）
+    diff_applied_vs_not = (logits_applied - logits_not_applied).abs().max().item()
+    assert diff_applied_vs_not < 1e-6, \
+        f"M1 回归：temperature_applied 不应再影响 forward 接收的 τ：diff={diff_applied_vs_not}"
 
 
 def test_generate_deterministic_fixed_seed():

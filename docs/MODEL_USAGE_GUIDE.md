@@ -6,7 +6,7 @@
 
 - **主干**：Pre-LN + RMSNorm + RoPE + SwiGLU（现代 decoder-only LM 配方）
 - **可配置混合架构**：通过 `layer_plan` 指定每层类型 —— `attn`（滑动窗口注意力，可选相对位置偏置）/`ssm`（MambaSSM 选择性状态空间）/`hybrid`（并行 attn+ssm）
-- 默认配置（`pretrain.yaml`）：6 层纯 `attn`，`d_model=512`、`nhead=8`、`ffn=1024`、`max_seq_length=64`、`vocab_size=12000`
+- 默认配置（`pretrain.yaml`）：6 层纯 `attn`，`d_model=512`、`nhead=8`、`ffn=1024`、`max_seq_length=64`、`vocab_size=8000`
 - **权重共享**：输出头复用词嵌入权重（`tie_weights=True`），减少参数并常提升 LM 质量
 - **梯度检查点**：训练时可选开启（`gradient_checkpointing=True`），以计算换显存
 
@@ -18,10 +18,21 @@
 
 ## 加载模型（统一方式）
 
-所有脚本通过 `models/config_loader.py` 构建与加载模型，避免到处硬编码结构：
+推荐用 `models.checkpoint.load_model`（一行完成构建 + 加载 + 设备搬运 + `*_config.yaml` 透传增强开关）：
+
+```python
+from models.checkpoint import load_model
+
+model, vocab = load_model('checkpoints/final_model.pt', 'checkpoints/vocab.json', device=device)
+```
+
+> ⚠️ **安全**：所有 `torch.load` 均使用 `weights_only=True`，防止 pickle RCE；配置单独存为 `*_config.yaml`。
+
+如需手动控制（如调试 / 自定义加载），等价低层写法：
 
 ```python
 from models.config_loader import load_config, build_model, load_vocab
+import torch
 
 config = load_config()                   # 读取 configs/pretrain.yaml
 model = build_model(config, device=device)  # 结构与 config 完全一致
@@ -30,8 +41,6 @@ ckpt = torch.load('checkpoints/final_model.pt', map_location='cpu', weights_only
 model.load_state_dict(ckpt['model_state_dict'])
 model.to(device)
 ```
-
-> ⚠️ **安全**：所有 `torch.load` 均使用 `weights_only=True`，防止 pickle RCE；配置单独存为 `*_config.yaml`。
 
 ## 查看模型
 

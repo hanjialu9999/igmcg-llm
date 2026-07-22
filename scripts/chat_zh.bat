@@ -20,7 +20,7 @@ if defined IGMCG_PYTHON (
     set "PY=python"
 )
 
-"%PY%" "%ROOT%chat.py" --model "%ROOT%..\checkpoints\final_model.pt" --vocab "%ROOT%..\checkpoints\vocab.json" --device auto
+"%PY%" "%ROOT%scripts\chat.py" --model "%ROOT%checkpoints\final_model.pt" --vocab "%ROOT%checkpoints\vocab.json" --device auto
 echo.
-echo [Tip] If Chinese is garbled here, open logs\chat_history.txt (UTF-8) to see correct Chinese.
+echo [Tip] If Chinese is garbled here, open logs\chat_log.txt (UTF-8) to see correct Chinese.
 pause

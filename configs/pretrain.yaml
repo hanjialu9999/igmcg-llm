@@ -1,4 +1,4 @@
-﻿# 正式预训练配置：中+英混合语料 (merged.txt) 训练基础模型
+# 正式预训练配置：中+英混合语料 (merged.txt) 训练基础模型
 # 训练前会自动把 checkpoints/ 备份到 archive_unused/checkpoints_backup/
 model:
   vocab_size: 8000            # 当前生效值；注释提及的 12000 词覆盖更全但 DML 下显存更紧张，20000 易触发 backward 设备移除
@@ -80,16 +80,8 @@ device: "auto"               # auto: CUDA > DirectML(AMD/Intel) > CPU
 # 随机种子
 seed: 42
 
-# 生成配置（权威定义；dialogue_interactive.py 的默认值与之保持一致）
-generation:
-  temperature: 0.8
-  top_k: 50
-  repetition_penalty: 1.2
-  min_length: 3
-  eos_penalty: -5.0
-  ngram_weight: 0.0
-  igmcg_candidates: 5
-  igmcg_intuition: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
-  igmcg_weights: [1.5, 0.15, 0.15, 2.5]  # coh, flu, style, rep
+# 生成参数不在 YAML 中定义：CLI 参数（scripts/chat.py、scripts/generate.py）与
+# chat_config.json（tools/dialogue_interactive.py 经 config_loader.load_generation_config 读取）
+# 为权威来源。调优用 scripts/tuning/。
 
 

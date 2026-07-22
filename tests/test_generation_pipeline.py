@@ -261,18 +261,9 @@ def test_enhancement_mutex_check():
 
 
 if __name__ == '__main__':
-    test_vocab_empty_corpus_no_divzero()
-    test_vocab_encode_decode_roundtrip()
-    test_vocab_coverage_positive()
-    test_igmcg_generation()
-    test_ngram_logprob_vector_and_cache()
-    test_device_detection()
-    test_config_loader_missing_file_raises()
-    test_config_loader_valid()
-    test_warmup_scheduler_ramp_and_decay()
-    test_gradient_accumulation()
-    test_quantization_load()
-    test_arch_options_enabled_build_and_forward()
-    test_ngram_last_ids_reset_across_candidates()
-    test_enhancement_mutex_check()
-    print("\nAll pipeline tests passed!")
+    # 注意：本文件历史 __main__ 块曾调用 3 个不存在的函数（test_vocab_empty_corpus_no_divzero /
+    # test_vocab_encode_decode_roundtrip / test_vocab_coverage_positive），直接运行会 NameError。
+    # pytest 不走 __main__ 故掩盖了此 bug。此处改为委托 pytest 入口，避免硬编码函数清单漂移。
+    import pytest
+    import sys
+    sys.exit(pytest.main([__file__, '-v']))

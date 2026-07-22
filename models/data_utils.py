@@ -182,10 +182,10 @@ class BaseTokenizer:
             self.idx2word[idx] = tok
         # 2) 256 个字节级 token（最底层 fallback）：任何字符都能用 UTF-8 字节表示，
         #    彻底避免未登录字变 <???>（OOV 永久为 0）。
-        self.byte_tokens: List[str] = []
+        # 注：仅 word2idx 里的 256 个 bytes:N 条目是有效数据；不再单独维护 byte_tokens 列表
+        # （曾存在但全仓零读取点，已删除避免冗余）。
         for b in range(256):
             tok = f'{self.BYTE_PREFIX}{b}'
-            self.byte_tokens.append(tok)
             self.word2idx[tok] = len(self.word2idx)
             self.idx2word[len(self.word2idx) - 1] = tok
         # 单字/子词可用的额度 = 总词表 - 已占用（special + 256 byte）
@@ -295,16 +295,18 @@ class BaseTokenizer:
         self.idx2word = {i: w for w, i in self.word2idx.items()}
 
     def _truncate_to_vocab(self) -> None:
-        """单字阶段若超过 vocab_size，按出现频次保留高频单字。"""
+        """单字阶段若超过 vocab_size，按出现频次保留高频单字。
+
+        注意：本方法当前无调用点（train() 通过 letter_cap + 写入时 len 守卫控制上限）。
+        保留以备未来需要显式截断时使用，但已知 bug：截断后 idx2word 未同步更新，
+        复用前需修复 idx2word 重建。
+        """
         if len(self.word2idx) <= self.vocab_size:
             return
         # special tokens 固定在前，截断普通单字
-        extras = sorted(
-            [(w, i) for w, i in self.word2idx.items() if i >= len(self.special_tokens)],
-            key=lambda wi: wi[1],
-        )
         keep = dict(list(self.word2idx.items())[:self.vocab_size])
         self.word2idx = keep
+        self.idx2word = {i: w for w, i in self.word2idx.items()}
 
     @staticmethod
     def _is_cjk(ch: str) -> bool:
@@ -335,25 +337,15 @@ class BaseTokenizer:
         # 这些字符在干净语料中极少出现，混入词表会导致生成偏向生僻乱码汉字。
         if 0x3400 <= o <= 0x4dbf:
             return False  # CJK 扩展 A
-        if 0x20000 <= o <= 0x2fffd:
+        # 覆盖 Ext B/C/D/E/F/G/H（U+20000 起；上界取 0x323af 覆盖至 Ext H 末），
+        # 避免新版 unicodedata 收录后 Ext G/H 漏过滤污染词表。
+        if 0x20000 <= o <= 0x323af:
             return False  # CJK 扩展 B/C/D/E/F/G/H 等增补汉字
         try:
             unicodedata.name(ch)
         except ValueError:
             return False  # 未定义码点（如 U+2EC9）
         return True
-
-    def _pre_tokenize(self, text: str) -> List[str]:
-        """与 Vocabulary.tokenize 一致的预分词：CJK 逐字，其余按空格/标点；
-        并过滤含无效字符的预分词单元（乱码/替换符/私用区）。"""
-        text = ' '.join(text.split()).lower()
-        text = re.sub(r'([\u3400-\u9fff\uf900-\ufaff\uff00-\uffef])', r' \1 ', text)
-        text = re.sub(r'([.!?,;:-])', r' \1 ', text)
-        out = []
-        for w in text.split():
-            if w and all(self._is_valid_char(c) for c in w):
-                out.append(w)
-        return out
 
     def _bpe_pre_tokenize(self, text: str) -> List[str]:
         """BPE 专用预分词：CJK 字符保持连续（不逐字插空格），使中文相邻字对

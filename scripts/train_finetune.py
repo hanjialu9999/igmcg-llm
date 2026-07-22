@@ -166,8 +166,12 @@ def train():
         # 保存最佳权重
         if avg_loss < best_loss:
             best_loss = avg_loss
-            save_checkpoint(model, optimizer, epoch+1, best_loss, "checkpoints", len(vocab), config['model'])
-            print(f"✨ 已更新最佳权重文件: checkpoints/best_finetuned_model.pt")
+            saved_path = save_checkpoint(model, optimizer, epoch+1, best_loss, "checkpoints", len(vocab), config['model'])
+            # save_checkpoint 产出 model_epoch_{epoch}.pt；微调流程约定用 best_finetuned_model.pt
+            # 作为下游 chat.py / dialogue_interactive.py 的稳定加载入口，故复制一份固定名。
+            import shutil
+            shutil.copyfile(saved_path, model_path)
+            print(f"OK 已更新最佳权重文件: {model_path}（来源: {saved_path}）")
 
     print("\n🎉 微调任务圆满成功！")
 
