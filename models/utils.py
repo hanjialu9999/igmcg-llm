@@ -115,7 +115,8 @@ def save_checkpoint(model: torch.nn.Module,
 
 def cleanup_old_checkpoints(checkpoint_dir: str, keep_last_n: int = 5):
     """Clean up old checkpoints, keep only the best model and last N epochs."""
-    epoch_files = sorted(glob.glob(os.path.join(checkpoint_dir, 'model_epoch_*.pt')))
+    epoch_files = sorted(glob.glob(os.path.join(checkpoint_dir, 'model_epoch_*.pt')),
+                         key=lambda p: int(os.path.basename(p).split('_')[-1].split('.')[0]))
 
     if len(epoch_files) <= keep_last_n:
         print(f"Found {len(epoch_files)} checkpoint(s). No cleanup needed (keep_last_n={keep_last_n})")
