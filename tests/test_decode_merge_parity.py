@@ -398,13 +398,14 @@ def test_mamba_ssm_with_cast_in_hybrid():
     assert torch.isfinite(out).all()
 
 
-def test_axial_linear_pos_aware_feat():
-    """AxialLinearAttention 位置感知特征映射可启用。"""
+def test_axial_linear_basic_forward():
+    """AxialLinearAttention 基本前向正常工作（移除 pos_aware_feat 死代码后的回归测试）。"""
     from models.mixers import AxialLinearAttention
     m = AxialLinearAttention(dim=64, num_heads=4, max_seq_length=32)
-    m.enable_pos_aware_feat()
-    assert m.pos_aware_feat is True
-    assert hasattr(m, 'pos_feat_alpha')
+    # 确认死代码已移除
+    assert not hasattr(m, 'pos_aware_feat'), "pos_aware_feat 死代码未移除"
+    assert not hasattr(m, 'enable_pos_aware_feat'), "enable_pos_aware_feat 未移除"
+    assert not hasattr(m, '_feat_pos'), "_feat_pos 未移除"
     x = torch.randn(1, 16, 64)
     out, _ = m(x)
     assert out.shape == (1, 16, 64)

@@ -9,6 +9,31 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
+## `（本地，基于 `d21464b`，待推送，第十四轮续：死代码清理 + 性能优化 + 架构创新调研）
+
+- refactor: **移除 AxialLinearAttention 死代码**——`models/mixers.py` 移除 `pos_aware_feat`/`enable_pos_aware_feat`/`_feat_pos`/`pos_feat_alpha`。原代码注释自承"前向输出实际不变；保留接口以备未来接入"，是误导性占位特性（声称支持但实际不工作）。`tests/test_decode_merge_parity.py` 的 `test_axial_linear_pos_aware_feat` 替换为 `test_axial_linear_basic_forward`（验证死代码已移除 + 基本前向正常）。
+- refactor: **移除 AttnConfig 未使用字段**——`models/model_config.py` 移除 `AttnConfig.retrieval_full`/`retrieval_topk`。grep 确认无任何代码读取 `attn_cfg.retrieval*`（仅 `MemoryConfig.retrieval*` 被使用），是历史遗留双份字段。`from_dict` 同步移除重复赋值。
+- perf: **移除 3 处冗余 `.to(device)`**——`models/mixers.py` L235（`dist` 已由 `device=device` 的 arange 生成）/ L237（`alibi_slopes` 是 buffer，`model.to(device)` 时已移动）/ L287（`drop` 是 `rlogits < thr` 的比较结果，rlogits 已在 device）。DML 上 `.to()` 有 CPU 同步税，热路径避免。
+- docs: **移除 ARCHITECTURE_PLAN.md 中 pos_aware_feat 引用**——同步删除"位置感知特征映射"章节。
+- research: **架构创新调研报告**——3 个子代理并行（bug 审查/性能分析/架构创新），架构代理联网搜索 2025-2026 主流 LLM 架构（Mamba2/Mamba3/Jamba/Zamba2/RWKV-7/DeepSeek-V3 MLA/Qwen3-Next/Kimi KDA/Gated DeltaNet/CLSA/MSA），结合项目内代码分析，输出 8 个可实施的新架构想法（详见下方"未来架构想法"章节）。
+
+### 未来架构想法（按优先级排序，默认关 opt-in，待后续轮次实施）
+
+1. **★★★★★ Gated DeltaNet 替换 LinearAttention**——灵感：Gated DeltaNet (ICLR 2025) + Kimi KDA + ByteDance 混合线性注意力横评。现状 LinearAttention 用纯加法 `S_t = S_{t-1} + v_t k_t^T` 无 delta rule 无遗忘门，检索能力弱。方案：递推改为 `S_t = α_t·S_{t-1} + β_t·v_t k_t^T - β_t·(S_{t-1} k_t) k_t^T`（gated delta rule）。新增 `mixer='gated_delta'`，默认关。
+2. **★★★★★ Partial RoPE（仅前 k% 维度加 RoPE）**——灵感：Qwen3-Next（前 25%）+ MLA Decoupled RoPE。现状 `RotaryEmbedding` 对全 head_dim 旋转。方案：加 `rope_dim_fraction` 参数（默认 1.0），仅前 `head_dim*fraction` 维度旋转，后段 NoPE。长度外推更稳，与 ALiBi+pe_gate 正交。
+3. **★★★★ MLA 风格 KV 潜空间压缩**——灵感：DeepSeek-V3 MLA。现状 MemoryBank 已有 compress/decompress 但仅用于固定槽记忆，未用于 KV cache。方案：新增 `use_mla_kv`，K/V 投影后压到 `kv_latent_dim`，cache 只存潜向量。长序列 KV cache 内存降 4-8x。
+4. **★★★★ CrossLayerRouter 升级为 CLSA 共享路由索引**——灵感：CLSA (Microsoft 2026) + YOCO。现状每层独立打分 top-k，开销随层数线性增长。方案：引入 indexer 层算一次 token-level top-k，后续层复用。长上下文解码 7.6x 加速。
+5. **★★★★ SSM 升级非对角状态转移（RWKV-7 风格）**——灵感：RWKV-7 "Goose" + Mamba2 SSD。现状 MambaSSM 用对角 dA，channel 独立演化。方案：引入非对角项 `G_t = diag(w_t) - κ_t(a_t·κ_t)`，增强跨 channel 混合。新增 `ssm_type='rwkv7'`。
+6. **★★★ Output Gating + Zero-Centered RMSNorm**——灵感：Qwen3-Next。现状注意力输出无门控。方案：attend 输出后加 `output_gate=sigmoid(W·x)` 消除 Attention Sink；RMSNorm 加 `zero_centered` 选项 `x/rms(x-mean)`。DML 上提升数值稳定性。
+7. **★★★ Intra-layer Hybrid（heads 拆半并行）**——灵感：Meta 混合架构系统分析 (arxiv 2510.04800)。现状 hybrid 块是 attn+ssm 加法并行 2x 算力。方案：新增 `block_type='intra_hybrid'`，heads 拆半（前半 attn 后半 ssm）concat。算力 ≈1x 保留混合建模。
+8. **★★★ MemoryBank 可微分 top-k + 文档级 RoPE**——灵感：MSA (EverMind 100M token) + Gated DeltaNet 内容寻址。现状硬 top-k 不可微。方案：sparsemax/soft-topk 替代；记忆槽携带文档位置编码。超长上下文检索精度提升。
+
+### 已识别但未实施的代码债（待后续清理）
+- 15+ 种 gate 机制（residual_gate/hybrid_gate/highway_gate/skip_gate/input_highway_gate 等）分散实现，建议统一为通用 Gate 抽象（kind∈{static,dynamic,affine}）
+- MambaSSM vs MambaSSMWithCAST 的 forward 几乎逐字重复，可提取 MambaSSMBase
+- SwiGLU 三个 Linear（w1/w2/w3）可合并为两个（LLaMA 风格 w13 chunk），但破坏 checkpoint 兼容，需 opt-in 或 state_dict 转换
+- MemoryConfig 与 AttnConfig 的 retrieval 字段已统一到 MemoryConfig（本轮已清理 AttnConfig 侧）
+
 ## `（本地，基于 `2d154bf`，待推送，第十四轮：跨层协作再深化 + input_highway 增量解码 bug 修复）
 
 - feat: **输入全局高速公路（input_highway）**——`models/transformer.py` embedding 输出 x0 经门控注入每层：`gate=sigmoid(W·x+b)`（init b=-3，sigmoid≈0.05 弱注入），`x = x + gate * proj(x0)`。让每层都能直接访问原始输入信息，避免深层变换后信息丢失。config: `input_highway`。8 个回归测试（参数创建/恒等初始化/输出变化/梯度回流/cache parity/x0 跨步缓存/shape 对齐/与 cross_layer 组合）。

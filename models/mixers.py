@@ -232,9 +232,10 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
             return None
         qpos = torch.arange(start_pos, start_pos + Tq, device=device).unsqueeze(1)
         kpos = torch.arange(0, Tkv, device=device).unsqueeze(0)
-        dist = (qpos - kpos).abs().to(device)
+        dist = (qpos - kpos).abs()
         # slopes: (H,) -> (1,H,1,1)，乘以距离 -> (1,H,Tq,Tkv)
-        bias = -self.alibi_slopes.view(1, self.num_heads, 1, 1).to(device) * dist.unsqueeze(0).unsqueeze(0)
+        # alibi_slopes 是 buffer，model.to(device) 时已移动到目标设备，无需再 .to(device)
+        bias = -self.alibi_slopes.view(1, self.num_heads, 1, 1) * dist.unsqueeze(0).unsqueeze(0)
         if mem_cols > 0:
             bias = bias.clone()
             bias[..., :mem_cols] = 0
@@ -283,7 +284,8 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         k_keep = max(1, min(self.retrieval_topk, Treal))
         kvals, _ = torch.topk(rlogits, k_keep, dim=-1)
         thr = kvals[..., -1:]
-        drop = (rlogits < thr).to(device)
+        # rlogits 已在 device 上，比较结果也在 device 上，无需 .to(device)（DML 同步税）
+        drop = (rlogits < thr)
         rlogits = rlogits.masked_fill(drop, self.mask_fill_value)
         # 拼回完整 Tkv（记忆段前缀补 0）
         if mem_cols > 0:
@@ -593,29 +595,6 @@ class AxialLinearAttention(LinearMixerBase):
             self.qk_norm_col = RMSNorm(self.head_dim)
         if attn_temp:
             self.log_temp_col = nn.Parameter(torch.zeros(1))
-        self.pos_aware_feat = False
-
-    def enable_pos_aware_feat(self, max_grid_size: int = 64):
-        """启用位置感知特征映射（每个网格位置独立的 elu/reLU 混合比例）。
-
-        注意：当前 _linear_attn_1d 始终调 _feat（不调 _feat_pos），故启用后前向输出
-        实际不变；保留接口以备未来接入。详见审查报告 INFO-5。
-        """
-        if not self.pos_aware_feat:
-            self.pos_aware_feat = True
-            self.pos_feat_alpha = nn.Embedding(max_grid_size, 2)
-            nn.init.zeros_(self.pos_feat_alpha.weight)
-
-    def _feat_pos(self, x: torch.Tensor, pos_idx: torch.Tensor) -> torch.Tensor:
-        """位置感知特征映射：每个位置独立的 elu/reLU 混合。"""
-        if not self.pos_aware_feat or pos_idx is None:
-            return self._feat(x)
-        alpha = self.pos_feat_alpha(pos_idx)  # (..., 2)
-        elu_part = torch.nn.functional.elu(x) + 1.0
-        relu_part = torch.nn.functional.relu(x) + 1e-6
-        while alpha.dim() < x.dim():
-            alpha = alpha.unsqueeze(0)
-        return alpha[..., 0:1] * elu_part + alpha[..., 1:2] * relu_part
 
     def _infer_grid(self, T: int) -> Tuple[int, int]:
         if self.grid_size is not None:
