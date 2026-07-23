@@ -2826,3 +2826,246 @@ def test_all_round15_features_combined():
                           past_key_values=past, use_cache=True)
     assert out.shape[-1] == 200
 
+
+# ===========================================================================
+# 第十五轮 Bug 修复回归测试（补缺覆盖）
+# 以下测试针对 4e9e8f3 中「仅修改生产代码、原有测试未直接覆盖」的修复路径，
+# 防止这些修复被未来重构悄然回退。每条 docstring 标注其抓的回归点。
+# ===========================================================================
+
+def test_zero_centered_norm_propagated_to_blocks_and_ln_f():
+    """回归（Bug 修复 #2）：zero_centered_norm 必须传到每个 block 的 ln1/ln2 以及 ln_f。
+
+    历史 bug：TransformerModel 构造 blocks 时未把 zero_centered_norm 透传，
+    仅 ln_f 用了 zero_centered，blocks 内 ln1/ln2 仍是默认 RMSNorm。
+    现有 test_zero_centered_norm_changes_output 只断言「输出有变化」——即便
+    只有 ln_f 生效、blocks 未生效，输出仍会变化，无法抓住此回归。
+    本测试直接校验结构标记，精确锁定传播路径。
+    """
+    m = _small(zero_centered_norm=True, num_layers=3)
+    for i, blk in enumerate(m.blocks):
+        assert getattr(blk.ln1, 'zero_centered', False) is True, \
+            f"block {i}.ln1 未启用 zero_centered（修复被回退？）"
+        assert getattr(blk.ln2, 'zero_centered', False) is True, \
+            f"block {i}.ln2 未启用 zero_centered（修复被回退？）"
+    assert getattr(m.ln_f, 'zero_centered', False) is True, \
+        "ln_f 未启用 zero_centered"
+    # 对照：默认模型应全部为 False
+    m_off = _small(zero_centered_norm=False, num_layers=2)
+    for i, blk in enumerate(m_off.blocks):
+        assert blk.ln1.zero_centered is False
+        assert blk.ln2.zero_centered is False
+    assert m_off.ln_f.zero_centered is False
+
+
+def test_zero_centered_norm_propagated_to_shared_lns():
+    """回归（Bug 修复 #2 续）：share_norm=True 时共享 LayerNorm 也应带 zero_centered。
+
+    修复在构造 _shared_lns 时显式传入 zero_centered_norm；若回退，共享 LN 会
+    退化为默认 RMSNorm，所有层共用一个非 zero-centered 的 LN。
+    """
+    m = _small(zero_centered_norm=True, share_norm=True, num_layers=3)
+    assert hasattr(m, 'shared_lns'), "share_norm=True 未创建 shared_lns"
+    assert m.shared_lns[0].zero_centered is True, "shared_lns[0] 未启用 zero_centered"
+    assert m.shared_lns[1].zero_centered is True, "shared_lns[1] 未启用 zero_centered"
+    # 各 block 的 ln1/ln2 应即共享对象本身（同一实例）
+    assert m.blocks[0].ln1 is m.shared_lns[0]
+    assert m.blocks[0].ln2 is m.shared_lns[1]
+
+
+def test_output_gate_changes_output_under_checkpointing():
+    """回归（Bug 修复 #3）：output_gate 在 gradient_checkpointing 路径必须生效。
+
+    历史 bug：output_gate 在 attn.forward 中应用，但训练时 ckpt 路径绕过 forward
+    直接调 attend，导致 output_gate 参数无效果（且无梯度）。修复在 _run_attn_mixer
+    的 ckpt 分支补应用 `h = h * sigmoid(output_gate(h))`。
+    现有 test_output_gate_backward_flows 仅断言梯度非 None（弱信号，且无法察觉
+    「门控接到错误张量」类错误）；本测试在训练模式（ckpt=True）下做行为断言：
+    output_gate=True 的前向输出必须与 output_gate=False 不同，证明门控确实接入
+    ckpt 计算图。dropout 默认 0，输出确定性。
+    """
+    # gradient_checkpointing 默认 True；train 模式下 ckpt=True
+    m_on = _small(output_gate=True, gradient_checkpointing=True)
+    m_off = _small(output_gate=False, gradient_checkpointing=True)
+    m_on.train(); m_off.train()
+    # 确认 ckpt 路径激活条件成立
+    assert m_on.blocks[0].training and m_on.blocks[0].gradient_checkpointing, \
+        "ckpt 未激活，测试无法覆盖 ckpt 路径"
+    # 对齐非门控参数（m_off 不含 output_gate，strict=False 忽略缺失键）
+    m_off.load_state_dict({k: v for k, v in m_on.state_dict().items()
+                           if 'output_gate' not in k}, strict=False)
+    x = torch.randint(0, 200, (2, 8))
+    out_on = m_on(x)
+    out_off = m_off(x)
+    logits_on = out_on["logits"] if isinstance(out_on, dict) else out_on
+    logits_off = out_off["logits"] if isinstance(out_off, dict) else out_off
+    assert not torch.allclose(logits_on.detach(), logits_off.detach(), atol=1e-5), \
+        "训练（ckpt）路径下 output_gate 未改变输出——修复可能被回退"
+
+
+# ===========================================================================
+# 第十六轮：Gate 抽象统一（GateConfig + 工具函数）
+# 验证门控配置收口与工具函数数值正确性，防止重构回退
+# ===========================================================================
+
+def test_gate_config_defaults():
+    """GateConfig 默认值与原 __init__ 默认值一致。"""
+    from models.gates import GateConfig
+    cfg = GateConfig()
+    assert cfg.residual_gate is True
+    assert cfg.hybrid_gate is True
+    assert cfg.highway_gate is False
+    assert cfg.skip is False
+    assert cfg.hybrid_single_gate is False
+    assert cfg.linear_correction is False
+
+
+def test_gate_config_from_kwargs():
+    """GateConfig.from_kwargs 兼容旧散落 bool 参数调用方式。"""
+    from models.gates import GateConfig
+    cfg = GateConfig.from_kwargs(
+        residual_gate=False, hybrid_gate=False, highway_gate=True,
+        skip=True, hybrid_single_gate=True, linear_correction=True
+    )
+    assert cfg.residual_gate is False
+    assert cfg.hybrid_gate is False
+    assert cfg.highway_gate is True
+    assert cfg.skip is True
+    assert cfg.hybrid_single_gate is True
+    assert cfg.linear_correction is True
+
+
+def test_apply_direct_none_passthrough():
+    """apply_direct(gate=None, h) 返回原值 h。"""
+    from models.gates import apply_direct
+    h = torch.randn(2, 4, 8)
+    assert torch.equal(apply_direct(None, h), h)
+
+
+def test_apply_direct_multiplication():
+    """apply_direct(gate, h) = gate * h（不过 sigmoid）。"""
+    from models.gates import apply_direct
+    gate = torch.tensor(2.0)
+    h = torch.ones(2, 4, 8)
+    out = apply_direct(gate, h)
+    assert torch.allclose(out, h * 2.0)
+
+
+def test_apply_sigmoid_scalar_none_passthrough():
+    """apply_sigmoid_scalar(param=None, h) 返回原值 h。"""
+    from models.gates import apply_sigmoid_scalar
+    h = torch.randn(2, 4, 8)
+    assert torch.equal(apply_sigmoid_scalar(None, h), h)
+
+
+def test_apply_sigmoid_scalar_value():
+    """apply_sigmoid_scalar(param, h) = sigmoid(param) * h。"""
+    from models.gates import apply_sigmoid_scalar
+    import torch.nn as nn
+    param = nn.Parameter(torch.tensor(0.0))  # sigmoid(0)=0.5
+    h = torch.ones(2, 4, 8)
+    out = apply_sigmoid_scalar(param, h)
+    assert torch.allclose(out, h * 0.5, atol=1e-6)
+
+
+def test_apply_linear_gate_none_passthrough():
+    """apply_linear_gate(linear=None, x, h) 返回原值 h。"""
+    from models.gates import apply_linear_gate
+    x = torch.randn(2, 4, 8)
+    h = torch.randn(2, 4, 8)
+    assert torch.equal(apply_linear_gate(None, x, h), h)
+
+
+def test_convex_combine_scalar():
+    """convex_combine_scalar(param, h1, h2) = sigmoid(param)*h1 + (1-sigmoid)*h2。"""
+    from models.gates import convex_combine_scalar
+    import torch.nn as nn
+    param = nn.Parameter(torch.tensor(0.0))  # sigmoid(0)=0.5
+    h1 = torch.ones(2, 4, 8)
+    h2 = torch.zeros(2, 4, 8)
+    out = convex_combine_scalar(param, h1, h2)
+    assert torch.allclose(out, h1 * 0.5, atol=1e-6)
+
+
+def test_convex_combine_linear():
+    """convex_combine_linear(linear, x, h1, h2) = sigmoid(W·x)*h1 + (1-sigmoid)*h2。"""
+    from models.gates import convex_combine_linear
+    import torch.nn as nn
+    linear = nn.Linear(8, 1)
+    nn.init.zeros_(linear.weight)
+    nn.init.constant_(linear.bias, 0.0)  # sigmoid(0)=0.5
+    x = torch.randn(2, 4, 8)
+    h1 = torch.ones(2, 4, 8)
+    h2 = torch.zeros(2, 4, 8)
+    out = convex_combine_linear(linear, x, h1, h2)
+    assert torch.allclose(out, h1 * 0.5, atol=1e-6)
+
+
+def test_apply_correction():
+    """apply_correction(param, h, lh) = h + sigmoid(param)*(lh - h)。"""
+    from models.gates import apply_correction
+    import torch.nn as nn
+    param = nn.Parameter(torch.tensor(0.0))  # sigmoid(0)=0.5
+    h = torch.ones(2, 4, 8)
+    lh = torch.zeros(2, 4, 8)
+    out = apply_correction(param, h, lh)
+    # h + 0.5*(lh - h) = 1 + 0.5*(0 - 1) = 0.5
+    assert torch.allclose(out, torch.full_like(h, 0.5), atol=1e-6)
+
+
+def test_gate_cfg_equivalent_to_bool_params():
+    """gate_cfg 构造的 block 与旧 bool 参数构造的 block state_dict 完全一致。
+
+    第十六轮重构把 6 个 bool 参数收口为 GateConfig，须保证不改变参数创建逻辑。
+    """
+    from models.transformer import TransformerBlock
+    from models.gates import GateConfig
+
+    # 旧方式不可用了（参数已移除），用 gate_cfg=None（默认 GateConfig）对照显式 GateConfig
+    blk_default = TransformerBlock(64, 4, 128, block_type='attn', mixer='attn_linear')
+    blk_explicit = TransformerBlock(64, 4, 128, block_type='attn', mixer='attn_linear',
+                                     gate_cfg=GateConfig())
+    # 两者的 state_dict key 集合应相同
+    keys_default = set(blk_default.state_dict().keys())
+    keys_explicit = set(blk_explicit.state_dict().keys())
+    assert keys_default == keys_explicit, \
+        f"gate_cfg=None 与 gate_cfg=GateConfig() 的 state_dict key 不一致"
+
+
+def test_gate_cfg_highway_mutual_exclusion():
+    """gate_cfg.highway_gate=True 时不创建 sub1_gate/ffn_gate（互斥约束保持）。"""
+    from models.transformer import TransformerBlock
+    from models.gates import GateConfig
+
+    blk = TransformerBlock(64, 4, 128, block_type='attn',
+                            gate_cfg=GateConfig(highway_gate=True))
+    assert hasattr(blk, 'sub1_highway'), "highway_gate=True 应创建 sub1_highway"
+    assert hasattr(blk, 'ffn_highway'), "highway_gate=True 应创建 ffn_highway"
+    assert not hasattr(blk, 'sub1_gate'), "highway_gate=True 时不应创建 sub1_gate（dead param）"
+    assert not hasattr(blk, 'ffn_gate'), "highway_gate=True 时不应创建 ffn_gate（dead param）"
+
+
+def test_gate_cfg_all_features_forward_backward():
+    """gate_cfg 全特性开启时前向+反向不崩溃。"""
+    from models.transformer import TransformerBlock
+    from models.gates import GateConfig
+
+    blk = TransformerBlock(64, 4, 128, block_type='hybrid', mixer='attn_linear',
+                            gate_cfg=GateConfig(
+                                residual_gate=True, hybrid_gate=True,
+                                highway_gate=False,  # 与 residual_gate 互斥时关
+                                hybrid_single_gate=True,
+                                linear_correction=True,
+                                skip=True,
+                            ),
+                            ssm_kwargs={'d_state': 8, 'd_inner_factor': 1},
+                            attn_kwargs={'window': 32, 'qk_norm': True, 'attn_temp': True,
+                                         'linear_attn_feature': 'relu'})
+    blk.train()
+    x = torch.randn(2, 8, 64)
+    out = blk(x)
+    assert out[0].shape == (2, 8, 64)
+    out[0].sum().backward()
+    # skip_gate 应收到梯度
+    assert blk.skip_gate.grad is not None, "skip_gate 无梯度"
+

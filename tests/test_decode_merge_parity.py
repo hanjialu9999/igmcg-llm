@@ -660,3 +660,78 @@ def test_model_config_rejects_indivisible_heads():
     with pytest.raises(AssertionError, match="divisible"):
         ModelConfig(vocab_size=200, embedding_dim=65, num_heads=4,
                     num_layers=2, hidden_dim=128, max_seq_length=512)
+
+
+# ─── 第十五轮 Bug 修复 / 代码债清理 回归测试（补缺覆盖）─────────────────────
+
+def test_axial_linear_attention_shared_qkv_registered():
+    """回归（Bug 修复 #4）：AxialLinearAttention super().__init__() 必须用关键字参数。
+
+    历史 bug：super().__init__() 曾用位置参数传参，shared_qkv（nn.Linear）被错位
+    传到 rope_dim_fraction（float）槽位，导致 TypeError 或 rope 损坏，且 self.qkv
+    变成新建 Linear 而非复用共享实例。修复改用关键字参数。
+    本测试直接断言 shared_qkv 被正确注册为 self.qkv、rope.dim_fraction 未被污染，
+    精确锁定参数绑定（现有 test_axial_linear_basic_forward 不传 shared_qkv，抓不到）。
+    """
+    from models.mixers import AxialLinearAttention
+    dim, heads = 64, 4
+    head_dim = dim // heads
+    shared_qkv = torch.nn.Linear(dim, 3 * heads * head_dim, bias=False)
+    shared_proj = torch.nn.Linear(heads * head_dim, dim, bias=False)
+    ala = AxialLinearAttention(dim=dim, num_heads=heads, max_seq_length=32,
+                               shared_qkv=shared_qkv, shared_proj=shared_proj)
+    # 若位置错位回退：shared_qkv 落入 rope_dim_fraction，self.qkv 会是新建 Linear
+    assert ala.qkv is shared_qkv, "shared_qkv 未注册为 self.qkv（super 位置错位？）"
+    assert ala.proj is shared_proj, "shared_proj 未注册为 self.proj"
+    # rope_dim_fraction 应保持默认 1.0（未被 shared_qkv 污染）
+    assert ala.rope.dim_fraction == 1.0, \
+        f"rope.dim_fraction 被污染为 {ala.rope.dim_fraction}（应为 1.0）"
+    # 前向正常工作（进一步排除「错位导致静默损坏」）
+    x = torch.randn(1, 16, dim)
+    out, _ = ala(x)
+    assert out.shape == (1, 16, dim)
+    assert torch.isfinite(out).all()
+
+
+def test_cast_compute_dA_override_takes_effect():
+    """回归（代码债清理 #7）：MambaSSMWithCAST 必须覆盖 _compute_dA_and_xb 注入 A_delta。
+
+    第十五轮将 MambaSSMWithCAST forward 去重——提取 _compute_dA_and_xb 到基类 MambaSSM，
+    CAST 仅覆盖此方法添加上下文调制。若覆盖被遗漏（或方法签名变更导致覆盖失效），
+    CAST 会静默退化为标准 MambaSSM（A_delta 恒 0），现有 forward/增量一致性测试仍会
+    通过（无法察觉）。本测试：cast_delta_proj=0 时 CAST 等价于基类；置非零后 CAST 的
+    dA 与前向输出都必须不同于基类——证明上下文调制确实接入计算图。
+    """
+    from models.mixers import MambaSSM, MambaSSMWithCAST
+    torch.manual_seed(0)
+    base = MambaSSM(dim=64, d_state=16)
+    cast = MambaSSMWithCAST(dim=64, d_state=16)
+    # 对齐除 CAST 专用参数外的所有参数（cast_stat_proj/cast_delta_proj 不在 base 中）
+    cast.load_state_dict(base.state_dict(), strict=False)
+    base.eval(); cast.eval()
+    x = torch.randn(1, 8, 64)
+    # MambaSSM.forward 返回 (y, present_state, present_conv_state)，取 [0] 即输出张量
+    # init 时 cast_delta_proj=0 → A_delta=0 → CAST 应等价于基类
+    with torch.no_grad():
+        y_base = base(x)[0]
+        y_cast_init = cast(x)[0]
+    assert torch.allclose(y_base, y_cast_init, atol=1e-6), \
+        "cast_delta_proj=0 时 CAST 应等价于基类 MambaSSM"
+    # 激活 CAST 调制：cast_delta_proj 置非零
+    with torch.no_grad():
+        cast.cast_delta_proj.weight.normal_(0.0, 0.1)
+    with torch.no_grad():
+        y_cast_active = cast(x)[0]
+    assert not torch.allclose(y_base, y_cast_active, atol=1e-5), \
+        "cast_delta_proj 非零时 CAST 输出应不同于基类——_compute_dA_and_xb 覆盖未生效？"
+    # 方法级直接校验：同一入参下 CAST 的 dA ≠ 基类 dA
+    B, L = 1, 8
+    d_inner, d_state = cast.d_inner, cast.d_state
+    x_conv = torch.randn(B, L, d_inner)
+    dt = torch.rand(B, L, d_inner) * 0.5 + 0.1
+    Bp = torch.randn(B, L, d_state)
+    with torch.no_grad():
+        dA_base, _ = base._compute_dA_and_xb(x_conv, dt, Bp)
+        dA_cast, _ = cast._compute_dA_and_xb(x_conv, dt, Bp)
+    assert not torch.allclose(dA_base, dA_cast, atol=1e-6), \
+        "CAST._compute_dA_and_xb 应产出与基类不同的 dA（A_delta 注入未生效）"

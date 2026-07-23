@@ -22,6 +22,9 @@ from models.sampling import (apply_repetition_penalty, sample_next_token,
                              _decode_one_step)
 from models.layers import CharMergeLayer
 from models.state import BlockState
+from models.gates import (GateConfig, apply_direct, apply_sigmoid_scalar,
+                          apply_linear_gate, convex_combine_scalar,
+                          convex_combine_linear, apply_correction)
 
 # 向后兼容：保留原模块级符号的外部可见性（其它模块仍从 models.transformer 导入）
 __all__ = [
@@ -39,33 +42,31 @@ class TransformerBlock(nn.Module):
     def __init__(self, dim: int, num_heads: int, hidden_dim: int, block_type: str = 'attn',
                  dropout: float = 0.0, max_seq_length: int = 64,
                  ssm_kwargs: Optional[Dict[str, Any]] = None, attn_kwargs: Optional[Dict[str, Any]] = None,
-                 residual_gate: bool = True, hybrid_gate: bool = True, gradient_checkpointing: bool = True,
-                 skip: bool = False, mixer: str = 'attn',
-                 hybrid_single_gate: bool = False,
+                 gate_cfg: Optional[GateConfig] = None,
+                 gradient_checkpointing: bool = True, mixer: str = 'attn',
                  shared_qkv: Optional[nn.Linear] = None,
-             shared_proj: Optional[nn.Linear] = None,
-             shared_ffn: Optional[SwiGLU] = None,
-             shared_lns: Optional[Tuple[RMSNorm, RMSNorm]] = None,
-             linear_correction: bool = False,
-             ssm_as_memory: bool = False,
-             highway_gate: bool = False,
-             zero_centered_norm: bool = False):
+                 shared_proj: Optional[nn.Linear] = None,
+                 shared_ffn: Optional[SwiGLU] = None,
+                 shared_lns: Optional[Tuple[RMSNorm, RMSNorm]] = None,
+                 ssm_as_memory: bool = False,
+                 zero_centered_norm: bool = False):
         super().__init__()
         self.block_type = block_type
         self.drop = nn.Dropout(dropout)
         ssm_kwargs = ssm_kwargs or {}
         attn_kwargs = attn_kwargs or {}
-        # ②/⑥ 残差门控 & ⭐A 混合路径门控开关（默认关，向后兼容）
-        self.residual_gate_enabled = residual_gate
-        self.hybrid_gate_enabled = hybrid_gate
+        # 第十六轮：门控配置统一收口为 GateConfig（替代 6 个散落 bool 参数）
+        gate_cfg = gate_cfg or GateConfig()
+        self.residual_gate_enabled = gate_cfg.residual_gate
+        self.hybrid_gate_enabled = gate_cfg.hybrid_gate
+        self.highway_gate_enabled = gate_cfg.highway_gate and gate_cfg.residual_gate
+        self.linear_correction_enabled = gate_cfg.linear_correction
+        self.skip_enabled = gate_cfg.skip
         # 运行时增强开关（按开关粒度，用于"交替/分段增强"训练）：默认全开
         self._rt: Dict[str, bool] = {"residual_gate": True, "hybrid_gate": True,
                                      "highway_gate": True, "layer_film": True}
         self.gradient_checkpointing = gradient_checkpointing
-        # 第十一轮：线性注意力修正模式——主注意力为基础，线性注意力输出"修正项"
-        # 补主注意力遗漏（而非凸组合替代）。默认关（linear_correction=False 走原凸组合）。
-        self.linear_correction_enabled = linear_correction
-        if linear_correction and mixer == 'attn_linear':
+        if self.linear_correction_enabled and mixer == 'attn_linear':
             # init -1.0（sigmoid≈0.27）使初始修正行为接近原凸组合默认（mixer_gate init 1.0
             # → sigmoid≈0.73 → 0.73h+0.27lh），开启时平滑过渡，训练中自决修正强度。
             self.correction_gate = nn.Parameter(torch.tensor(-1.0))
@@ -111,8 +112,7 @@ class TransformerBlock(nn.Module):
         # ②/⑥ 每层可学习残差门控：x = x + gate * f(x)（init 1.0，默认行为不变）
         # 第十三轮：highway_gate 与静态 residual_gate 互斥——highway_gate=True 时不创建
         # sub1_gate/ffn_gate（避免 dead params：highway 路径从不读取静态门）。
-        self.highway_gate_enabled = highway_gate and residual_gate
-        if residual_gate and not self.highway_gate_enabled:
+        if self.residual_gate_enabled and not self.highway_gate_enabled:
             # hybrid 块的第一子层用 hybrid_attn_gate/hybrid_ssm_gate，sub1_gate 无用，跳过分配
             if block_type != 'hybrid':
                 self.sub1_gate = nn.Parameter(torch.ones(1))   # 第一子层残差（attn 或 ssm）
@@ -126,19 +126,18 @@ class TransformerBlock(nn.Module):
                 self.sub1_highway = nn.Linear(dim, 1)
             self.ffn_highway = nn.Linear(dim, 1)
         # ⭐A 混合块内 attn/ssm 两路可学习门控（init 1.0）
-        if hybrid_gate and block_type == 'hybrid':
+        if self.hybrid_gate_enabled and block_type == 'hybrid':
             self.hybrid_attn_gate = nn.Parameter(torch.ones(1))
             self.hybrid_ssm_gate = nn.Parameter(torch.ones(1))
         # 阶段8.4：单动态门控 g_t（默认关，向后兼容）。用 g_t=sigmoid(W_g·ln1(x)) 逐位置混合
         # attn 与 ssm（g_t·attn_h + (1-g_t)·ssm_h），替代原两独立标量门控相加（双残差、非真融合）。
         # 单门控是凸组合、逐位置动态、参数更少，架构更干净（见 §8 推进顺序 #4）。
-        self.hybrid_single_gate = hybrid_single_gate and block_type == 'hybrid'
+        self.hybrid_single_gate = gate_cfg.hybrid_single_gate and block_type == 'hybrid'
         if self.hybrid_single_gate:
             self.hybrid_mix = nn.Linear(dim, 1)
         # 阶段6：可学习跳过层（skip gate）——sigmoid 门控，模型自决本层是否跳过。
         # skip≈1 走残差（等效跳过该块计算），推理时可按阈值静态剪枝省算力。
-        self.skip_enabled = skip
-        if skip:
+        if self.skip_enabled:
             self.skip_gate = nn.Parameter(torch.ones(1))  # init 1.0 = 不跳过（默认保留全部层）
         self._skip_active = True
 
@@ -249,12 +248,10 @@ class TransformerBlock(nn.Module):
                 # init 0（sigmoid≈0.5 但 gate=0 时 h 不变，向后兼容）；训练中自决修正强度。
                 # 相比原凸组合（mg·h+(1-mg)·lh），修正模式保留主注意力的主体地位，线性注意力
                 # 仅补充差异，避免线性注意力噪声主导。
-                cg = torch.sigmoid(self.correction_gate)
-                h = h + cg * (lh - h)
+                h = apply_correction(self.correction_gate, h, lh)
             else:
                 # 原凸组合：mixer_gate 自选择 attn/linear 比例
-                mg = torch.sigmoid(self.mixer_gate)
-                h = mg * h + (1.0 - mg) * lh
+                h = convex_combine_scalar(self.mixer_gate, h, lh)
             if use_cache and lpresent is not None:
                 # 两路 KV 缓存合并：把线性注意力状态 S 和分母累积 z 塞进 attn_kv 元组
                 # (k, v, linear_S, z_final)。block forward 会自行包装为
@@ -307,13 +304,13 @@ class TransformerBlock(nn.Module):
             # 两者共享同一 ln1(x) 避免重复 RMSNorm。
             xn = self.ln1(x)
             h, present = self._run_attn_mixer(xn, attn_past_kv, use_cache, start_pos, mem_kv, ckpt)
-            h_eff = (sk * h) if sk is not None else h
-            x = x + self.drop(gate1 * h_eff if gate1 is not None else h_eff)
+            h_eff = apply_direct(sk, h)
+            x = x + self.drop(apply_direct(gate1, h_eff))
         elif self.block_type == 'ssm':
             h, ssm_present_state, ssm_present_conv_state = self._run_ssm(
                 self.ln1(x), ssm_past_state, ssm_past_conv_state, use_cache, ckpt)
-            h_eff = (sk * h) if sk is not None else h
-            x = x + self.drop(gate1 * h_eff if gate1 is not None else h_eff)
+            h_eff = apply_direct(sk, h)
+            x = x + self.drop(apply_direct(gate1, h_eff))
         elif self.block_type == 'hybrid':
             xn = self.ln1(x)
             if self.ssm_as_memory_enabled:
@@ -337,18 +334,17 @@ class TransformerBlock(nn.Module):
                 h, attn_present = self._run_attn_mixer(xn, attn_past_kv, use_cache, start_pos, mem_kv, ckpt)
                 ssm_h, ssm_present_state, ssm_present_conv_state = self._run_ssm(
                     xn, ssm_past_state, ssm_past_conv_state, use_cache, ckpt)
-            h_eff = (sk * h) if sk is not None else h
-            ssm_eff = (sk * ssm_h) if sk is not None else ssm_h
+            h_eff = apply_direct(sk, h)
+            ssm_eff = apply_direct(sk, ssm_h)
             if self.hybrid_single_gate and self._rt.get("hybrid_gate", True):
                 # 阶段8.4：单动态门控 —— g_t 逐位置混合 attn/ssm 两路（凸组合）。
                 # g_t=sigmoid(W_g·ln1(x)) ∈(0,1)，out = g_t·attn_h + (1-g_t)·ssm_h。
-                g = torch.sigmoid(self.hybrid_mix(xn))  # (B,T,1)
-                mixed = g * h_eff + (1.0 - g) * ssm_eff             # (B,T,D)
+                mixed = convex_combine_linear(self.hybrid_mix, xn, h_eff, ssm_eff)
                 x = x + self.drop(mixed)
             elif self.hybrid_gate_enabled and self._rt["hybrid_gate"]:
                 # ⭐A 混合块：attn 与 ssm 两路各自可学习门控，让模型自决每层偏重
-                x = x + self.drop(self.hybrid_attn_gate * h_eff) \
-                      + self.drop(self.hybrid_ssm_gate * ssm_eff)
+                x = x + self.drop(apply_direct(self.hybrid_attn_gate, h_eff)) \
+                      + self.drop(apply_direct(self.hybrid_ssm_gate, ssm_eff))
             else:
                 x = x + self.drop(h_eff) + self.drop(ssm_eff)
             if use_cache:
@@ -361,7 +357,7 @@ class TransformerBlock(nn.Module):
             f = checkpoint(self.ffn, self.ln2(x), use_reentrant=False)
         else:
             f = self.ffn(self.ln2(x))
-        x = x + self.drop(gate2 * f if gate2 is not None else f)
+        x = x + self.drop(apply_direct(gate2, f))
         # Combine attn KV cache and SSM state
         if use_cache:
             if self.block_type == 'attn':
@@ -657,15 +653,19 @@ class TransformerModel(nn.Module):
             TransformerBlock(embedding_dim, num_heads, hidden_dim, block_type=bt,
                              dropout=dropout, max_seq_length=rope_max_len,
                              ssm_kwargs=ssm_kwargs, attn_kwargs=attn_kwargs,
-                             residual_gate=residual_gate, hybrid_gate=hybrid_gate,
-                             hybrid_single_gate=hybrid_single_gate,
+                             gate_cfg=GateConfig(
+                                 residual_gate=residual_gate,
+                                 hybrid_gate=hybrid_gate,
+                                 hybrid_single_gate=hybrid_single_gate,
+                                 skip=layer_skip,
+                                 linear_correction=linear_correction,
+                                 highway_gate=highway_gate,
+                             ),
                              gradient_checkpointing=gradient_checkpointing,
-                             skip=layer_skip, mixer=mixer,
+                             mixer=mixer,
                              shared_qkv=_shared_qkv, shared_proj=_shared_proj,
                              shared_ffn=_shared_ffn, shared_lns=_shared_lns,
-                             linear_correction=linear_correction,
                              ssm_as_memory=ssm_as_memory,
-                             highway_gate=highway_gate,
                              zero_centered_norm=zero_centered_norm)
             for bt in self.layer_plan
         ])
