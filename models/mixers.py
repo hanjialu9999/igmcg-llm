@@ -240,7 +240,8 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
             bias[..., :mem_cols] = 0
         if self.pe_gate_enabled:
             # per-head 位置编码强度门控：1.0+tanh(log_pe_gate)，init 1.0（不变）
-            pe_strength = (1.0 + torch.tanh(self.log_pe_gate)).view(1, -1, 1, 1).to(bias.device)
+            # log_pe_gate 是 Parameter 已在设备上，无需 .to(bias.device)
+            pe_strength = (1.0 + torch.tanh(self.log_pe_gate)).view(1, -1, 1, 1)
             bias = bias * pe_strength
         return bias
 
