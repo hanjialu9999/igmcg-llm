@@ -47,6 +47,9 @@ class AttnConfig:
     zero_centered_norm: bool = False # Zero-Centered RMSNorm（先去均值再归一化，防 Massive Activation）
     delta_alpha_init: float = -2.0   # GatedDeltaNet 衰减门偏置初值（sigmoid≈0.12，弱遗忘起步）
     delta_beta_init: float = 2.0     # GatedDeltaNet 输入门偏置初值（sigmoid≈0.88，强写入起步）
+    # 第十七轮新特性
+    use_mla_kv: bool = False         # MLA 风格 KV 潜空间压缩（cache 只存潜向量，长序列内存降 2*dim/kv_latent_dim 倍）
+    kv_latent_dim: Optional[int] = None  # MLA 潜空间维度（None=默认 dim，压缩 2x；更小值压缩更多）
 
     def __post_init__(self):
         _VALID = {'attn', 'linear', 'linear2d', 'attn_linear', 'hybrid_linear2d', 'diff', 'gated_delta'}
@@ -54,6 +57,11 @@ class AttnConfig:
             self.mixer = 'attn_linear'
         if self.mixer not in _VALID:
             raise ValueError(f"未知 mixer='{self.mixer}'，可选 {_VALID}")
+        # MLA 仅支持标准 attn 系 mixer（DifferentialAttention 不接受 use_mla_kv 参数）
+        if self.use_mla_kv and self.mixer not in {'attn', 'attn_linear', 'hybrid_linear2d'}:
+            raise ValueError(
+                f"use_mla_kv=True 仅支持 mixer in {{'attn','attn_linear','hybrid_linear2d'}}，"
+                f"当前 mixer='{self.mixer}' 不支持 MLA KV 压缩")
 
 
 @dataclass
@@ -135,6 +143,8 @@ class ModelConfig:
     input_highway: bool = False        # 输入全局高速公路（embedding 输出经门控注入每层，init 弱注入）
     layer_contrastive: bool = False    # 层间对比绑定（相邻层余弦相似度损失，防深层遗忘浅层特征）
     shared_alibi: bool = False         # ALiBi 跨层共享（所有层共用同一组斜率，减参+一致位置建模）
+    # 第十七轮新特性
+    fuse_swiglu: bool = False          # SwiGLU w1/w3 合并为 w13（减少 GEMM 调用，默认关向后兼容）
 
     # n-gram
     ngram_fusion: bool = False
@@ -190,6 +200,8 @@ class ModelConfig:
             zero_centered_norm=mc.get('zero_centered_norm', False),
             delta_alpha_init=mc.get('delta_alpha_init', -2.0),
             delta_beta_init=mc.get('delta_beta_init', 2.0),
+            use_mla_kv=mc.get('use_mla_kv', False),
+            kv_latent_dim=mc.get('kv_latent_dim', None),
         )
         memory = MemoryConfig(
             size=mc.get('memory_size', 0),
@@ -238,6 +250,7 @@ class ModelConfig:
             input_highway=bool(mc.get('input_highway', False)),
             layer_contrastive=bool(mc.get('layer_contrastive', False)),
             shared_alibi=bool(mc.get('shared_alibi', False)),
+            fuse_swiglu=bool(mc.get('fuse_swiglu', False)),
             ngram_fusion=mc.get('ngram_fusion', False),
             ngram_gate_scale=float(mc.get('ngram_gate_scale', 1.0)),
             igmcg=bool(mc.get('igmcg', False)),

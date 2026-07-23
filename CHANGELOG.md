@@ -9,6 +9,20 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
+## `（本地，基于 `4e9e8f3`，待推送，第十七轮：MLA KV 压缩 + SwiGLU 合并 + 审查修复）
+
+- feat: **MLA 风格 KV 潜空间压缩**——`models/mixers.py` `SlidingWindowCausalSelfAttention` 新增 `use_mla_kv`/`kv_latent_dim` 参数。K/V 拼接后下投影到低维潜空间 `c_kv`（`kv_compress: 2*dim → kv_latent_dim`），cache 只存潜向量；attend 时单次 GEMM 上投影还原 K+V（`kv_decompress: kv_latent_dim → 2*dim`，chunk 拆分）。RoPE 在解压后对 k 应用（位置 0..T_total-1），q 在 project_and_norm 中应用（位置 start_pos），保证旋转信息不被压缩-还原破坏。cache 内存降 `2*dim/kv_latent_dim` 倍。config: `use_mla_kv`/`kv_latent_dim`。灵感：DeepSeek-V3 MLA。
+- feat: **SwiGLU w1/w3 合并优化**——`models/mixers.py` `SwiGLU` 新增 `fuse_swiglu` 参数，将 `w1`/`w3` 合并为单个 `w13` Linear（输出 `2*hidden_dim`），前向时 `chunk(2, dim=-1)` 拆分（view 零拷贝）。减少一次 GEMM 调用，DML 小算子启动税敏感时有益。`convert_legacy_state_dict` 静态方法处理旧 checkpoint 权重转换（`w13.weight = cat([w1.weight, w3.weight], dim=0)`）。`checkpoint.py` `load_model` 自动检测格式不匹配并转换。默认关（向后兼容旧 checkpoint 的 w1/w2/w3 格式）。config: `fuse_swiglu`。
+- fix: **DifferentialAttention present 只存当前 token 导致增量解码历史丢失（CRITICAL pre-existing）**——`models/mixers.py` `DifferentialAttention.forward` 的 `present` 原存 `(k1, k2, v)`（仅当前 token），而非累积的 `(k1_full, k2_full, v_full)`。增量解码第三步起历史完全丢失（max_diff=0.33）。修复：present 改存 `k1_full`/`k2_full`/`v_full` 的转置（累积历史）。
+- fix: **DifferentialAttention cache 布局 (B,T,H,D) 与 BlockState.start_pos 不兼容（MEDIUM pre-existing）**——原 cache 为 `(B,T,H,D)` 布局，`BlockState.start_pos` 取 `size(2)` 返回 `num_heads` 而非 `seq_len`。混合层计划（diff 块后跟 attn 块）下后续块 `start_pos` 错误。修复：cache 统一为 `(B,H,T,D)` 布局（present 存 transpose 后的 k1/k2/v）。
+- fix: **SwiGLU convert_legacy_state_dict endswith 对顶层模块不匹配（MEDIUM）**——`k.endswith('.w1.weight')` 对顶层 SwiGLU（key=`"w1.weight"`，无前导点）不匹配，导致转换失败。修复：改用 `split('.')` + `parts[-2:] == ['w1', 'weight']` 精确匹配，兼容顶层和嵌套模块。同时预扫描修复 w3 在 w1 之前迭代时的残留键问题。
+- fix: **checkpoint 加载不自动转换 SwiGLU 格式（MEDIUM）**——`checkpoint.py` `load_model` 用 `strict=False` 静默忽略 w13 缺失/w1-w3 多余，导致 fuse_swiglu=True 模型加载旧 checkpoint 时 FFN 随机初始化。修复：load 前检测格式不匹配并自动调用 `convert_legacy_state_dict`。
+- fix: **MLA + mixer='diff' 静默忽略 MLA 配置（LOW）**——`_build_attn_mixer` 的 diff 分支不传 `use_mla_kv`，配置不报错但 MLA 被忽略。修复：`AttnConfig.__post_init__` 校验 `use_mla_kv` 仅与 `mixer in {'attn','attn_linear','hybrid_linear2d'}` 组合。
+- perf: **MLA 解压 GEMM 合并（2→1）**——原 `kv_decompress_k`/`kv_decompress_v` 两次独立 GEMM 合并为单个 `kv_decompress`（输出 `2*dim`，chunk 拆分），减少一次 GEMM launch。与项目已有 `fuse_swiglu` 同思路。
+- perf: **_sync_window 推理期跳过 DML CPU 同步税**——`float(self.log_window)` 在 DML 上触发 GPU→CPU 同步。推理期参数冻结，首次同步后跳过（`_window_synced` 标志）；训练期每步同步（参数在变）。
+- test: **新增 6 个回归测试**——DifferentialAttention cache 布局/start_pos 正确性/增量解码一致性、MLA+diff 配置校验、convert_legacy_state_dict 预扫描、_sync_window 推理期跳过、checkpoint 自动转换 SwiGLU。pytest **347 passed / 1 skipped**（+6）。
+- smoke: **双配置 CPU 训练验证**——config_smoke_mla.yaml（MLA kv_latent_dim=128）Val 6.5847；config_smoke_fuse_swiglu.yaml（SwiGLU 合并）Val 6.1352。
+
 ## `（本地，基于 `4e9e8f3`，待推送，第十六轮：Gate 抽象统一 + 代码债清理）
 
 - refactor: **Gate 抽象统一**——新建 `models/gates.py`，定义 `GateConfig` dataclass + 6 个工具函数（`apply_direct`/`apply_sigmoid_scalar`/`apply_linear_gate`/`convex_combine_scalar`/`convex_combine_linear`/`apply_correction`）。`TransformerBlock.__init__` 的 6 个散落 bool 门控参数（`residual_gate`/`hybrid_gate`/`skip`/`hybrid_single_gate`/`linear_correction`/`highway_gate`）收口为单一 `gate_cfg: GateConfig` 参数，__init__ 签名从 20 个参数精简到 15 个。`forward` 中散乱的 `if gate is not None` 分支统一用工具函数替代。**参数注册方式不变，state_dict 100% 兼容**。
@@ -34,9 +48,9 @@
 - test: **新增第十五轮回归测试**——20+ 测试覆盖 GatedDeltaNet（参数创建/初始化/前向/cache parity/梯度回流）、Partial RoPE（rot_dim 计算/passthrough/向后兼容/输出变化/cache parity）、Output Gating（参数创建/初始化/输出变化/梯度回流/cache parity）、Zero-Centered RMSNorm（参数标记/计算正确性/输出变化/cache parity）。pytest **299 passed / 1 skipped**。
 
 ### 已识别但未实施的代码债（待后续清理）
-- 15+ 种 gate 机制（residual_gate/hybrid_gate/highway_gate/skip_gate/input_highway_gate 等）分散实现，建议统一为通用 Gate 抽象（kind∈{static,dynamic,affine}）
-- ~~MambaSSM vs MambaSSMWithCAST 的 forward 几乎逐字重复，可提取 MambaSSMBase~~ → **本轮已清理**（提取 `_compute_dA_and_xb` 方法）
-- SwiGLU 三个 Linear（w1/w2/w3）可合并为两个（LLaMA 风格 w13 chunk），但破坏 checkpoint 兼容，需 opt-in 或 state_dict 转换
+- ~~15+ 种 gate 机制（residual_gate/hybrid_gate/highway_gate/skip_gate/input_highway_gate 等）分散实现~~ → **第十六轮已清理**（GateConfig dataclass + 6 工具函数）
+- ~~MambaSSM vs MambaSSMWithCAST 的 forward 几乎逐字重复~~ → **第十五轮已清理**（提取 `_compute_dA_and_xb` 方法）
+- ~~SwiGLU 三个 Linear（w1/w2/w3）可合并为两个（LLaMA 风格 w13 chunk）~~ → **第十七轮已实施**（fuse_swiglu opt-in + convert_legacy_state_dict + checkpoint 自动转换）
 - MemoryConfig 与 AttnConfig 的 retrieval 字段已统一到 MemoryConfig（第十四轮已清理 AttnConfig 侧）
 - GatedDeltaNet 全量训练 for 循环可优化为 chunk-wise parallel（DeltaNet 原论文做法），当前 T≤64 开销可控
 

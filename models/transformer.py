@@ -49,7 +49,8 @@ class TransformerBlock(nn.Module):
                  shared_ffn: Optional[SwiGLU] = None,
                  shared_lns: Optional[Tuple[RMSNorm, RMSNorm]] = None,
                  ssm_as_memory: bool = False,
-                 zero_centered_norm: bool = False):
+                 zero_centered_norm: bool = False,
+                 fuse_swiglu: bool = False):
         super().__init__()
         self.block_type = block_type
         self.drop = nn.Dropout(dropout)
@@ -108,7 +109,7 @@ class TransformerBlock(nn.Module):
             else:
                 self.ssm = MambaSSM(dim, **ssm_kwargs)
         self.ln2 = shared_lns[1] if shared_lns is not None else RMSNorm(dim, zero_centered=zero_centered_norm)
-        self.ffn = shared_ffn if shared_ffn is not None else SwiGLU(dim, hidden_dim)
+        self.ffn = shared_ffn if shared_ffn is not None else SwiGLU(dim, hidden_dim, fuse_swiglu=fuse_swiglu)
         # ②/⑥ 每层可学习残差门控：x = x + gate * f(x)（init 1.0，默认行为不变）
         # 第十三轮：highway_gate 与静态 residual_gate 互斥——highway_gate=True 时不创建
         # sub1_gate/ffn_gate（避免 dead params：highway 路径从不读取静态门）。
@@ -227,8 +228,9 @@ class TransformerBlock(nn.Module):
         """
         if ckpt and hasattr(self.attn, 'attend'):
             # SlidingWindowCausalSelfAttention：拆分 project_and_norm / attend 以缩小检查点重算区
-            q, k, v = self.attn.project_and_norm(xn, start_pos)
-            h, present = checkpoint(self.attn.attend, q, k, v, attn_past_kv, use_cache, start_pos, mem_kv, use_reentrant=False)
+            # 第十七轮 MLA：project_and_norm 返回 (q, k, v, c_kv) 四元组，c_kv 传给 attend
+            q, k, v, c_kv = self.attn.project_and_norm(xn, start_pos)
+            h, present = checkpoint(self.attn.attend, q, k, v, attn_past_kv, use_cache, start_pos, mem_kv, c_kv, use_reentrant=False)
             # 第十五轮：output_gate 在 forward 中应用，但 ckpt 路径绕过 forward 直接调 attend，
             # 须在此补应用，否则训练时 output_gate 参数无梯度（forward 未被调用）。
             if getattr(self.attn, 'output_gate_enabled', False):
@@ -534,6 +536,9 @@ class TransformerModel(nn.Module):
                    zero_centered_norm: bool = False,
                    delta_alpha_init: float = -2.0,
                    delta_beta_init: float = 2.0,
+                   use_mla_kv: bool = False,
+                   kv_latent_dim: Optional[int] = None,
+                   fuse_swiglu: bool = False,
                    ngram_fusion: bool = False, ngram_model=None,
                    ngram_gate_scale: float = 1.0, igmcg: bool = False,
                    share_attn_proj: bool = False,
@@ -626,7 +631,9 @@ class TransformerModel(nn.Module):
                            rope_dim_fraction=rope_dim_fraction,
                            output_gate=output_gate,
                            delta_alpha_init=delta_alpha_init,
-                           delta_beta_init=delta_beta_init)
+                           delta_beta_init=delta_beta_init,
+                           use_mla_kv=use_mla_kv,
+                           kv_latent_dim=kv_latent_dim)
         # 第十五轮：保存 GatedDeltaNet 专用初始化参数，供 _apply_specialized_inits 重置
         # （_init_weights 通用 N(0,0.02) 会覆盖 alpha_proj/beta_proj 的 zero weight + 专用 bias）
         self._delta_alpha_init = float(delta_alpha_init)
@@ -641,7 +648,7 @@ class TransformerModel(nn.Module):
             self.shared_qkv = _shared_qkv
             self.shared_proj = _shared_proj
         # 层间共享 FFN（share_ffn=True）：各层复用同一组 SwiGLU 参数
-        _shared_ffn = SwiGLU(embedding_dim, hidden_dim) if share_ffn else None
+        _shared_ffn = SwiGLU(embedding_dim, hidden_dim, fuse_swiglu=fuse_swiglu) if share_ffn else None
         if share_ffn:
             self.shared_ffn = _shared_ffn
         # 层间共享 LayerNorm（share_norm=True）：各层复用同一组 RMSNorm 参数
@@ -666,7 +673,8 @@ class TransformerModel(nn.Module):
                              shared_qkv=_shared_qkv, shared_proj=_shared_proj,
                              shared_ffn=_shared_ffn, shared_lns=_shared_lns,
                              ssm_as_memory=ssm_as_memory,
-                             zero_centered_norm=zero_centered_norm)
+                             zero_centered_norm=zero_centered_norm,
+                             fuse_swiglu=fuse_swiglu)
             for bt in self.layer_plan
         ])
         # 第十四轮：ALiBi 跨层共享——所有注意力层共用第一层的 alibi_slopes buffer
@@ -808,6 +816,9 @@ class TransformerModel(nn.Module):
             zero_centered_norm=cfg.attn.zero_centered_norm,
             delta_alpha_init=cfg.attn.delta_alpha_init,
             delta_beta_init=cfg.attn.delta_beta_init,
+            use_mla_kv=cfg.attn.use_mla_kv,
+            kv_latent_dim=cfg.attn.kv_latent_dim,
+            fuse_swiglu=cfg.fuse_swiglu,
             ngram_fusion=cfg.ngram_fusion,
             ngram_model=ngram_model,
             ngram_gate_scale=cfg.ngram_gate_scale,

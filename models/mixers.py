@@ -122,7 +122,8 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
                  retrieval_topk: int = 32, learn_window: bool = False, window_base: int = 64,
                  shared_qkv: Optional[nn.Linear] = None, shared_proj: Optional[nn.Linear] = None,
                  pe_gate: bool = False, rope_dim_fraction: float = 1.0,
-                 output_gate: bool = False):
+                 output_gate: bool = False,
+                 use_mla_kv: bool = False, kv_latent_dim: Optional[int] = None):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
@@ -167,6 +168,24 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
             self.output_gate = nn.Linear(dim, dim, bias=True)
             nn.init.zeros_(self.output_gate.weight)
             nn.init.zeros_(self.output_gate.bias)
+        # 第十七轮：MLA 风格 KV 潜空间压缩——K/V 共享下投影到潜空间 c_kv，cache 只存潜向量，
+        # attend 时上投影还原 K/V。长序列 KV cache 内存降 2*dim/kv_latent_dim 倍。
+        # 灵感：DeepSeek-V3 MLA。结合项目：与 MemoryBank 的 compress/decompress 抽象思路一致
+        # （MemoryBank 压缩固定槽，MLA 压缩序列 KV），两者正交可叠加。
+        # RoPE 处理：MLA 时 q 在 project_and_norm 应用 RoPE（位置 start_pos），
+        # k 在 attend 内部还原后应用 RoPE（位置 0..T_total-1，拼接后），保证 RoPE 旋转信息
+        # 不被压缩-还原破坏（与 DeepSeek-V3 decoupled RoPE 思路一致，但简化为单段压缩）。
+        # 默认关（向后兼容），config 显式开启。
+        self.mla_kv_enabled = use_mla_kv
+        if self.mla_kv_enabled:
+            # kv_latent_dim 默认 = dim（压缩 2x：2*dim K/V → dim 潜向量）
+            _kv_latent = kv_latent_dim if kv_latent_dim is not None else dim
+            self.kv_latent_dim = _kv_latent
+            # 下投影：cat([k, v]) (2*dim) → 潜空间 (kv_latent_dim)
+            self.kv_compress = nn.Linear(2 * dim, _kv_latent, bias=False)
+            # 上投影：潜空间 → K+V (2*num_heads*head_dim = 2*dim)，单次 GEMM 合并
+            # （原 kv_decompress_k/kv_decompress_v 两次 GEMM → 合并为一次，DML 启动税敏感）
+            self.kv_decompress = nn.Linear(_kv_latent, 2 * num_heads * self.head_dim, bias=False)
         # ① QK-Norm：对 Q/K 各自做 RMSNorm 后再进注意力，与 RoPE 互补、稳定训练（默认开）
         self.qk_norm_enabled = qk_norm
         if qk_norm:
@@ -189,19 +208,29 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         # （DML 小算子启动税敏感）。仅 attn_mask 为 None（无窗口/记忆/alibi/rel_bias）时命中。
         self._causal_key: Optional[tuple] = None
         self._causal_cache: Optional[torch.Tensor] = None
+        # _sync_window 推理期跳过标志（首次同步后置 True，避免每步 DML CPU 同步税）
+        self._window_synced: bool = False
 
     def _sync_window(self):
         """阶段6：从可学习 log_window 重算实际窗口尺寸（每步前向同步，训练时随参数变化）。
 
         log_window 初始化为 log(init_w / window_base)，故还原须乘回 window_base，
         否则 exp 后丢失 base 缩放、任意 window<32 都会被 round 成 1（窗口无声退化）。
+
+        性能：float(self.log_window) 在 DML 上触发 GPU→CPU 同步税。推理期参数冻结，
+        窗口不变，首次同步后跳过（_window_synced 标志）；训练期每步同步（参数在变）。
         """
-        if self.learn_window:
-            w = int(round(math.exp(float(self.log_window)) * self.window_base))
-            w = max(1, min(w, max(self.window_base, 1) * 4))
-            if w != self.window:
-                self.window = w
-                self._bias_key = None  # 窗口变化 → 掩码缓存失效
+        if not self.learn_window:
+            return
+        # 推理期参数不变，首次同步后跳过，避免每步 DML→CPU 同步税
+        if not self.training and self._window_synced:
+            return
+        w = int(round(math.exp(float(self.log_window)) * self.window_base))
+        w = max(1, min(w, max(self.window_base, 1) * 4))
+        if w != self.window:
+            self.window = w
+            self._bias_key = None  # 窗口变化 → 掩码缓存失效
+        self._window_synced = True
 
     def _build_masks(self, T: int, device: torch.device):
         # Check if we need to rebuild: length changed OR device changed
@@ -224,8 +253,8 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
 
     def forward(self, x: torch.Tensor, past_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None, use_cache: bool = False, start_pos: int = 0,
                 memory_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
-        q, k, v = self.project_and_norm(x, start_pos)
-        out, present = self.attend(q, k, v, past_kv, use_cache, start_pos, memory_kv)
+        q, k, v, c_kv = self.project_and_norm(x, start_pos)
+        out, present = self.attend(q, k, v, past_kv, use_cache, start_pos, memory_kv, c_kv=c_kv)
         # 第十五轮：Output Gating——对注意力最终输出加门控，消除 Attention Sink / Massive Activation
         if self.output_gate_enabled:
             out = out * torch.sigmoid(self.output_gate(out))
@@ -308,7 +337,13 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
 
     def project_and_norm(self, x: torch.Tensor, start_pos: int = 0):
         """廉价部分（在梯度检查点重算区域之外执行，避免被反向重算放大）：
-        QKV 投影 + ①QK-Norm + ⑤可学习温度 + RoPE。返回已归一化/旋转后的 (q, k, v)。"""
+        QKV 投影 + ①QK-Norm + ⑤可学习温度 + RoPE。返回 (q, k, v, c_kv)。
+
+        第十七轮 MLA：开启 use_mla_kv 时，k 不在此处应用 RoPE（保持压缩前无 RoPE），
+        而是 cat([k, v]) 压缩到潜空间 c_kv 返回；q 仍应用 RoPE（位置 start_pos）。
+        k 的 RoPE 延后到 attend 内部还原后应用（位置 0..T_total-1，拼接后），
+        保证 RoPE 旋转信息不被压缩-还原破坏。c_kv=None 表示未开启 MLA。
+        """
         B, T, C = x.shape
         qkv = self.qkv(x).reshape(B, T, 3, self.num_heads, self.head_dim)
         qkv = qkv.permute(2, 0, 3, 1, 4)          # (3, B, H, T, D)
@@ -318,21 +353,54 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
             q, k, self._rt,
             self.qk_norm if self.qk_norm_enabled else None,
             self.log_temp if self.temp_enabled else None)
+        if self.mla_kv_enabled:
+            # MLA：q 应用 RoPE（位置 start_pos），k 不应用 RoPE（压缩前保持无 RoPE）
+            q = self.rope.apply_to_single(q, start_pos=start_pos, max_len=self.max_seq_length)
+            # k, v: (B,H,T,D) → (B,T,H,D) → (B,T,dim)，cat 后压缩到潜空间
+            _dim = self.num_heads * self.head_dim
+            k_flat = k.permute(0, 2, 1, 3).reshape(B, T, _dim)
+            v_flat = v.permute(0, 2, 1, 3).reshape(B, T, _dim)
+            c_kv = self.kv_compress(torch.cat([k_flat, v_flat], dim=-1))  # (B,T,kv_latent_dim)
+            return q, k, v, c_kv
         q, k = self.rope(q, k, start_pos=start_pos, max_len=self.max_seq_length)
-        return q, k, v
+        return q, k, v, None
 
     def attend(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
                 past_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None, use_cache: bool = False,
                 start_pos: int = 0,
-                memory_kv: Optional[Tuple[torch.Tensor, torch.Tensor, Optional[Dict[str, Any]]]] = None) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
+                memory_kv: Optional[Tuple[torch.Tensor, torch.Tensor, Optional[Dict[str, Any]]]] = None,
+                c_kv: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         """重算力部分（在梯度检查点重算区域内执行）：scores/softmax/proj。
         大幅激活（scores 张量）不落盘、反向时重算，保留大模型显存收益。
-        memory_kv: (mk, mv, meta) 可学习压缩记忆的 K/V + 检索元信息（门控/稀疏）。"""
+        memory_kv: (mk, mv, meta) 可学习压缩记忆的 K/V + 检索元信息（门控/稀疏）。
+        c_kv: 第十七轮 MLA 当前步潜向量 (B, T_current, kv_latent_dim)。MLA 开启时，
+              attend 内部用 c_kv 还原 K/V（拼接 past 后上投影 + RoPE），传入的 k/v 被覆盖。"""
         B, _, Tq, _ = q.shape
         self._sync_window()
         # DML 设备别名不一致（privateuseone vs privateuseone:0）：以本模块权重所在设备为权威，
         # 所有掩码/缓存构建都用它，避免 q.device 被剥索引导致 _build_masks/_bias_cache 每步重建
         dev = self.qkv.weight.device
+        # 第十七轮 MLA：还原 K/V 并应用 RoPE（在 memory 注入前，因 inject_memory 期望完整 K/V）
+        if self.mla_kv_enabled:
+            # c_kv: (B, T_current, kv_latent_dim)
+            if use_cache and past_kv is not None:
+                # 增量解码：拼接 past 潜向量 + 当前潜向量
+                c_kv_past = past_kv[0]  # (B, T_past, kv_latent_dim)
+                c_kv_full = torch.cat([c_kv_past, c_kv], dim=1)  # (B, T_total, kv_latent_dim)
+            else:
+                # 全量路径：直接用当前潜向量
+                c_kv_full = c_kv
+            B_c, T_total, _ = c_kv_full.shape
+            # 上投影还原 K/V：单次 GEMM 输出 2*dim，chunk 拆分为 K/V（view 零拷贝）
+            _nh, _hd = self.num_heads, self.head_dim
+            kv = self.kv_decompress(c_kv_full)  # (B, T_total, 2*dim)
+            k_flat, v_flat = kv.chunk(2, dim=-1)
+            k = k_flat.reshape(B_c, T_total, _nh, _hd).permute(0, 2, 1, 3)
+            v = v_flat.reshape(B_c, T_total, _nh, _hd).permute(0, 2, 1, 3)
+            # 还原后应用 RoPE（位置 0..T_total-1，与非 MLA 路径的"每 token 在对应位置旋转"等价）
+            k = self.rope.apply_to_single(k, start_pos=0, max_len=self.max_seq_length)
+            # MLA 已处理 cache 拼接，后续 cache 分支不再拼接 past_kv
+            past_kv = None
         # 阶段3 可学习检索：统一经 MemoryBank.inject_memory 注入记忆 K/V + 检索偏置，
         # 取代 cache/全量两条路径各自重复的"记忆拼接 + 稀疏门控 + 全上下文检索"逻辑（B 项收敛）。
         mem_cols = 0
@@ -359,7 +427,12 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
                 v = torch.cat([pv, v], dim=2)
             # present 存累积的 token KV（past+token，不含 memory），作为下一步的 past_kv；
             # memory 只在注意力计算时临时拼接，不进入缓存，避免序列长度膨胀。
-            present = (k, v)
+            # 第十七轮 MLA：present 存累积潜向量 c_kv_full（past+current 拼接后，而非仅当前 token），
+            #   cache 内存仍降 2*dim/kv_latent_dim 倍（存潜向量而非完整 K/V）。
+            #   用 (c_kv_full, None) 双元素保持与 (k, v) 格式一致，hybrid 块合并 present[0]/present[1] 时
+            #   MLA 路径 past_kv[0]=c_kv_full, past_kv[1]=None（attend 内部检测 mla_kv_enabled 用 [0]）。
+            #   修复 bug：原存 (c_kv, None) 只含当前 token，导致下一步 past 只有 1 token 而非全部历史。
+            present = (c_kv_full, None) if self.mla_kv_enabled else (k, v)
             Tkv = k.size(2)
             # 与全量路径共用基础因果/窗口掩码（额外1），保证 memory+window>0 时
             # 训练/推理一致性（否则推理期记忆按位置被部分遮蔽、静默质量退化）。
@@ -905,6 +978,7 @@ class DifferentialAttention(nn.Module, EnhancementsMixin):
         causal = self._causal_mask[:, :, :T, :T]  # (1, 1, T, T)
         if use_cache and past_kv is not None:
             # past_kv 由 TransformerBlock 传入，结构为 attn_kv=(k1,k2,v) 或完整元组
+            # cache 统一 (B,H,T,D) 布局（与其他 mixer 一致，BlockState.start_pos 取 size(2)）
             if isinstance(past_kv, tuple) and len(past_kv) == 3 and isinstance(past_kv[0], torch.Tensor):
                 pk1, pk2, pv = past_kv
             elif isinstance(past_kv, tuple) and len(past_kv) == 3 and isinstance(past_kv[0], tuple):
@@ -912,12 +986,17 @@ class DifferentialAttention(nn.Module, EnhancementsMixin):
             else:
                 pk1, pk2, pv = None, None, None
             if pk1 is not None:
-                k1_full = torch.cat([pk1, k1], dim=1)
-                k2_full = torch.cat([pk2, k2], dim=1)
-                v_full = torch.cat([pv, v], dim=1)
-                Tkv = k1_full.size(1)
+                # pk1/pk2/pv 为 (B,H,T_past,D)，当前 k1/k2/v 为 (B,T,H,D)，转置后 cat dim=2
+                k1_full = torch.cat([pk1, k1.transpose(1, 2)], dim=2)  # (B,H,T_total,D)
+                k2_full = torch.cat([pk2, k2.transpose(1, 2)], dim=2)
+                v_full = torch.cat([pv, v.transpose(1, 2)], dim=2)
+                Tkv = k1_full.size(2)
                 # 增量掩码：当前 token 可 attend 所有历史
                 causal = torch.zeros(1, 1, T, Tkv, dtype=torch.bool, device=x.device)
+                # 转回 (B,T,H,D) 保持后续 transpose 逻辑统一（transpose 是 view 零开销）
+                k1_full = k1_full.transpose(1, 2)
+                k2_full = k2_full.transpose(1, 2)
+                v_full = v_full.transpose(1, 2)
             else:
                 k1_full, k2_full, v_full = k1, k2, v
                 Tkv = T
@@ -970,7 +1049,9 @@ class DifferentialAttention(nn.Module, EnhancementsMixin):
         out = out.transpose(1, 2).reshape(B, T, C)
         out = self.proj(out)
         if use_cache:
-            return out, (k1, k2, v)
+            # present 存累积的 k1_full/k2_full/v_full（cache 路径含全部历史，非 cache 路径仅当前 token），
+            # 转置到 (B,H,T,D) 布局（与其他 mixer 一致，BlockState.start_pos 取 size(2)）
+            return out, (k1_full.transpose(1, 2), k2_full.transpose(1, 2), v_full.transpose(1, 2))
         return out, None
 
     @staticmethod
@@ -1134,15 +1215,59 @@ class MambaSSM(nn.Module):
 
 
 class SwiGLU(nn.Module):
-    """SwiGLU 前馈（LLaMA 风格门控 FFN，比 GELU MLP 更有表达力）。"""
-    def __init__(self, dim: int, hidden_dim: int):
+    """SwiGLU 前馈（LLaMA 风格门控 FFN，比 GELU MLP 更有表达力）。
+
+    fuse_swiglu=True 时将 w1/w3 合并为单个 w13 Linear（2*hidden_dim 输出），
+    前向时 chunk 拆分为两路。减少一次 GEMM 调用，DML 上小算子启动税敏感时有益。
+    默认关（向后兼容旧 checkpoint 的 w1/w2/w3 三参数格式）。
+    """
+    def __init__(self, dim: int, hidden_dim: int, fuse_swiglu: bool = False):
         super().__init__()
-        self.w1 = nn.Linear(dim, hidden_dim, bias=False)
-        self.w2 = nn.Linear(hidden_dim, dim, bias=False)
-        self.w3 = nn.Linear(dim, hidden_dim, bias=False)
+        self.fuse_swiglu = fuse_swiglu
+        if fuse_swiglu:
+            self.w13 = nn.Linear(dim, 2 * hidden_dim, bias=False)
+            self.w2 = nn.Linear(hidden_dim, dim, bias=False)
+        else:
+            self.w1 = nn.Linear(dim, hidden_dim, bias=False)
+            self.w2 = nn.Linear(hidden_dim, dim, bias=False)
+            self.w3 = nn.Linear(dim, hidden_dim, bias=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.fuse_swiglu:
+            x1, x3 = self.w13(x).chunk(2, dim=-1)
+            return self.w2(torch.nn.functional.silu(x1) * x3)
         return self.w2(torch.nn.functional.silu(self.w1(x)) * self.w3(x))
+
+    @staticmethod
+    def convert_legacy_state_dict(state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        """将旧格式 state_dict（w1/w3 分离）转换为新格式（w13 合并）。
+
+        供 fuse_swiglu=True 模型加载旧 checkpoint 时使用：
+        w13.weight = cat([w1.weight, w3.weight], dim=0)
+        """
+        new_sd: Dict[str, torch.Tensor] = {}
+        # 预扫描：先标记所有将被转换的 w3_key，避免 w3 在 w1 之前迭代时残留
+        skip = set()
+        for k in state_dict:
+            parts = k.split('.')
+            if len(parts) >= 2 and parts[-2:] == ['w1', 'weight']:
+                prefix = '.'.join(parts[:-2])
+                w3_key = f'{prefix}.w3.weight' if prefix else 'w3.weight'
+                if w3_key in state_dict:
+                    skip.add(w3_key)
+        for k, v in state_dict.items():
+            if k in skip:
+                continue
+            parts = k.split('.')
+            if len(parts) >= 2 and parts[-2:] == ['w1', 'weight']:
+                prefix = '.'.join(parts[:-2])
+                w3_key = f'{prefix}.w3.weight' if prefix else 'w3.weight'
+                w13_key = f'{prefix}.w13.weight' if prefix else 'w13.weight'
+                if w3_key in state_dict:
+                    new_sd[w13_key] = torch.cat([v, state_dict[w3_key]], dim=0)
+                    continue
+            new_sd[k] = v
+        return new_sd
 
 
 class MambaSSMWithCAST(MambaSSM):
