@@ -977,6 +977,17 @@ class TransformerModel(nn.Module):
         module = super().to(*args, **kwargs)
         if self._tie_weights:
             self.output_head.weight = self.embedding.weight
+        # 第十四轮：shared_alibi 在 .to(device) 后重新绑定共享
+        # PyTorch _apply 遍历每个 module 独立处理 buffer，会打破 alibi_slopes 的对象共享
+        # （数值仍正确，但失去减参优势）。重新绑定恢复共享关系。
+        if self.shared_alibi_enabled:
+            _shared = None
+            for blk in self.blocks:
+                if hasattr(blk, 'attn') and hasattr(blk.attn, 'alibi_slopes'):
+                    if _shared is None:
+                        _shared = blk.attn.alibi_slopes
+                    else:
+                        blk.attn.alibi_slopes = _shared
         return module
 
     def forward(self, src: torch.Tensor, past_key_values: Optional[List[Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]]]] = None, use_cache: bool = False, intuition: Optional[torch.Tensor] = None, igmcg_force_off: bool = False, temperature: float = 1.0) -> Tuple[torch.Tensor, Optional[List[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]]]]:
@@ -1038,7 +1049,28 @@ class TransformerModel(nn.Module):
         # 第十二轮：层间 SSM 状态传递——跟踪前一个 hybrid 块的输出
         prev_hybrid_x: Optional[torch.Tensor] = None
         # 第十四轮：输入全局高速公路——保存 embedding 输出 x0 供每层门控注入
-        x0 = x if self.input_highway_enabled else None
+        # 增量解码（use_cache=True）时首步缓存 x0（整条 prompt 的 embedding），
+        # 后续步 src 只有 1 个 token，若不缓存会让 input_highway 注入错误内容（单 token embedding）。
+        # 此外，后续步 x shape [B,1,D] 与 x0 shape [B,T_prompt,D] 不匹配，
+        # 直接 broadcast 会让 x 被放大到 [B,T_prompt,D] 破坏后续层——故后续步取 x0 mean-pool 对齐。
+        if self.input_highway_enabled:
+            if use_cache and past_key_values is not None and any(pk is not None for pk in past_key_values):
+                # 增量解码后续步：用首步缓存的 x0，但 mean-pool 到 [B,1,D] 与当前 x [B,1,D] 对齐
+                x0_cached = getattr(self, '_cached_x0', None)
+                if x0_cached is None or x0_cached.shape[0] != x.shape[0]:
+                    x0 = x  # 兜底：缓存丢失，用当前 x
+                else:
+                    # mean-pool prompt 整体信息为单 slot，注入当前 token
+                    x0 = x0_cached.mean(dim=1, keepdim=True)
+            else:
+                # 全量前向或增量解码首步：当前 x 即完整 embedding
+                x0 = x
+                if use_cache:
+                    self._cached_x0 = x.detach()  # 缓存供后续步用（detach 避免长生命周期图）
+        else:
+            x0 = None
+        # 性能优化：input_highway_proj(x0) 预计算一次（x0 在循环中不变），避免每层重复 Linear
+        x0_proj = self.input_highway_proj(x0) if x0 is not None else None
         # 第十四轮：层间对比绑定——训练期累积相邻层余弦相似度损失
         if self.training and self.layer_contrastive_enabled:
             self._contrastive_loss = x.new_zeros(())
@@ -1068,10 +1100,11 @@ class TransformerModel(nn.Module):
             # 第十四轮：输入全局高速公路——embedding 输出 x0 经门控注入当前层
             # gate=sigmoid(W·x+b)，init b=-3 → sigmoid≈0.05（弱注入，训练中自决）
             # SEL 交替训练：_rt_input_highway=False 时跳过
+            # 性能优化：input_highway_proj(x0) 在循环外计算一次（x0 不变），避免每层重复 Linear
             if (self.input_highway_enabled and i > 0
                     and self._rt_input_highway):
                 gate = torch.sigmoid(self.input_highway_gates[i](x))  # (B, T, 1)
-                x = x + gate * self.input_highway_proj(x0)
+                x = x + gate * x0_proj
             # 跨层路由：在 block 处理前注入前层 top-k 加权残差到 x（稀疏+残差+选择性）
             if self.cross_layer_routing and i > 0 and prev_outputs:
                 x = self.cross_router.route(i, x, prev_outputs)
