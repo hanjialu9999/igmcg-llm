@@ -201,6 +201,11 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
         else:
             logits = model(input_ids, igmcg_force_off=_igmcg_off).view(-1, model.vocab_size)
             loss = criterion(logits, target_ids.view(-1))
+        # 第十四轮：层间对比绑定辅助损失——训练期 model._contrastive_loss 累积相邻层 (1-cos_sim)，
+        # 以小权重（0.01）加入主 loss，防止深层过度偏离浅层特征。eval 时不计算（_contrastive_loss=None）。
+        _cl = getattr(model, '_contrastive_loss', None)
+        if _cl is not None:
+            loss = loss + 0.01 * _cl
         # 阶段8.2：复杂度约束（正则项）——把"小模型/提速"从弱乘奖励升级为预算硬约束。
         #  - 旧式弱乘：complexity_lambda>0 且未设 budget → loss += λ·comp（λ=1e-4，量级可忽略）。
         #  - 新式 hinge 预算：设 complexity_budget∈(0,1]（相对 max_complexity 的目标占比）→

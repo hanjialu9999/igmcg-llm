@@ -127,6 +127,10 @@ class ModelConfig:
     # 第十三轮新特性：跨层协作深化
     layer_film: bool = False           # 跨层 FiLM 调制（浅层输出→γ,β 调制深层 input，init 恒等）
     highway_gate: bool = False         # 动态残差门控（input-dependent gate 替代静态 residual_gate）
+    # 第十四轮新特性：跨层协作再深化
+    input_highway: bool = False        # 输入全局高速公路（embedding 输出经门控注入每层，init 弱注入）
+    layer_contrastive: bool = False    # 层间对比绑定（相邻层余弦相似度损失，防深层遗忘浅层特征）
+    shared_alibi: bool = False         # ALiBi 跨层共享（所有层共用同一组斜率，减参+一致位置建模）
 
     # n-gram
     ngram_fusion: bool = False
@@ -224,6 +228,9 @@ class ModelConfig:
             progressive_residual=bool(mc.get('progressive_residual', False)),
             layer_film=bool(mc.get('layer_film', False)),
             highway_gate=bool(mc.get('highway_gate', False)),
+            input_highway=bool(mc.get('input_highway', False)),
+            layer_contrastive=bool(mc.get('layer_contrastive', False)),
+            shared_alibi=bool(mc.get('shared_alibi', False)),
             ngram_fusion=mc.get('ngram_fusion', False),
             ngram_gate_scale=float(mc.get('ngram_gate_scale', 1.0)),
             igmcg=bool(mc.get('igmcg', False)),
