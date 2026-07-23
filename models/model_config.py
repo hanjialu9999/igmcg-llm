@@ -40,6 +40,9 @@ class AttnConfig:
     mixer: str = 'attn'
     linear_attn_feature: str = 'relu'
     linear_attn_head_dim: Optional[int] = None
+    # 第十一轮新特性
+    linear_correction: bool = False  # 线性注意力作"修正项"补主注意力（而非凸组合替代）
+    pe_gate: bool = False            # 位置编码选择性门控（per-head 可学强度）
 
     def __post_init__(self):
         _VALID = {'attn', 'linear', 'linear2d', 'attn_linear', 'hybrid_linear2d', 'diff'}
@@ -113,6 +116,11 @@ class ModelConfig:
     share_ffn: bool = False
     share_norm: bool = False
 
+    # 第十一轮新特性
+    cross_layer_routing: bool = False  # 跨层稀疏路由信息流动（DenseNet 风格 top-k 跳跃连接）
+    cross_layer_topk: int = 2          # 跨层路由每层检索的前层数量
+    qat_bits: int = 0                  # 量化感知训练位宽（0=关闭，8=int8 量化噪声模拟）
+
     # n-gram
     ngram_fusion: bool = False
     ngram_gate_scale: float = 1.0
@@ -162,6 +170,8 @@ class ModelConfig:
             mixer=mc.get('mixer', 'attn'),
             linear_attn_feature=mc.get('linear_attn_feature', 'relu'),
             linear_attn_head_dim=mc.get('linear_attn_head_dim', None),
+            linear_correction=mc.get('linear_correction', False),
+            pe_gate=mc.get('pe_gate', False),
         )
         memory = MemoryConfig(
             size=mc.get('memory_size', 0),
@@ -199,6 +209,9 @@ class ModelConfig:
             share_attn_proj=mc.get('share_attn_proj', False),
             share_ffn=mc.get('share_ffn', False),
             share_norm=mc.get('share_norm', False),
+            cross_layer_routing=mc.get('cross_layer_routing', False),
+            cross_layer_topk=int(mc.get('cross_layer_topk', 2)),
+            qat_bits=int(mc.get('qat_bits', 0)),
             ngram_fusion=mc.get('ngram_fusion', False),
             ngram_gate_scale=float(mc.get('ngram_gate_scale', 1.0)),
             igmcg=bool(mc.get('igmcg', False)),

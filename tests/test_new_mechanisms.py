@@ -1267,3 +1267,344 @@ def test_shared_constants_consistent():
     assert MASK_FILL_VALUE == -1e9
     assert ROPE_BASE == 10000.0
 
+
+# ---------------------------------------------------------------------------
+# product_key 跨块写入顺序 divergence 回归测试（第十轮遗留补齐）
+#
+# 背景：MemoryBank 跨层共享（TransformerModel 单实例传给每个 block）。
+#   - 训练全量前向：block-major（block0.write(T token) → block1.write(T token) → ...）
+#   - 增量解码：token-major（token0: 各 block 逐个 write(1) → token1: 各 block 逐个 write(1) → ...）
+# product_key 路径下 gate=softmax(sim(comp, slots)) 依赖 slots，slots 随写入演化，
+# 两种顺序 slots 演化路径不同 → divergence（已知架构限制，见 memory.py write() 注释）。
+# 非 product_key 路径 gate=softmax(write_gate(x)) 不依赖 slots，update 由加法交换律
+# 顺序无关 → parity 成立（forget_gate parity 修复后含 forget 也成立）。
+# ---------------------------------------------------------------------------
+
+def _cross_block_write_slots(product_key: bool, forget: bool, token_major: bool):
+    """模拟多层共享 MemoryBank 的两种写入顺序，返回最终 slots。
+
+    block-major（训练全量）：每个 block 一次写 T token。
+    token-major（增量解码）：各 block 逐 token 交替写 1 token。
+    使用固定种子 + 相同初始权重，确保两种顺序的差异仅来自写入顺序。
+    """
+    torch.manual_seed(0)
+    D, M, T, n_blocks = 32, 8, 6, 3
+    xs = [torch.randn(1, T, D) * 0.1 for _ in range(n_blocks)]
+    mb = MemoryBank(D, num_slots=M, comp_dim=D, product_key=product_key, forget=forget)
+    mb.reset(1, xs[0].device, xs[0].dtype)
+    if not token_major:
+        for x in xs:
+            mb.write(x)
+    else:
+        for t in range(T):
+            for x in xs:
+                mb.write(x[:, t:t+1, :])
+    return mb.slots.clone()
+
+
+def test_memory_product_key_default_off():
+    """product_key 默认关闭（避免意外启用导致多层 train/infer cross-block divergence）。"""
+    m = _small_memory()
+    assert m.memory_bank.product_key is False, "product_key 应默认关闭"
+
+
+def test_memory_non_product_key_cross_block_parity_no_forget():
+    """非 product_key 无 forget：gate 不依赖 slots，update 纯加法（交换律）→ 跨块顺序无关。"""
+    s_block = _cross_block_write_slots(product_key=False, forget=False, token_major=False)
+    s_token = _cross_block_write_slots(product_key=False, forget=False, token_major=True)
+    diff = (s_block - s_token).abs().max().item()
+    assert diff < 1e-5, f"非 product_key 无 forget 跨块顺序应 parity，slots max_diff={diff}"
+
+
+def test_memory_forget_cross_block_divergence_documented():
+    """forget_gate 跨块顺序 divergence（已知架构限制）回归测试。
+
+    forget 衰减是乘法（slots = f^N·slots_0 + Σ f^{衰减_t}·update_t），衰减系数依赖
+    update 的写入时序位置。乘法不满足交换律：block-major 中 block0 的所有 update 一起
+    经历 block1 的 T 次衰减；token-major 中 block0 的 update_t 只经历后续 token 的衰减。
+    两者各 update 的衰减系数不同 → divergence。与 product_key 同属"跨层共享 MemoryBank
+    + 顺序相关写入门控"导致的已知限制（见 memory.py write() 注释）。
+
+    本测试文档化此限制：断言 divergence 显著存在。若未来改为每层独立 MemoryBank
+    或 forget 按全局位置衰减消除 divergence，应将此测试改为 parity 断言。
+    """
+    s_block = _cross_block_write_slots(product_key=False, forget=True, token_major=False)
+    s_token = _cross_block_write_slots(product_key=False, forget=True, token_major=True)
+    diff = (s_block - s_token).abs().max().item()
+    assert diff > 1e-3, (
+        f"forget_gate 多层预期 cross-block divergence（已知限制），但 slots max_diff={diff} 过小；"
+        f"若已消除 divergence（如每层独立 MemoryBank），请更新此测试为 parity 断言"
+    )
+
+
+def test_memory_product_key_cross_block_divergence_documented():
+    """product_key 多层跨块顺序 divergence（已知架构限制）回归测试。
+
+    gate=softmax(sim(comp, slots)) 依赖 slots，slots 随写入演化。block-major 与
+    token-major 的 slots 演化路径不同 → divergence。本测试文档化此限制：
+    断言 divergence 存在（product_key 有 F.normalize 归一化压缩差异，阈值较低）。
+    若未来实现因果写/同序写消除了 divergence，应将此测试改为 parity 断言。
+    """
+    s_block = _cross_block_write_slots(product_key=True, forget=False, token_major=False)
+    s_token = _cross_block_write_slots(product_key=True, forget=False, token_major=True)
+    diff = (s_block - s_token).abs().max().item()
+    assert diff > 1e-4, (
+        f"product_key 多层预期 cross-block divergence（已知限制），但 slots max_diff={diff} 过小；"
+        f"若已实现同序写消除 divergence，请更新此测试为 parity 断言"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 第十一轮 t3：线性注意力修正模式（linear_correction）
+# 主注意力 h 为基础，线性注意力 lh 提供"修正项"（lh - h），correction_gate 控制强度。
+# ---------------------------------------------------------------------------
+
+def test_linear_correction_param_created():
+    """linear_correction=True + mixer='attn_linear' 时创建 correction_gate 参数。"""
+    m = _small(mixer='attn_linear', linear_correction=True)
+    # attn_linear mixer 下每个 block 都有 correction_gate
+    assert hasattr(m.blocks[0], 'correction_gate'), "linear_correction 未创建 correction_gate"
+    # init -1.0 → sigmoid≈0.27（接近原凸组合默认 0.73h+0.27lh，平滑过渡）
+    assert abs(float(m.blocks[0].correction_gate) - (-1.0)) < 1e-6
+
+
+def test_linear_correction_changes_output():
+    """开启 linear_correction 后输出应与原凸组合路径不同。"""
+    m_corr = _small(mixer='attn_linear', linear_correction=True)
+    m_conv = _small(mixer='attn_linear', linear_correction=False)
+    m_corr.eval(); m_conv.eval()
+    x = torch.randint(0, 200, (2, 8))
+    with torch.no_grad():
+        out_c = m_corr(x)
+        out_v = m_conv(x)
+    assert not torch.allclose(out_c, out_v), "linear_correction 应与凸组合输出不同"
+
+
+def test_linear_correction_backward_flows():
+    """correction_gate 收到梯度（修正强度可学）。"""
+    import torch.nn.functional as F
+    m = _small(mixer='attn_linear', linear_correction=True)
+    m.train()
+    x = torch.randint(0, 200, (2, 8))
+    out = m(x)
+    loss = F.cross_entropy(out.reshape(-1, 200), torch.randint(0, 200, (16,)))
+    loss.backward()
+    assert m.blocks[0].correction_gate.grad is not None, "correction_gate 无梯度（修正强度不可学）"
+
+
+def test_linear_correction_cache_parity():
+    """linear_correction 训练/推理路径数值一致（cache parity）。"""
+    m = _small(mixer='attn_linear', linear_correction=True)
+    m.eval()
+    ids = torch.randint(0, m.vocab_size, (1, 10))
+    with torch.no_grad():
+        full = m(ids, use_cache=False)
+        cached = m(ids, use_cache=True)
+    diff = (_get_logits(full) - _get_logits(cached)).abs().max().item()
+    assert diff < 1e-4, f"linear_correction 训练/推理不一致：max_diff={diff}"
+
+
+# ---------------------------------------------------------------------------
+# 第十一轮 t4：位置编码选择性门控（pe_gate）
+# per-head 可学强度控制 ALiBi 位置偏置（pe_strength = 1.0 + tanh(log_pe_gate)）。
+# ---------------------------------------------------------------------------
+
+def test_pe_gate_param_created():
+    """pe_gate=True + alibi=True 时创建 log_pe_gate 参数（per-head）。"""
+    m = _small(alibi=True, pe_gate=True)
+    assert hasattr(m.blocks[0].attn, 'log_pe_gate'), "pe_gate 未创建 log_pe_gate"
+    # init 0 → tanh(0)=0 → pe_strength=1.0（精确向后兼容）
+    assert m.blocks[0].attn.log_pe_gate.shape[0] == 4  # num_heads=4
+    assert torch.allclose(m.blocks[0].attn.log_pe_gate, torch.zeros(4))
+
+
+def test_pe_gate_changes_output():
+    """开启 pe_gate 后输出应与无 pe_gate 不同（门控可调位置偏置强度）。"""
+    # 用非零初始化的 log_pe_gate 才能看到差异（init 0 → 1.0 完全兼容）
+    m_gate = _small(alibi=True, pe_gate=True)
+    m_no = _small(alibi=True, pe_gate=False)
+    # 把 log_pe_gate 设为非零使 pe_strength≠1.0
+    with torch.no_grad():
+        m_gate.blocks[0].attn.log_pe_gate.fill_(1.0)  # tanh(1)≈0.76 → pe_strength≈1.76
+    m_gate.eval(); m_no.eval()
+    x = torch.randint(0, 200, (2, 8))
+    with torch.no_grad():
+        out_g = m_gate(x)
+        out_n = m_no(x)
+    assert not torch.allclose(out_g, out_n, atol=1e-5), "pe_gate 应改变输出"
+
+
+def test_pe_gate_backward_flows():
+    """log_pe_gate 收到梯度（位置编码强度可学）。"""
+    import torch.nn.functional as F
+    m = _small(alibi=True, pe_gate=True)
+    m.train()
+    x = torch.randint(0, 200, (2, 8))
+    out = m(x)
+    loss = F.cross_entropy(out.reshape(-1, 200), torch.randint(0, 200, (16,)))
+    loss.backward()
+    assert m.blocks[0].attn.log_pe_gate.grad is not None, "log_pe_gate 无梯度（位置编码强度不可学）"
+
+
+def test_pe_gate_init_backward_compatible():
+    """pe_gate=True 但 log_pe_gate=0（init）时，输出与 pe_gate=False 完全一致（向后兼容）。"""
+    m_gate = _small(alibi=True, pe_gate=True)  # log_pe_gate init 0
+    m_no = _small(alibi=True, pe_gate=False)
+    # 共享权重确保差异仅来自 pe_gate 路径
+    m_gate.eval(); m_no.eval()
+    m_no.load_state_dict(m_gate.state_dict(), strict=False)
+    x = torch.randint(0, 200, (2, 8))
+    with torch.no_grad():
+        out_g = m_gate(x)
+        out_n = m_no(x)
+    diff = (out_g - out_n).abs().max().item()
+    assert diff < 1e-6, f"pe_gate init 0 应精确向后兼容，max_diff={diff}"
+
+
+# ---------------------------------------------------------------------------
+# 第十一轮 t5：跨层稀疏路由（cross_layer_routing）
+# DenseNet 风格 top-k 跳跃连接 + 输入相关 sigmoid 门控 + 残差注入。
+# ---------------------------------------------------------------------------
+
+def test_cross_layer_router_param_created():
+    """cross_layer_routing=True 且 num_layers>1 时创建 cross_router。"""
+    m = _small(num_layers=3, cross_layer_routing=True, cross_layer_topk=2)
+    assert hasattr(m, 'cross_router'), "cross_layer_routing 未创建 cross_router"
+    assert m.cross_router.topk == 2
+    # 第 0 层无前层，路由器为 Identity；第 1+ 层为 Linear
+    assert isinstance(m.cross_router.routers[0], torch.nn.Identity)
+    assert isinstance(m.cross_router.routers[1], torch.nn.Linear)
+
+
+def test_cross_layer_routing_changes_output():
+    """开启跨层路由后输出应与无路由不同。"""
+    m_rt = _small(num_layers=3, cross_layer_routing=True, cross_layer_topk=2)
+    m_no = _small(num_layers=3, cross_layer_routing=False)
+    # 把 router bias 设为正数使门控显著（init -3 → sigmoid≈0.05 太弱）
+    with torch.no_grad():
+        for r in m_rt.cross_router.routers:
+            if isinstance(r, torch.nn.Linear):
+                r.bias.fill_(1.0)  # sigmoid(1)≈0.73，明显注入
+    m_rt.eval(); m_no.eval()
+    x = torch.randint(0, 200, (2, 8))
+    with torch.no_grad():
+        out_r = m_rt(x)
+        out_n = m_no(x)
+    assert not torch.allclose(out_r, out_n, atol=1e-5), "跨层路由应改变输出"
+
+
+def test_cross_layer_routing_backward_flows():
+    """路由器参数收到梯度（路由可学）。"""
+    import torch.nn.functional as F
+    m = _small(num_layers=3, cross_layer_routing=True, cross_layer_topk=2)
+    m.train()
+    x = torch.randint(0, 200, (2, 8))
+    out = m(x)
+    loss = F.cross_entropy(out.reshape(-1, 200), torch.randint(0, 200, (16,)))
+    loss.backward()
+    # 第 1+ 层的路由器应有梯度（第 0 层是 Identity 无参数）
+    assert m.cross_router.routers[1].weight.grad is not None, "路由器 weight 无梯度"
+    assert m.cross_router.routers[1].bias.grad is not None, "路由器 bias 无梯度"
+
+
+def test_cross_layer_routing_cache_parity():
+    """跨层路由训练/推理路径数值一致（cache parity）。"""
+    m = _small(num_layers=3, cross_layer_routing=True, cross_layer_topk=2)
+    m.eval()
+    ids = torch.randint(0, m.vocab_size, (1, 8))
+    with torch.no_grad():
+        full = m(ids, use_cache=False)
+        cached = m(ids, use_cache=True)
+    diff = (_get_logits(full) - _get_logits(cached)).abs().max().item()
+    assert diff < 1e-4, f"跨层路由训练/推理不一致：max_diff={diff}"
+
+
+def test_cross_layer_routing_single_layer_noop():
+    """num_layers=1 时不创建 cross_router（单层无前层可路由）。"""
+    m = _small(num_layers=1, cross_layer_routing=True)
+    assert not hasattr(m, 'cross_router'), "单层不应创建 cross_router"
+
+
+# ---------------------------------------------------------------------------
+# 第十一轮 t6：量化感知训练（QAT）
+# LSQ 风格伪量化：训练时量化权重+激活，eval 时恒等。
+# ---------------------------------------------------------------------------
+
+def test_qat_enable_registers_scale():
+    """enable_qat 注册 _qat_scale 参数并标记 _qat_enabled。"""
+    from models.qat import enable_qat, qat_status
+    m = _small()
+    enable_qat(m, bits=8)
+    assert hasattr(m, '_qat_scale'), "QAT 未注册 _qat_scale 参数"
+    assert m._qat_enabled is True
+    status = qat_status(m)
+    assert status['enabled'] is True
+    assert status['bits'] == 8
+
+
+def test_qat_eval_identity():
+    """eval 模式下 QAT 恒等（输出与未量化完全一致）。"""
+    from models.qat import enable_qat
+    m = _small()
+    m.eval()
+    x = torch.randint(0, 200, (2, 8))
+    with torch.no_grad():
+        out_before = m(x)
+    enable_qat(m, bits=8)
+    m.eval()  # 确保 eval 模式
+    with torch.no_grad():
+        out_after = m(x)
+    diff = (out_before - out_after).abs().max().item()
+    assert diff < 1e-7, f"QAT eval 应恒等，max_diff={diff}"
+
+
+def test_qat_training_changes_output():
+    """train 模式下 QAT 注入量化噪声，输出与未量化不同。"""
+    from models.qat import enable_qat
+    m = _small()
+    m.train()
+    x = torch.randint(0, 200, (2, 8))
+    with torch.no_grad():
+        out_no_qat = m(x)
+    enable_qat(m, bits=4)  # 4bit 量化噪声更明显
+    m.train()
+    with torch.no_grad():
+        out_qat = m(x)
+    # 权重和激活被伪量化，输出应有差异
+    assert not torch.allclose(out_no_qat, out_qat, atol=1e-5), "QAT 训练时应改变输出"
+
+
+def test_qat_backward_flows():
+    """QAT 步长 _qat_scale 收到梯度（步长可学）。"""
+    import torch.nn.functional as F
+    from models.qat import enable_qat
+    m = _small()
+    enable_qat(m, bits=8)
+    m.train()
+    x = torch.randint(0, 200, (2, 8))
+    out = m(x)
+    loss = F.cross_entropy(out.reshape(-1, 200), torch.randint(0, 200, (16,)))
+    loss.backward()
+    assert m._qat_scale.grad is not None, "_qat_scale 无梯度（步长不可学）"
+
+
+def test_qat_disable_restores_forward():
+    """disable_qat 恢复原始 forward（移除量化行为）。"""
+    from models.qat import enable_qat, disable_qat
+    m = _small()
+    enable_qat(m, bits=8)
+    assert m._qat_enabled is True
+    disable_qat(m)
+    assert m._qat_enabled is False
+    # eval 模式下应与未量化完全一致
+    m.eval()
+    x = torch.randint(0, 200, (2, 8))
+    m_ref = _small()
+    m_ref.eval()
+    m.load_state_dict(m_ref.state_dict(), strict=False)
+    with torch.no_grad():
+        out1 = m(x)
+        out2 = m_ref(x)
+    diff = (out1 - out2).abs().max().item()
+    assert diff < 1e-7, f"disable_qat 后应恢复原始 forward，max_diff={diff}"
+

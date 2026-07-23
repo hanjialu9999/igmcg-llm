@@ -120,7 +120,8 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
                  qk_norm: bool = True, attn_temp: bool = True, mask_fill_value: float = MASK_FILL_VALUE,
                  rope_learnable: bool = False, alibi: bool = False, retrieval_full: bool = False,
                  retrieval_topk: int = 32, learn_window: bool = False, window_base: int = 64,
-                 shared_qkv: Optional[nn.Linear] = None, shared_proj: Optional[nn.Linear] = None):
+                 shared_qkv: Optional[nn.Linear] = None, shared_proj: Optional[nn.Linear] = None,
+                 pe_gate: bool = False):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
@@ -149,6 +150,14 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
             # 头斜率（固定、不可学，符合 ALiBi 原设计）；短序列也安全
             m = torch.tensor([2.0 ** (-(h + 1) / num_heads * 8.0) for h in range(num_heads)])
             self.register_buffer('alibi_slopes', m, persistent=False)
+        # 第十一轮：位置编码选择性门控——per-head 可学强度控制 ALiBi 位置偏置。
+        # pe_strength = 1.0 + tanh(log_pe_gate)，init 0 → 1.0（精确向后兼容），范围 (0,2)。
+        # 让模型自决每个头对位置信息的依赖：某些头更靠内容、某些头更靠位置。
+        # 当前仅作用于 ALiBi（每次前向重算，梯度正确回流）；rel_bias 因 _build_masks
+        # 缓存机制暂不支持 pe_gate（避免缓存导致梯度截断）。
+        self.pe_gate_enabled = pe_gate and alibi
+        if self.pe_gate_enabled:
+            self.log_pe_gate = nn.Parameter(torch.zeros(num_heads))
         # ① QK-Norm：对 Q/K 各自做 RMSNorm 后再进注意力，与 RoPE 互补、稳定训练（默认开）
         self.qk_norm_enabled = qk_norm
         if qk_norm:
@@ -229,6 +238,10 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         if mem_cols > 0:
             bias = bias.clone()
             bias[..., :mem_cols] = 0
+        if self.pe_gate_enabled:
+            # per-head 位置编码强度门控：1.0+tanh(log_pe_gate)，init 1.0（不变）
+            pe_strength = (1.0 + torch.tanh(self.log_pe_gate)).view(1, -1, 1, 1).to(bias.device)
+            bias = bias * pe_strength
         return bias
 
     def _full_retrieval_bias(self, q: torch.Tensor, k_full: torch.Tensor, Treal: int, mem_cols: int,

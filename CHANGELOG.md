@@ -9,6 +9,17 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
+## `（本地，基于 `76a431d`，待推送，第十一轮 4 新特性 + product_key 回归 + 6 想法评估）
+
+- feat: **线性注意力修正模式（linear_correction）**——`models/transformer.py` TransformerBlock 新增修正模式：主注意力 h 为基础，线性注意力 lh 提供"修正项"（lh - h），`h = h + sigmoid(correction_gate) * (lh - h)`。correction_gate init -1.0（sigmoid≈0.27）平滑过渡。相比原凸组合（mg·h+(1-mg)·lh），修正模式保留主注意力主体地位，线性注意力仅补充差异。config: `attn.linear_correction`。
+- feat: **位置编码选择性门控（pe_gate）**——`models/mixers.py` SlidingWindowCausalSelfAttention 新增 per-head 可学强度控制 ALiBi 位置偏置：`pe_strength = 1.0 + tanh(log_pe_gate)`，init 0 → 1.0（精确向后兼容），范围 (0,2)。让模型自决每个头对位置信息的依赖。config: `attn.pe_gate`（需 alibi=True）。
+- feat: **跨层稀疏路由（cross_layer_routing）**——`models/transformer.py` 新增 CrossLayerRouter 类（DenseNet 风格 top-k 跳跃连接）。每层 j 拥有路由器 Linear(D,1)，对前 j 层输出打分，选 top-k 个最高分前层，按 sigmoid(score) 加权累加注入当前层输入 x（残差+稀疏+选择性+输入相关）。init bias=-3（sigmoid≈0.05，弱注入不破坏预训练）。config: `cross_layer_routing` + `cross_layer_topk`。
+- feat: **量化感知训练 QAT（qat_bits）**——`models/qat.py` 新模块：LSQ 风格可学习步长伪量化。前向 round+clip 量化权重+激活，反向 STE(x) + LSQ(scale) 梯度直通。共享可学习步长（per-tensor，1 标量参数）。eval 时恒等（推理无开销）。monkey-patch Linear.forward 不破坏 state_dict。`scripts/train.py` 集成：config.model.qat_bits>0 时启用。config: `qat_bits`（0=关闭，4/8=对应位宽）。
+- test: **product_key/forget 跨块 divergence 回归测试**——`tests/test_new_mechanisms.py` 新增 4 测试：(1) product_key 默认关；(2) 非 product_key 无 forget 跨块 parity；(3) forget_gate 跨块 divergence 文档化（新发现：forget 衰减乘法不满足交换律）；(4) product_key 跨块 divergence 文档化。`models/memory.py` write() 注释补充 forget 跨块 divergence 根因分析。
+- test: **18 个新特性单元测试**——t3 linear_correction（4 测试：参数创建/输出变化/梯度回流/cache parity）；t4 pe_gate（4 测试：参数创建/输出变化/梯度回流/init 向后兼容）；t5 cross_layer_routing（5 测试：参数创建/输出变化/梯度回流/cache parity/单层 noop）；t6 QAT（5 测试：参数注册/eval 恒等/训练改变输出/梯度回流/disable 恢复）。pytest **225 passed / 1 skipped**（较基线 203 + 22）。
+- eval: **6 个创新想法可行性评估**——(1) Memory-Gated MoE：中高可行性，高收益，需专门训练调参（未来工作）；(2) 跨层记忆层级：已部分被 cross_layer_routing 覆盖；(3) SSM 状态作隐式记忆：高可行性低成本（~40行），但 inject_memory 形状耦合需谨慎（待实施）；(4) n-gram 触发定向检索：中可行性，n-gram+memory 耦合（未来工作）；(5) DifferentialMemory：中可行性，数值不稳定风险（未来工作）；(6) 自适应计算深度：已部分被 layer_skip + prune_layers 覆盖。
+- smoke: **全特性训练验证**——4 新特性全开（linear_correction+pe_gate+cross_layer_routing+QAT 8bit）小模型 30 步训练：loss 5.30→5.29（下降），cache parity diff=0.00e+00（完美一致），QAT status 正确（scale=0.000157, qmax=127）。
+
 ## `（本地，基于 `f7bed96`，待推送，第十轮 fused SDPA + forget parity + 去重 + 创新想法）
 
 - perf: **DML fused SDPA 全面启用（~22x 训练提速）**——`models/mixers.py` 原注释称 DML fused SDPA 崩溃，实测 torch 2.4.1 + torch_directml 0.2.5 已稳定可用。关键发现：DML bool attn_mask 语义与 PyTorch 标准相反（True=允许≠禁止），但 float attn_mask 与 is_causal=True 正确。全路径改用 fused SDPA（纯因果用 is_causal=True，有偏置用 float attn_mask）。训练速度 1500ms/step → 68ms/step（~22x），删除 .item() 同步后 54.9ms/step。pytest 203 passed。

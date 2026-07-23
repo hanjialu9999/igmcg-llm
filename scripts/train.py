@@ -386,7 +386,15 @@ def main(config_path='configs/pretrain.yaml', resume=False):
                 print("torch.compile 已启用（梯度检查点已关闭；编译失败会自动回退 eager）")
             except Exception as e:
                 print(f"[警告] torch.compile 初始化失败，回退普通模型: {e}")
-    
+
+    # 第十一轮：量化感知训练（QAT）——config.model.qat_bits>0 时启用伪量化，
+    # 让模型在训练时学适应量化噪声，便于后续低比特部署。eval 时自动恒等。
+    _qat_bits = int(config.get('model', {}).get('qat_bits', 0) or 0)
+    if _qat_bits > 0:
+        from models.qat import enable_qat
+        enable_qat(model, bits=_qat_bits)
+        print(f"[QAT] 已启用 {_qat_bits}bit 量化感知训练（权重+激活双量化，eval 恒等）")
+
     # Count parameters
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)

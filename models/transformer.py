@@ -41,9 +41,10 @@ class TransformerBlock(nn.Module):
                  skip: bool = False, mixer: str = 'attn',
                  hybrid_single_gate: bool = False,
                  shared_qkv: Optional[nn.Linear] = None,
-                 shared_proj: Optional[nn.Linear] = None,
-                 shared_ffn: Optional[SwiGLU] = None,
-                 shared_lns: Optional[Tuple[RMSNorm, RMSNorm]] = None):
+             shared_proj: Optional[nn.Linear] = None,
+             shared_ffn: Optional[SwiGLU] = None,
+             shared_lns: Optional[Tuple[RMSNorm, RMSNorm]] = None,
+             linear_correction: bool = False):
         super().__init__()
         self.block_type = block_type
         self.drop = nn.Dropout(dropout)
@@ -55,6 +56,13 @@ class TransformerBlock(nn.Module):
         # 运行时增强开关（按开关粒度，用于"交替/分段增强"训练）：默认全开
         self._rt: Dict[str, bool] = {"residual_gate": True, "hybrid_gate": True}
         self.gradient_checkpointing = gradient_checkpointing
+        # 第十一轮：线性注意力修正模式——主注意力为基础，线性注意力输出"修正项"
+        # 补主注意力遗漏（而非凸组合替代）。默认关（linear_correction=False 走原凸组合）。
+        self.linear_correction_enabled = linear_correction
+        if linear_correction and mixer == 'attn_linear':
+            # init -1.0（sigmoid≈0.27）使初始修正行为接近原凸组合默认（mixer_gate init 1.0
+            # → sigmoid≈0.73 → 0.73h+0.27lh），开启时平滑过渡，训练中自决修正强度。
+            self.correction_gate = nn.Parameter(torch.tensor(-1.0))
         # Both attn and ssm blocks need a pre-norm layer
         if shared_lns is not None:
             self.ln1, self.ln2 = shared_lns
@@ -189,10 +197,20 @@ class TransformerBlock(nn.Module):
             else:
                 h, present = self.attn(xn, attn_past_kv, use_cache, start_pos, memory_kv=mem_kv)
         if self.linear_attn is not None:
-            # 阶段7：混合 mixer（attn + 线性注意力并行），mixer_gate 自选择比例
+            # 阶段7：混合 mixer（attn + 线性注意力并行）
             lh, lpresent = self.linear_attn(xn, attn_past_kv, use_cache, start_pos, memory_kv=mem_kv)
-            mg = torch.sigmoid(self.mixer_gate)
-            h = mg * h + (1.0 - mg) * lh
+            if self.linear_correction_enabled:
+                # 第十一轮：线性注意力修正模式——主注意力 h 为基础，线性注意力 lh 提供
+                # "修正项"（lh - h 是线性注意力捕捉到、主注意力遗漏的部分）。correction_gate
+                # init 0（sigmoid≈0.5 但 gate=0 时 h 不变，向后兼容）；训练中自决修正强度。
+                # 相比原凸组合（mg·h+(1-mg)·lh），修正模式保留主注意力的主体地位，线性注意力
+                # 仅补充差异，避免线性注意力噪声主导。
+                cg = torch.sigmoid(self.correction_gate)
+                h = h + cg * (lh - h)
+            else:
+                # 原凸组合：mixer_gate 自选择 attn/linear 比例
+                mg = torch.sigmoid(self.mixer_gate)
+                h = mg * h + (1.0 - mg) * lh
             if use_cache and lpresent is not None:
                 # 两路 KV 缓存合并：把线性注意力状态 S 和分母累积 z 塞进 attn_kv 元组
                 # (k, v, linear_S, z_final)，保持块级 (attn_kv, ssm_state, ssm_conv_state) 三元组不变。
@@ -314,6 +332,74 @@ def _parse_layer_plan(layer_plan: Optional[List[str] | str], num_layers: int) ->
     return parts
 
 
+class CrossLayerRouter(nn.Module):
+    """跨层稀疏路由信息流动（DenseNet 风格 top-k 跳跃连接 + 输入相关门控）。
+
+    每层 j 拥有路由器 W_j: Linear(D, 1)，对前 j 层的输出 h_i 打分（基于 h_i 的
+    token-mean），选 top-k 个最高分前层，按 sigmoid(score) 加权累加注入当前层输入 x。
+
+    特性（用户要求）：
+      - 稀疏：top-k 选择（k < num_layers），仅 k 个前层参与（非全连接 DenseNet）
+      - 残差：routed 加到 x 上（x + routed/k），保留原信息流，不替换
+      - 选择性：sigmoid 门控，模型自决每层多借前层信息（gate∈(0,1)）
+      - 输入相关：路由分数依赖前层输出 h_i（不同输入不同路由路径）
+
+    参数量：每层 D+1 个（router weight + bias），共 O(L*D)。
+    init: weight=0, bias=-3 → sigmoid(-3)≈0.05，弱初始注入（不破坏预训练行为），
+    训练中 router 自决是否增大门控（拉高 bias 或调 weight）。
+    """
+
+    def __init__(self, dim: int, num_layers: int, topk: int = 2):
+        super().__init__()
+        self.dim = dim
+        self.num_layers = num_layers
+        self.topk = max(1, min(topk, num_layers - 1))
+        # 每层一个路由器；第 0 层无前层，用 Identity 占位保持索引对齐
+        self.routers = nn.ModuleList([
+            nn.Linear(dim, 1, bias=True) if i > 0 else nn.Identity()
+            for i in range(num_layers)
+        ])
+        # init: weight=0 + bias=-3 → score=-3 → sigmoid≈0.05（弱初始注入）
+        for r in self.routers:
+            if isinstance(r, nn.Linear):
+                nn.init.zeros_(r.weight)
+                nn.init.constant_(r.bias, -3.0)
+
+    def route(self, layer_idx: int, x: torch.Tensor,
+              prev_outputs: List[torch.Tensor]) -> torch.Tensor:
+        """对当前层输入 x 注入跨层路由残差（稀疏 top-k + sigmoid 门控 + 残差加法）。
+
+        Args:
+            layer_idx: 当前层索引（0-indexed；0 层无前层直接返回 x）
+            x: (B, T, D) 当前层输入
+            prev_outputs: 之前所有层的输出列表（长度 = layer_idx）
+
+        Returns:
+            (B, T, D) 注入路由残差后的新 x（x + mean(gates * selected) / k）
+        """
+        if layer_idx == 0 or not prev_outputs:
+            return x
+        router = self.routers[layer_idx]
+        # 批量堆叠前层输出：(B, num_prev, T, D)
+        prev_stack = torch.stack(prev_outputs, dim=1)
+        B, num_prev, T, D = prev_stack.shape
+        # token-mean 表示每层输出特征：(B, num_prev, D)
+        prev_mean = prev_stack.mean(dim=2)
+        # 路由打分：(B, num_prev, D) -> (B, num_prev, 1) -> (B, num_prev)
+        scores = router(prev_mean).squeeze(-1)
+        # top-k 稀疏选择
+        k = min(self.topk, num_prev)
+        topk_vals, topk_idx = torch.topk(scores, k, dim=-1)  # (B, k)
+        # sigmoid 选择性门控
+        gates = torch.sigmoid(topk_vals)  # (B, k)
+        # gather 选中的前层输出：(B, k, T, D)
+        idx_exp = topk_idx.view(B, k, 1, 1).expand(-1, -1, T, D)
+        selected = torch.gather(prev_stack, dim=1, index=idx_exp)
+        # 加权求和后除以 k 归一化（保持 magnitude 不随 k 爆炸）
+        routed = (selected * gates.view(B, k, 1, 1)).sum(dim=1) / k  # (B, T, D)
+        return x + routed
+
+
 class TransformerModel(nn.Module):
     """现代 decoder-only 语言模型（Pre-LN + RMSNorm + RoPE + SwiGLU + 权重共享）。
 
@@ -356,12 +442,16 @@ class TransformerModel(nn.Module):
                    mixer: str = 'attn',
                    linear_attn_feature: str = 'relu',
                    linear_attn_head_dim: Optional[int] = None,
+                   pe_gate: bool = False,
                    ngram_fusion: bool = False, ngram_model=None,
                    ngram_gate_scale: float = 1.0, igmcg: bool = False,
                    share_attn_proj: bool = False,
                    share_ffn: bool = False,
                    share_norm: bool = False,
-                   ssm_type: str = 'standard'):
+                   ssm_type: str = 'standard',
+                   linear_correction: bool = False,
+                   cross_layer_routing: bool = False,
+                   cross_layer_topk: int = 2):
         super(TransformerModel, self).__init__()
 
         self.vocab_size = vocab_size
@@ -432,7 +522,8 @@ class TransformerModel(nn.Module):
                            retrieval_topk=memory_retrieval_topk,
                            learn_window=learn_window, window_base=window_base,
                            linear_attn_feature=linear_attn_feature,
-                           linear_attn_head_dim=linear_attn_head_dim)
+                           linear_attn_head_dim=linear_attn_head_dim,
+                           pe_gate=pe_gate)
         # 层间共享 attention projection（share_attn_proj=True）：
         # 各层复用同一组 QKV + Output 投影参数，减少 ~40% 参数量并起正则化作用。
         # 仅影响 attn/linear 混合器（SSM/FFN/Memory 参数保持独立）。
@@ -459,7 +550,8 @@ class TransformerModel(nn.Module):
                              gradient_checkpointing=gradient_checkpointing,
                              skip=layer_skip, mixer=mixer,
                              shared_qkv=_shared_qkv, shared_proj=_shared_proj,
-                             shared_ffn=_shared_ffn, shared_lns=_shared_lns)
+                             shared_ffn=_shared_ffn, shared_lns=_shared_lns,
+                             linear_correction=linear_correction)
             for bt in self.layer_plan
         ])
         self.ln_f = RMSNorm(embedding_dim)
@@ -474,6 +566,12 @@ class TransformerModel(nn.Module):
                 head_dim=embedding_dim // num_heads, dropout=dropout,
                 retrieval=memory_retrieval, sparse_topk=memory_sparse_topk,
                 forget=memory_forget, product_key=memory_product_key)
+        # 第十一轮：跨层稀疏路由信息流动（DenseNet 风格 top-k 跳跃连接）
+        self.cross_layer_routing = cross_layer_routing
+        self.cross_layer_topk = cross_layer_topk
+        if cross_layer_routing and num_layers > 1:
+            self.cross_router = CrossLayerRouter(embedding_dim, num_layers,
+                                                 topk=min(cross_layer_topk, num_layers - 1))
         # 权重初始化（_init_weights 遍历所有 Linear 用 N(0,0.02)，再对 SSM 调 proper_init 覆盖）
         self._init_weights()
 
@@ -527,6 +625,7 @@ class TransformerModel(nn.Module):
             mixer=cfg.attn.mixer,
             linear_attn_feature=cfg.attn.linear_attn_feature,
             linear_attn_head_dim=cfg.attn.linear_attn_head_dim,
+            pe_gate=cfg.attn.pe_gate,
             ngram_fusion=cfg.ngram_fusion,
             ngram_model=ngram_model,
             ngram_gate_scale=cfg.ngram_gate_scale,
@@ -535,6 +634,9 @@ class TransformerModel(nn.Module):
             share_ffn=cfg.share_ffn,
             share_norm=cfg.share_norm,
             ssm_type=cfg.ssm.ssm_type,
+            linear_correction=cfg.attn.linear_correction,
+            cross_layer_routing=cfg.cross_layer_routing,
+            cross_layer_topk=cfg.cross_layer_topk,
         )
 
     def set_enhancements_active(self, spec):
@@ -716,16 +818,27 @@ class TransformerModel(nn.Module):
                         blk.attn._bias_key = None
                         blk.attn._cached_T = -1
 
+        # 第十一轮：跨层稀疏路由——收集每层输出供后续层 top-k 路由（残差注入）。
+        # 仅 cross_layer_routing=True 且 num_layers>1 时启用（cross_router 已在 __init__ 创建）。
+        prev_outputs: List[torch.Tensor] = [] if self.cross_layer_routing else []
         for i, block in enumerate(self.blocks):
             if (not self.training) and getattr(self, '_pruned_layers', None) and i in self._pruned_layers:
                 presents.append(block_states[i])
+                # pruned 层输出 = 输入（x 不变），作为下一层路由候选保留
+                if self.cross_layer_routing:
+                    prev_outputs.append(x)
                 continue
+            # 跨层路由：在 block 处理前注入前层 top-k 加权残差到 x（稀疏+残差+选择性）
+            if self.cross_layer_routing and i > 0 and prev_outputs:
+                x = self.cross_router.route(i, x, prev_outputs)
             ssm_past_state = ssm_states[i] if use_cache else None
             ssm_past_conv_state = ssm_conv_states[i] if use_cache else None
             # block 内部仍用旧元组接口（TransformerBlock.forward 未改），传入 block_states[i].to_tuple()
             x, present = block(x, block_states[i].to_tuple() if block_states[i] is not None else None,
                                use_cache, start_pos, ssm_past_state, ssm_past_conv_state, memory)
             presents.append(BlockState.from_tuple(present))
+            if self.cross_layer_routing:
+                prev_outputs.append(x)
         x = self.ln_f(x)
         # 阶段8.1：n-gram 神经融合——z_neural + g_t·ngram_vec。ngram_vec 是固定统计缓冲
         # （.detach() 不引梯度，主干 z_neural 仍吃完整 CE 梯度、不被缩放 → 不塌缩）。
