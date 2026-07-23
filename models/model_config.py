@@ -57,10 +57,11 @@ class AttnConfig:
             self.mixer = 'attn_linear'
         if self.mixer not in _VALID:
             raise ValueError(f"未知 mixer='{self.mixer}'，可选 {_VALID}")
-        # MLA 仅支持标准 attn 系 mixer（DifferentialAttention 不接受 use_mla_kv 参数）
-        if self.use_mla_kv and self.mixer not in {'attn', 'attn_linear', 'hybrid_linear2d'}:
+        # MLA 仅支持标准 attn 系 mixer：DifferentialAttention 和 AxialLinearAttention
+        # （hybrid_linear2d）不接受 use_mla_kv 参数，传入会静默忽略 MLA 配置
+        if self.use_mla_kv and self.mixer not in {'attn', 'attn_linear'}:
             raise ValueError(
-                f"use_mla_kv=True 仅支持 mixer in {{'attn','attn_linear','hybrid_linear2d'}}，"
+                f"use_mla_kv=True 仅支持 mixer in {{'attn','attn_linear'}}，"
                 f"当前 mixer='{self.mixer}' 不支持 MLA KV 压缩")
 
 
