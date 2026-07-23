@@ -33,8 +33,6 @@ class AttnConfig:
     attn_temp: bool = True
     rope_learnable: bool = False
     alibi: bool = False
-    retrieval_full: bool = False
-    retrieval_topk: int = 32
     learn_window: bool = False
     window_base: int = 64
     mixer: str = 'attn'
@@ -174,8 +172,6 @@ class ModelConfig:
             attn_temp=mc.get('attn_temp', True),
             rope_learnable=mc.get('rope_learnable', False),
             alibi=mc.get('alibi', False),
-            retrieval_full=mc.get('memory_retrieval_full', False),
-            retrieval_topk=mc.get('memory_retrieval_topk', 32),
             learn_window=mc.get('learn_window', False),
             window_base=mc.get('window_base', 64),
             mixer=mc.get('mixer', 'attn'),

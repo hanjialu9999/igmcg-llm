@@ -169,10 +169,6 @@
 | standard | 标准 MambaSSM（静态 A） |
 | cast | CAST 增强（上下文动态调制 A） |
 
-### 位置感知特征映射
-- AxialLinearAttention 支持 `enable_pos_aware_feat()`，每个网格位置独立的 elu/reLU 混合比例
-- 零初始化→初始行为等价于标准特征映射
-
 ## 23. ModelConfig schema 重构（2026-07-21，commit ea60f73）
 
 ### 改动
