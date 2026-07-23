@@ -9,6 +9,12 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
+## `（本地，基于 `4e9e8f3`，待推送，第十六轮：Gate 抽象统一 + 代码债清理）
+
+- refactor: **Gate 抽象统一**——新建 `models/gates.py`，定义 `GateConfig` dataclass + 6 个工具函数（`apply_direct`/`apply_sigmoid_scalar`/`apply_linear_gate`/`convex_combine_scalar`/`convex_combine_linear`/`apply_correction`）。`TransformerBlock.__init__` 的 6 个散落 bool 门控参数（`residual_gate`/`hybrid_gate`/`skip`/`hybrid_single_gate`/`linear_correction`/`highway_gate`）收口为单一 `gate_cfg: GateConfig` 参数，__init__ 签名从 20 个参数精简到 15 个。`forward` 中散乱的 `if gate is not None` 分支统一用工具函数替代。**参数注册方式不变，state_dict 100% 兼容**。
+- test: **新增 13 个 Gate 抽象回归测试**——覆盖 GateConfig 默认值/from_kwargs 兼容、6 个工具函数的 None passthrough 和数值正确性、gate_cfg 构造与默认构造的 state_dict key 一致性、highway_gate 互斥约束、全特性前向+反向。pytest **317 passed / 1 skipped**（+13）。
+- review: **子代理独立审查确认无 bug**——行为等价性（apply_direct/convex_combine/apply_correction 与原内联表达式完全一致）、state_dict 兼容性（参数注册方式未变）、专用初始化正确引用 gate_cfg 属性。
+
 ## `（本地，基于 `d21464b`，待推送，第十五轮：新架构特性 + 性能优化 + 代码债清理）
 
 - feat: **Gated DeltaNet（delta rule + α/β 门控）**——`models/mixers.py` 新增 `GatedDeltaNet` 类（继承 `LinearMixerBase`），递推改为 `S_t = α_t·S_{t-1} + β_t·(v_t - S_{t-1}·k_t)⊗k_t`（gated delta rule），替代 LinearAttention 的纯加法更新。α/β 门控 per-head per-token 由输入 x 经线性+sigmoid 决定（init W=0, bias α=-2/β=2 → sigmoid 0.12/0.88 弱遗忘强写入起步）。k L2 归一化保证 delta rule 谱半径<1。config: `mixer='gated_delta'`。灵感：Gated DeltaNet (ICLR 2025) + Qwen3-Next + Kimi KDA。

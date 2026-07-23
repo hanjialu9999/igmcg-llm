@@ -35,7 +35,7 @@ scripts/         入口与数据处理
 configs/         所有 YAML 配置 (pretrain.yaml 为规范默认；dml_* / hybrid_* 为变体)
 experiments/     实验 / 诊断 / 一次性脚本 (原根目录 _*.py，可独立运行，自带路径修正)
 tools/           检查与监控工具 (view_model / compare_epochs / dialogue / dialogue_interactive / monitor/ ...)
-tests/           正式 pytest 单元测试（已纳入 git 跟踪）：test_config_loader.py / test_transformer.py / test_generation_pipeline.py / test_new_mechanisms.py 等（当前 299 passed / 1 skipped）
+tests/           正式 pytest 单元测试（已纳入 git 跟踪）：test_config_loader.py / test_transformer.py / test_generation_pipeline.py / test_new_mechanisms.py 等（当前 317 passed / 1 skipped）
 test/            本地自测沙箱（gitignore，仅本机运行，不入库）
 data/            语料 (pretrain_corpus/) 与数据集 (datasets/)
 logs/            运行日志
