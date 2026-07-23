@@ -474,7 +474,7 @@ class TransformerModel(nn.Module):
     # 可分段 SEL 交替的开关），供 train.py 的 enhancement_schedule 与测试派生，
     # 避免键名清单散落多处漂移。
     ENHANCEMENT_KEYS = ("qk_norm", "attn_temp", "residual_gate", "hybrid_gate",
-                        "layer_film", "highway_gate")
+                        "layer_film", "highway_gate", "input_highway")
 
     def __init__(self, vocab_size: int, embedding_dim: int, num_heads: int, num_layers: int,
                  hidden_dim: int, max_seq_length: int, dropout: float = 0.0, tie_weights: bool = True,
@@ -520,7 +520,10 @@ class TransformerModel(nn.Module):
                    cross_ssm_transfer: bool = False,
                    progressive_residual: bool = False,
                    layer_film: bool = False,
-                   highway_gate: bool = False):
+                   highway_gate: bool = False,
+                   input_highway: bool = False,
+                   layer_contrastive: bool = False,
+                   shared_alibi: bool = False):
         super(TransformerModel, self).__init__()
 
         self.vocab_size = vocab_size
@@ -625,6 +628,16 @@ class TransformerModel(nn.Module):
                              highway_gate=highway_gate)
             for bt in self.layer_plan
         ])
+        # 第十四轮：ALiBi 跨层共享——所有注意力层共用第一层的 alibi_slopes buffer
+        # 减参（num_layers→1 组斜率）+ 确保跨层位置建模一致
+        if shared_alibi and alibi:
+            _shared_slopes = None
+            for blk in self.blocks:
+                if hasattr(blk, 'attn') and hasattr(blk.attn, 'alibi_slopes'):
+                    if _shared_slopes is None:
+                        _shared_slopes = blk.attn.alibi_slopes
+                    else:
+                        blk.attn.alibi_slopes = _shared_slopes
         self.ln_f = RMSNorm(embedding_dim)
         self.output_head = nn.Linear(embedding_dim, vocab_size, bias=False)
         self._tie_weights = tie_weights
@@ -669,6 +682,24 @@ class TransformerModel(nn.Module):
         self.highway_gate = highway_gate
         # SEL 交替训练：layer_film 模型级开关（默认 True，由 set_enhancements_active 切换）
         self._rt_layer_film = self.layer_film_enabled
+        # 第十四轮：输入全局高速公路——embedding 输出 x0 经门控注入每层
+        # input_highway_proj: Linear(D, D) 投影 x0；input_highway_gates[i]: Linear(D, 1) 逐层门控
+        # init: proj weight=0（弱注入），gate bias=-3（sigmoid≈0.05，开始几乎不影响）
+        self.input_highway_enabled = input_highway and num_layers > 1
+        self._rt_input_highway = self.input_highway_enabled
+        if self.input_highway_enabled:
+            self.input_highway_proj = nn.Linear(embedding_dim, embedding_dim, bias=False)
+            self.input_highway_gates = nn.ModuleList([
+                nn.Linear(embedding_dim, 1) if i > 0 else nn.Identity()
+                for i in range(num_layers)
+            ])
+        # 第十四轮：层间对比绑定——训练期计算相邻层余弦相似度损失，防深层遗忘浅层特征
+        # 损失存入 self._contrastive_loss（训练循环可加到主 loss）；eval 时不计算
+        self.layer_contrastive_enabled = layer_contrastive and num_layers > 1
+        self._contrastive_loss = None
+        # 第十四轮：ALiBi 跨层共享——所有注意力层共用同一组 alibi_slopes（减参+一致位置建模）
+        # 在 block 创建后统一绑定（见下方 blocks 构建完毕后的 shared_alibi 处理）
+        self.shared_alibi_enabled = shared_alibi and alibi
         # 权重初始化（_init_weights 遍历所有 Linear 用 N(0,0.02)，再对 SSM 调 proper_init 覆盖）
         self._init_weights()
         # 专用初始化必须在 _init_weights 之后重新应用（否则被通用 N(0,0.02)/zeros 覆盖）：
@@ -747,17 +778,23 @@ class TransformerModel(nn.Module):
             progressive_residual=cfg.progressive_residual,
             layer_film=cfg.layer_film,
             highway_gate=cfg.highway_gate,
+            input_highway=cfg.input_highway,
+            layer_contrastive=cfg.layer_contrastive,
+            shared_alibi=cfg.shared_alibi,
         )
 
     def set_enhancements_active(self, spec):
         """运行时开关（按开关粒度）：`spec=True/False` 全开/全关；`spec=dict` 按键更新。
         用于"交替/分段增强"训练（关闭则跳过对应增强，恒等）。"""
-        # 模型级特性（layer_film）开关
+        # 模型级特性（layer_film / input_highway）开关
         if isinstance(spec, bool):
             self._rt_layer_film = spec and self.layer_film_enabled
+            self._rt_input_highway = spec and self.input_highway_enabled
         elif isinstance(spec, dict):
             if 'layer_film' in spec:
                 self._rt_layer_film = bool(spec['layer_film']) and self.layer_film_enabled
+            if 'input_highway' in spec:
+                self._rt_input_highway = bool(spec['input_highway']) and self.input_highway_enabled
         # 块级特性（residual_gate/hybrid_gate/highway_gate/qk_norm/attn_temp）开关
         for blk in self.blocks:
             blk.set_enhancements_active(spec)
@@ -920,6 +957,15 @@ class TransformerModel(nn.Module):
                 if hasattr(blk, 'ffn_highway'):
                     nn.init.zeros_(blk.ffn_highway.weight)
                     nn.init.constant_(blk.ffn_highway.bias, bias_val)
+        # 第十四轮：input_highway 专用初始化
+        # proj weight=0（弱注入，开始时 proj(x0)=0 不影响模型）
+        # gate bias=-3（sigmoid≈0.05，逐层逐渐学习该注入多少原始信号）
+        if self.input_highway_enabled:
+            nn.init.zeros_(self.input_highway_proj.weight)
+            for gate in self.input_highway_gates:
+                if isinstance(gate, nn.Linear):
+                    nn.init.zeros_(gate.weight)
+                    nn.init.constant_(gate.bias, -3.0)
 
     def tie_weights(self):
         """重新绑定 output_head 和 embedding 的权重（在 .to(device) 后调用以确保共享生效）。"""
@@ -991,6 +1037,15 @@ class TransformerModel(nn.Module):
         prev_outputs: List[torch.Tensor] = [] if self.cross_layer_routing else []
         # 第十二轮：层间 SSM 状态传递——跟踪前一个 hybrid 块的输出
         prev_hybrid_x: Optional[torch.Tensor] = None
+        # 第十四轮：输入全局高速公路——保存 embedding 输出 x0 供每层门控注入
+        x0 = x if self.input_highway_enabled else None
+        # 第十四轮：层间对比绑定——训练期累积相邻层余弦相似度损失
+        if self.training and self.layer_contrastive_enabled:
+            self._contrastive_loss = x.new_zeros(())
+            _prev_layer_out = x.detach()
+        else:
+            self._contrastive_loss = None
+            _prev_layer_out = None
         for i, block in enumerate(self.blocks):
             if (not self.training) and getattr(self, '_pruned_layers', None) and i in self._pruned_layers:
                 presents.append(block_states[i])
@@ -1010,6 +1065,13 @@ class TransformerModel(nn.Module):
                 # tanh 限制 gamma∈(-1,1) → x*(1+γ)∈(0, 2x)，防止深层堆叠数值爆炸
                 gamma = torch.tanh(gamma)
                 x = x * (1.0 + gamma) + beta
+            # 第十四轮：输入全局高速公路——embedding 输出 x0 经门控注入当前层
+            # gate=sigmoid(W·x+b)，init b=-3 → sigmoid≈0.05（弱注入，训练中自决）
+            # SEL 交替训练：_rt_input_highway=False 时跳过
+            if (self.input_highway_enabled and i > 0
+                    and self._rt_input_highway):
+                gate = torch.sigmoid(self.input_highway_gates[i](x))  # (B, T, 1)
+                x = x + gate * self.input_highway_proj(x0)
             # 跨层路由：在 block 处理前注入前层 top-k 加权残差到 x（稀疏+残差+选择性）
             if self.cross_layer_routing and i > 0 and prev_outputs:
                 x = self.cross_router.route(i, x, prev_outputs)
@@ -1024,6 +1086,12 @@ class TransformerModel(nn.Module):
             x, present = block(x, block_states[i].to_tuple() if block_states[i] is not None else None,
                                use_cache, start_pos, ssm_past_state, ssm_past_conv_state, memory)
             presents.append(BlockState.from_tuple(present))
+            # 第十四轮：层间对比绑定——累积相邻层 (1 - cos_sim) 损失
+            # detach _prev_layer_out 使梯度只回流到当前层（推当前层向上一层靠拢，不反过来）
+            if _prev_layer_out is not None:
+                cos_sim = F.cosine_similarity(x, _prev_layer_out, dim=-1).mean()
+                self._contrastive_loss = self._contrastive_loss + (1.0 - cos_sim)
+                _prev_layer_out = x.detach()
             if self.cross_layer_routing:
                 prev_outputs.append(x)
             # 记录 hybrid 块输出供下一个 hybrid 块使用

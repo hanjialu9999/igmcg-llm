@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import sys
 import pytest
@@ -2180,6 +2181,183 @@ def test_layer_film_and_highway_gate_combined():
     logits.sum().backward()
     assert any(p.grad is not None for p in m.parameters() if p.requires_grad)
     # 增量解码
+    m.eval()
+    with torch.no_grad():
+        out, past = m(torch.randint(0, 200, (1, 5)), use_cache=True)
+        for _ in range(3):
+            out, past = m(torch.randint(0, 200, (1, 1)),
+                          past_key_values=past, use_cache=True)
+    assert out.shape[-1] == 200
+
+
+# ---------------------------------------------------------------------------
+# 第十四轮：输入全局高速公路 + 层间对比绑定 + ALiBi 跨层共享
+# ---------------------------------------------------------------------------
+
+def test_input_highway_param_created():
+    """input_highway=True 时创建 input_highway_proj + input_highway_gates。"""
+    m = _small(input_highway=True, num_layers=3)
+    assert hasattr(m, 'input_highway_proj'), "input_highway_proj 未创建"
+    assert hasattr(m, 'input_highway_gates'), "input_highway_gates 未创建"
+    assert len(m.input_highway_gates) == 3
+    assert isinstance(m.input_highway_gates[0], nn.Identity)
+    assert isinstance(m.input_highway_gates[1], nn.Linear)
+
+
+def test_input_highway_identity_at_init():
+    """init 时 input_highway 不改变输出（proj weight=0 → proj(x0)=0）。"""
+    m1 = _small(input_highway=True, num_layers=3)
+    m2 = _small(input_highway=False, num_layers=3)
+    m1.eval(); m2.eval()
+    m1.load_state_dict(m2.state_dict(), strict=False)
+    x = torch.randint(0, 200, (2, 8))
+    with torch.no_grad():
+        out1 = m1(x)
+        out2 = m2(x)
+    diff = (out1 - out2).abs().max().item()
+    assert diff < 1e-5, f"input_highway init 非恒等（diff={diff}）"
+
+
+def test_input_highway_changes_output_after_training():
+    """训练 input_highway 参数后输出应改变。"""
+    m = _small(input_highway=True, num_layers=3)
+    m.eval()
+    x = torch.randint(0, 200, (2, 8))
+    with torch.no_grad():
+        out_before = m(x).clone()
+    with torch.no_grad():
+        m.input_highway_proj.weight.normal_(0, 0.1)
+        for g in m.input_highway_gates:
+            if isinstance(g, nn.Linear):
+                g.bias.fill_(0.0)
+    with torch.no_grad():
+        out_after = m(x)
+    assert not torch.allclose(out_before, out_after), "input_highway 非零权重后输出未变化"
+
+
+def test_input_highway_backward():
+    """input_highway 参数收到梯度。"""
+    m = _small(input_highway=True, num_layers=3)
+    m.train()
+    x = torch.randint(0, 200, (2, 8))
+    out = m(x)
+    logits = out["logits"] if isinstance(out, dict) else out
+    logits.sum().backward()
+    assert m.input_highway_proj.weight.grad is not None, "input_highway_proj 无梯度"
+    for g in m.input_highway_gates:
+        if isinstance(g, nn.Linear):
+            assert g.weight.grad is not None, "input_highway_gates 无梯度"
+
+
+def test_input_highway_cache_parity():
+    """input_highway 开启时训练/推理路径数值一致。"""
+    m = _small(input_highway=True, num_layers=3)
+    m.eval()
+    ids = torch.randint(0, 200, (1, 10))
+    with torch.no_grad():
+        full = m(ids, use_cache=False)
+        cached = m(ids, use_cache=True)
+    diff = (_get_logits(full) - _get_logits(cached)).abs().max().item()
+    assert diff < 1e-4, f"input_highway cache parity diff={diff}"
+
+
+def test_input_highway_specialized_init():
+    """input_highway 专用初始化（proj=0, gate bias=-3）不被 _init_weights 覆盖。"""
+    m = _small(input_highway=True, num_layers=3)
+    assert m.input_highway_proj.weight.abs().max().item() == 0.0, "input_highway_proj.weight 被 _init_weights 覆盖"
+    for g in m.input_highway_gates:
+        if isinstance(g, nn.Linear):
+            assert g.weight.abs().max().item() == 0.0, "input_highway_gate.weight 被 _init_weights 覆盖"
+            assert abs(g.bias.item() - (-3.0)) < 1e-6, f"input_highway_gate.bias 应为 -3，实际 {g.bias.item()}"
+
+
+def test_layer_contrastive_loss_computed():
+    """训练期 _contrastive_loss 非零，eval 时为 None。"""
+    m = _small(layer_contrastive=True, num_layers=3)
+    m.train()
+    x = torch.randint(0, 200, (2, 8))
+    m(x)
+    assert m._contrastive_loss is not None, "训练期 _contrastive_loss 不应为 None"
+    assert m._contrastive_loss.item() > 0, f"_contrastive_loss 应 > 0，实际 {m._contrastive_loss.item()}"
+    m.eval()
+    m(x)
+    assert m._contrastive_loss is None, "eval 期 _contrastive_loss 应为 None"
+
+
+def test_layer_contrastive_backward():
+    """层间对比损失梯度回流到各层参数。"""
+    m = _small(layer_contrastive=True, num_layers=3)
+    m.train()
+    x = torch.randint(0, 200, (2, 8))
+    m(x)
+    m._contrastive_loss.backward()
+    has_grad = any(p.grad is not None for p in m.parameters() if p.requires_grad)
+    assert has_grad, "层间对比损失无梯度回流"
+
+
+def test_layer_contrastive_cache_parity():
+    """layer_contrastive 开启时不影响推理路径（eval 时不计算）。"""
+    m = _small(layer_contrastive=True, num_layers=3)
+    m.eval()
+    ids = torch.randint(0, 200, (1, 10))
+    with torch.no_grad():
+        full = m(ids, use_cache=False)
+        cached = m(ids, use_cache=True)
+    diff = (_get_logits(full) - _get_logits(cached)).abs().max().item()
+    assert diff < 1e-4, f"layer_contrastive cache parity diff={diff}"
+
+
+def test_shared_alibi_shares_slopes():
+    """shared_alibi=True 时所有注意力层共用同一 alibi_slopes buffer。"""
+    m = _small(shared_alibi=True, alibi=True, num_layers=3)
+    slopes = [blk.attn.alibi_slopes for blk in m.blocks if hasattr(blk.attn, 'alibi_slopes')]
+    assert len(slopes) >= 2, "需要至少 2 个有 alibi_slopes 的层"
+    assert all(s is slopes[0] for s in slopes), "alibi_slopes 未共享（非同一对象）"
+
+
+def test_shared_alibi_reduces_params():
+    """shared_alibi=True 比 False 独立 alibi_slopes buffer 数量减少。
+
+    注：alibi_slopes 是 buffer 不是 parameter，共享后多层的 buffer 指向同一对象，
+    独立时每层有自己的 buffer（n份），共享时仅 1 份——通过 numel 总量验证减少。
+    """
+    m_shared = _small(shared_alibi=True, alibi=True, num_layers=3)
+    m_indep = _small(shared_alibi=False, alibi=True, num_layers=3)
+    # 统计 alibi_slopes buffer 的总 numel（共享后应少）
+    def _alibi_numel(m):
+        return sum(b.numel() for n, b in m.named_buffers() if 'alibi_slopes' in n)
+    n_shared = _alibi_numel(m_shared)
+    n_indep = _alibi_numel(m_indep)
+    assert n_shared < n_indep, f"shared_alibi buffer 未减少（{n_shared} >= {n_indep}）"
+
+
+def test_shared_alibi_cache_parity():
+    """shared_alibi 开启时训练/推理路径数值一致。"""
+    m = _small(shared_alibi=True, alibi=True, num_layers=3)
+    m.eval()
+    ids = torch.randint(0, 200, (1, 10))
+    with torch.no_grad():
+        full = m(ids, use_cache=False)
+        cached = m(ids, use_cache=True)
+    diff = (_get_logits(full) - _get_logits(cached)).abs().max().item()
+    assert diff < 1e-4, f"shared_alibi cache parity diff={diff}"
+
+
+def test_all_round14_features_combined():
+    """全第十四轮特性组合 + 已有特性不崩溃（前向+反向+增量解码）。"""
+    m = _small(input_highway=True, layer_contrastive=True, shared_alibi=True,
+               alibi=True, layer_film=True, highway_gate=True,
+               cross_layer_routing=True, cross_layer_topk=2,
+               progressive_residual=True, num_layers=4,
+               layer_plan='attn,hybrid,hybrid,attn')
+    m.train()
+    x = torch.randint(0, 200, (2, 8))
+    out = m(x)
+    logits = out["logits"] if isinstance(out, dict) else out
+    loss = logits.sum() + 0.01 * m._contrastive_loss
+    loss.backward()
+    assert m.input_highway_proj.weight.grad is not None
+    assert m._contrastive_loss.item() > 0
     m.eval()
     with torch.no_grad():
         out, past = m(torch.randint(0, 200, (1, 5)), use_cache=True)
