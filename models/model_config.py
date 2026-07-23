@@ -121,6 +121,12 @@ class ModelConfig:
     cross_layer_topk: int = 2          # 跨层路由每层检索的前层数量
     qat_bits: int = 0                  # 量化感知训练位宽（0=关闭，8=int8 量化噪声模拟）
     ssm_as_memory: bool = False        # SSM 输出作隐式记忆注入 hybrid 块注意力（需 hybrid 层）
+    # 第十二轮新特性
+    cross_ssm_transfer: bool = False   # 层间 SSM 状态传递（hybrid 块间传递 SSM 信息，需 hybrid 层）
+    progressive_residual: bool = False # 渐进式残差（浅层残差大保留信息，深层残差小激进变换）
+    # 第十三轮新特性：跨层协作深化
+    layer_film: bool = False           # 跨层 FiLM 调制（浅层输出→γ,β 调制深层 input，init 恒等）
+    highway_gate: bool = False         # 动态残差门控（input-dependent gate 替代静态 residual_gate）
 
     # n-gram
     ngram_fusion: bool = False
@@ -214,6 +220,10 @@ class ModelConfig:
             cross_layer_topk=int(mc.get('cross_layer_topk', 2)),
             qat_bits=int(mc.get('qat_bits', 0)),
             ssm_as_memory=bool(mc.get('ssm_as_memory', False)),
+            cross_ssm_transfer=bool(mc.get('cross_ssm_transfer', False)),
+            progressive_residual=bool(mc.get('progressive_residual', False)),
+            layer_film=bool(mc.get('layer_film', False)),
+            highway_gate=bool(mc.get('highway_gate', False)),
             ngram_fusion=mc.get('ngram_fusion', False),
             ngram_gate_scale=float(mc.get('ngram_gate_scale', 1.0)),
             igmcg=bool(mc.get('igmcg', False)),

@@ -9,7 +9,26 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
-## `（本地，基于 `cbb2df8`，待推送，第十一轮续：SSM 作记忆 + ngram 8层防护 + DML 全特性训练 + 性能优化）
+## `（本地，基于 `7f26bd4`，待推送，第十二/十三轮：跨层协作深化 + 冗余合并 + 全特性训练验证）
+
+- feat: **层间 SSM 状态传递（cross_ssm_transfer）**——`models/transformer.py` TransformerModel forward 中 hybrid 块间传递 SSM 信息：前一个 hybrid 块输出经 cross_ssm_proj（init weight=0，弱注入）投影后加到下一个 hybrid 块输入。让 SSM 的序列理解在层间流动，而非每层独立重算。config: `cross_ssm_transfer`（需 hybrid 层）。
+- feat: **渐进式残差（progressive_residual）**——残差门控值随层数按 1/√(depth) 衰减：浅层 gate≈1（保留信息），深层 gate≈0.5（激进变换）。平衡浅层信息保留与深层特征抽象。与 highway_gate 组合时 bias 按 3/√(depth) 衰减。config: `progressive_residual`。
+- feat: **跨层 FiLM 调制（layer_film）**——浅层输出经 layer_film_projs[i] 产生 (γ,β)，对深层输入仿射调制 `x = x*(1+tanh(γ)) + β`。init γ=β=0（恒等，向后兼容）。tanh 限制 γ∈(-1,1) 防止深层堆叠数值爆炸。config: `layer_film`。
+- feat: **动态残差门控（highway_gate）**——用 input-dependent gate `sigmoid(W·x+b)` 替代静态标量 residual_gate。init W=0, b=3.0（sigmoid≈0.95，平滑过渡）。逐 token 动态门控，比静态标量更灵活。与 residual_gate 互斥（highway_gate=True 时不创建 sub1_gate/ffn_gate，避免 dead params）。config: `highway_gate`。
+- fix: **专用初始化被 _init_weights 覆盖**——cross_ssm_proj/cross_router/layer_film_projs/highway_gate 的专用初始化（weight=0/bias=-3 等）被通用 _init_weights（N(0,0.02)/zeros）覆盖。新增 `_apply_specialized_inits` 方法在 _init_weights 后重新应用专用初始化。
+- fix: **progressive_residual + highway_gate 冲突**——highway_gate=True 时仍创建 sub1_gate/ffn_gate（dead params），且 progressive_residual 未作用于 highway_gate 的 bias。修复：highway_gate=True 时不创建静态 gate，并在 _apply_specialized_inits 中按 3/√(depth) 缩放 highway bias。
+- fix: **KV 缓存嵌套 bug**——_run_attn_mixer 返回 ((k,v,linear_S,z), None, None) 三元组导致 BlockState.attn_kv 嵌套，增量解码崩溃。修复：_run_attn_mixer 只返回 (k,v,linear_S,z)。
+- refactor: **_run_ssm 辅助方法提取**——TransformerBlock.forward 中 3 处重复的 SSM ckpt/non-ckpt 调用分支（ssm 块 / hybrid+ssm_as_memory / hybrid 并行）合并为 `_run_ssm(xn, past_state, past_conv_state, use_cache, ckpt)` 单一入口。
+- refactor: **测试辅助函数参数冲突修复**——`_small_hybrid`/`_small_igmcg` 用 dict 合并模式替代直接传参，允许调用者覆盖 layer_plan/vocab_size 等默认键（原模式 `layer_plan='attn,hybrid', **over` 在调用者也传 layer_plan 时 TypeError）。
+- smoke: **全特性 CPU 训练验证**——config_smoke_features_v2.yaml 全特性开（alibi+pe_gate+attn_linear+linear_correction+cross_layer+ssm_as_memory+QAT 8bit + cross_ssm_transfer+progressive_residual+layer_film+highway_gate）。225 步训练：Train 8.5452 / Val 8.1032 / ~1.3s/step（CPU）。模型可生成中文但质量受限于数据量和训练轮次。
+- test: **新增回归测试**——KV 缓存嵌套 bug 回归、跨层 SSM 传递、渐进式残差、layer_film、highway_gate、专用初始化覆盖、progressive_residual+highway_gate 组合。pytest **259 passed / 1 skipped**（较基线 238 + 21）。
+
+### 教训补充（本轮）
+- **专用初始化须在 _init_weights 后重新应用**：PyTorch 的 apply(_init_weights) 会遍历所有子模块，包括之后创建的专用参数。若专用初始化在 apply 之前执行，会被通用 N(0,0.02) 覆盖。模式：__init__ 末尾 apply(_init_weights) → 然后 _apply_specialized_inits() 重应用专用初始化。
+- **highway_gate 与 residual_gate 互斥须显式处理**：highway_gate=True 时不创建 sub1_gate/ffn_gate，否则这些参数成为 dead params（定义但不使用），既浪费内存又让 progressive_residual 失效（修改了不用的参数）。
+- **测试辅助函数用 dict 合并而非直接传参**：`def f(**over): return g(k=v, **over)` 在 over 也含 k 时 TypeError；应改为 `kw={'k':v}; kw.update(over); return g(**kw)`。
+
+## `7f26bd4`（已推送，基于 `cbb2df8`，第十一轮续：SSM 作记忆 + ngram 8层防护 + DML 全特性训练 + 性能优化）
 
 - feat: **SSM 输出作隐式记忆（ssm_as_memory）**——`models/transformer.py` TransformerBlock hybrid 块新增 SSM-first 顺序：先算 SSM，把 ssm_h mean-pool 投影为单记忆槽（ssm_k_proj/ssm_v_proj → head_dim），注入注意力 mem_kv。让注意力能"查到"SSM 的序列理解，实现 SSM→Attention 的信息流。仅 hybrid 块生效；config: `ssm_as_memory`。5 个回归测试（参数创建/输出变化/梯度回流/cache parity/非 hybrid noop）。
 - fix: **CrossLayerRouter DML 兼容**——原 route() 用 torch.gather + advanced indexing，在 DML 上报 "scatter doesn't allow partially modified dimensions"。三次重写最终用 mask+einsum 完全避免 gather/scatter：`mask = (scores >= threshold).float()` + `torch.einsum('bn,bntd->btd', gates, prev_stack)`。CPU + DML 均通过。

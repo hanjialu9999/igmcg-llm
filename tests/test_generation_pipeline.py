@@ -191,9 +191,11 @@ def test_quantization_load():
 
 
 def test_arch_options_enabled_build_and_forward():
-    """开启全部架构增强（qk_norm/attn_temp/residual_gate/hybrid_gate）后模型可正常前向与生成。"""
+    """开启全部架构增强（qk_norm/attn_temp/residual_gate/hybrid_gate/layer_film/highway_gate）后模型可正常前向与生成。"""
     cfg = load_config('configs/config_hybrid.yaml')
     # 这些增强通过 config['model'] 开关控制（与训练 YAML 一致）
+    # 注意：highway_gate 与 residual_gate 互斥（highway_gate=True 时不创建 sub1_gate/ffn_gate，
+    # 改为创建 sub1_highway/ffn_highway）。layer_film 是运行时可切换的跨层调制。
     for k in TransformerModel.ENHANCEMENT_KEYS:
         cfg['model'][k] = True
     # 显式放一个 hybrid 块以覆盖混合路径门控（config_hybrid.yaml 默认只用 attn/ssm）
@@ -201,11 +203,17 @@ def test_arch_options_enabled_build_and_forward():
     cfg['model']['layer_plan'] = 'attn,hybrid'
     model = build_model(cfg, device='cpu')
     model.eval()
-    # 新参数应存在：attn 块含 qk_norm/log_temp，hybrid 块含混合门控，各块含残差门控
+    # 新参数应存在：attn 块含 qk_norm/log_temp，hybrid 块含混合门控
     assert any(hasattr(m, 'qk_norm') for m in model.modules())
     assert any(hasattr(m, 'log_temp') for m in model.modules())
     assert any(hasattr(m, 'hybrid_attn_gate') for m in model.modules())
-    assert any(hasattr(m, 'sub1_gate') for m in model.modules())
+    # 残差门控：highway_gate=True 时是 sub1_highway/ffn_highway（动态），
+    # 否则是 sub1_gate/ffn_gate（静态）。两者至少存在其一。
+    has_static_gate = any(hasattr(m, 'sub1_gate') for m in model.modules())
+    has_dynamic_gate = any(hasattr(m, 'sub1_highway') for m in model.modules())
+    assert has_static_gate or has_dynamic_gate, "残差门控参数未创建（既无静态 sub1_gate 也无动态 sub1_highway）"
+    # layer_film_projs 应存在（layer_film=True）
+    assert hasattr(model, 'layer_film_projs'), "layer_film_projs 未创建"
     V = cfg['model']['vocab_size']
     x = torch.randint(0, V, (2, 8))
     with torch.no_grad():

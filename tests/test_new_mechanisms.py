@@ -761,10 +761,10 @@ def test_complexity_budget_backward_flows():
 # ---------------------------------------------------------------------------
 
 def _small_memory(**over):
-    kw = dict(vocab_size=200, embedding_dim=64, num_heads=4, num_layers=2,
-              hidden_dim=128, max_seq_length=32, memory_size=16, memory_comp_dim=16)
+    """_small + 默认开启 memory（size=16, comp_dim=16）。委托 _small 避免重复基线配置。"""
+    kw = {'memory_size': 16, 'memory_comp_dim': 16}
     kw.update(over)
-    return TransformerModel(**kw)
+    return _small(**kw)
 
 
 def test_memory_product_key_changes_write_routing():
@@ -827,10 +827,13 @@ def test_memory_product_key_backward_flows():
 # ---------------------------------------------------------------------------
 
 def _small_hybrid(**over):
-    kw = dict(vocab_size=200, embedding_dim=64, num_heads=4, num_layers=2,
-              hidden_dim=128, max_seq_length=32, layer_plan='attn,hybrid')
+    """_small + 默认 hybrid 层计划（attn,hybrid）。委托 _small 避免重复基线配置。
+
+    用 dict 合并而非直接传参，允许调用者覆盖 layer_plan（如 'attn,hybrid,hybrid,attn'）。
+    """
+    kw = {'layer_plan': 'attn,hybrid'}
     kw.update(over)
-    return TransformerModel(**kw)
+    return _small(**kw)
 
 
 def test_hybrid_single_gate_changes_output():
@@ -947,13 +950,15 @@ def test_curriculum_anneal_not_crash():
 # ---------------------------------------------------------------------------
 
 def _small_igmcg(**over):
+    """_small + ngram_fusion + igmcg，返回 (model, ngram_model)。委托 _small 避免重复基线配置。
+
+    用 dict 合并允许调用者覆盖 vocab_size/ngram_fusion 等默认键。
+    """
     v, ng = _small_ngram()
-    V = len(v)
-    kw = dict(vocab_size=V, embedding_dim=64, num_heads=4, num_layers=2,
-              hidden_dim=128, max_seq_length=32, ngram_fusion=True, ngram_model=ng,
-              igmcg=True)
+    kw = {'vocab_size': len(v), 'ngram_fusion': True, 'ngram_model': ng, 'igmcg': True}
     kw.update(over)
-    return TransformerModel(**kw), ng
+    m = _small(**kw)
+    return m, ng
 
 
 def test_zscore_vectorized_matches_reference():
@@ -1786,4 +1791,400 @@ def test_ngram_gate_clamped():
     # gate·ngram_vec 即使最大也不应使 logits 超出 [-100, 100]
     assert out.min().item() >= -100.0, f"igmcg gate 未 clamp，logits {out.min().item()} < -100"
     assert out.max().item() <= 100.0, f"igmcg gate 未 clamp，logits {out.max().item()} > 100"
+
+
+# ---------------------------------------------------------------------------
+# 回归：KV cache 嵌套 bug（attn_linear mixer + hybrid block + 增量解码）
+# ---------------------------------------------------------------------------
+
+def test_attn_linear_hybrid_incremental_decode():
+    """回归：attn_linear mixer + hybrid block + use_cache 增量解码不崩溃。
+
+    历史 bug：_run_attn_mixer 返回 ((k,v,linear_S,z), None, None) 三元组，
+    hybrid 块再包装为 (((k,v,linear_S,z), None, None), ssm_state, ssm_conv)，
+    BlockState.attn_kv 变成嵌套 tuple，attend 中 pk=tuple 而非 Tensor → 崩溃。
+    修复：_run_attn_mixer 只返回 (k,v,linear_S,z)，块级包装统一在 block forward。
+    """
+    m = _small_hybrid(mixer='attn_linear', linear_correction=True,
+                      ssm_as_memory=True, num_layers=4,
+                      layer_plan='attn,hybrid,hybrid,attn')
+    m.eval()
+    with torch.no_grad():
+        # 首步全量
+        out, past = m(torch.randint(0, 200, (1, 5)), use_cache=True)
+        # 增量解码 3 步
+        for _ in range(3):
+            out, past = m(torch.randint(0, 200, (1, 1)),
+                          past_key_values=past, use_cache=True)
+    assert out.shape[-1] == 200, "增量解码输出形状错误"
+
+
+def test_full_features_incremental_decode():
+    """全特性组合的增量解码（attn_linear + hybrid + cross_layer + ssm_as_memory + alibi + pe_gate）。"""
+    m = _small_hybrid(mixer='attn_linear', linear_correction=True,
+                      ssm_as_memory=True, cross_layer_routing=True,
+                      cross_layer_topk=2, alibi=True, pe_gate=True,
+                      num_layers=4, layer_plan='attn,hybrid,hybrid,attn')
+    m.eval()
+    with torch.no_grad():
+        out, past = m(torch.randint(0, 200, (1, 6)), use_cache=True)
+        for _ in range(4):
+            out, past = m(torch.randint(0, 200, (1, 1)),
+                          past_key_values=past, use_cache=True)
+    assert out.shape == (1, 1, 200)
+
+
+# ---------------------------------------------------------------------------
+# 第十二轮：层间 SSM 状态传递 + 渐进式残差
+# ---------------------------------------------------------------------------
+
+def test_cross_ssm_transfer_param_created():
+    """cross_ssm_transfer 启用时创建 cross_ssm_proj，且仅 hybrid 层间传递。"""
+    m = _small_hybrid(cross_ssm_transfer=True, num_layers=4,
+                      layer_plan='attn,hybrid,hybrid,attn')
+    assert hasattr(m, 'cross_ssm_proj'), "cross_ssm_proj 未创建"
+    # init 0：开始时不影响模型（弱注入）
+    assert m.cross_ssm_proj.weight.abs().max().item() == 0.0, "cross_ssm_proj 应 init 0"
+
+
+def test_specialized_inits_survive_init_weights():
+    """回归：专用初始化（cross_ssm_proj=0 / cross_router bias=-3 / progressive_residual 1/sqrt(d)）
+    必须不被 _init_weights 通用 N(0,0.02)/zeros 覆盖。
+
+    历史 bug：__init__ 中先做专用 init，随后 _init_weights 遍历所有 nn.Linear
+    用通用分布覆盖，导致弱注入设计意图失效（cross_router.bias 由 -3→0，sigmoid 由 0.05→0.5）。
+    修复：_apply_specialized_inits 在 _init_weights 之后重新应用专用初始化。
+    """
+    # cross_ssm_proj.weight=0
+    m1 = _small_hybrid(cross_ssm_transfer=True, num_layers=4,
+                       layer_plan='attn,hybrid,hybrid,attn')
+    assert m1.cross_ssm_proj.weight.abs().max().item() == 0.0, "cross_ssm_proj 被 _init_weights 覆盖"
+    # cross_router.routers: weight=0, bias=-3
+    m2 = _small(num_layers=3, cross_layer_routing=True, cross_layer_topk=2)
+    for r in m2.cross_router.routers:
+        if isinstance(r, torch.nn.Linear):
+            assert r.weight.abs().max().item() == 0.0, "cross_router.weight 被 _init_weights 覆盖"
+            assert abs(r.bias.item() - (-3.0)) < 1e-6, f"cross_router.bias 应为 -3（弱注入），实际 {r.bias.item()}"
+    # progressive_residual: 残差门控按 1/sqrt(depth) 衰减
+    import math
+    m3 = _small_hybrid(progressive_residual=True, num_layers=4,
+                       layer_plan='attn,hybrid,hybrid,attn', residual_gate=True)
+    for i, blk in enumerate(m3.blocks):
+        if i == 0:
+            continue
+        expected = 1.0 / math.sqrt(i + 1)
+        if hasattr(blk, 'ffn_gate'):
+            assert abs(blk.ffn_gate.item() - expected) < 1e-6, \
+                f"layer {i} ffn_gate={blk.ffn_gate.item()} 应为 {expected}（被 _init_weights 覆盖？）"
+    # layer_film_projs: weight=0, bias=0 → γ=β=0 → 恒等
+    m4 = _small(layer_film=True, num_layers=3)
+    for proj in m4.layer_film_projs:
+        if isinstance(proj, torch.nn.Linear):
+            assert proj.weight.abs().max().item() == 0.0, "layer_film weight 被 _init_weights 覆盖"
+            assert proj.bias.abs().max().item() == 0.0, "layer_film bias 被 _init_weights 覆盖"
+    # highway_gate: sub1_highway/ffn_highway weight=0, bias=3.0
+    m5 = _small(highway_gate=True, num_layers=2)
+    for blk in m5.blocks:
+        if hasattr(blk, 'sub1_highway'):
+            assert blk.sub1_highway.weight.abs().max().item() == 0.0, "sub1_highway weight 被 _init_weights 覆盖"
+            assert abs(blk.sub1_highway.bias.item() - 3.0) < 1e-6, "sub1_highway bias 应为 3.0"
+        if hasattr(blk, 'ffn_highway'):
+            assert blk.ffn_highway.weight.abs().max().item() == 0.0, "ffn_highway weight 被 _init_weights 覆盖"
+            assert abs(blk.ffn_highway.bias.item() - 3.0) < 1e-6, "ffn_highway bias 应为 3.0"
+    # progressive_residual + highway_gate 组合：highway bias 按 3/sqrt(depth) 衰减
+    m6 = _small(progressive_residual=True, highway_gate=True, num_layers=4)
+    for i, blk in enumerate(m6.blocks):
+        if i == 0:
+            continue
+        expected_bias = 3.0 / math.sqrt(i + 1)
+        if hasattr(blk, 'ffn_highway'):
+            assert abs(blk.ffn_highway.bias.item() - expected_bias) < 1e-6, \
+                f"layer {i} ffn_highway.bias={blk.ffn_highway.bias.item()} 应为 {expected_bias}（progressive_residual 未作用于 highway）"
+    # 验证 highway_gate=True 时不创建 dead params（sub1_gate/ffn_gate）
+    for blk in m6.blocks:
+        assert not hasattr(blk, 'sub1_gate'), "highway_gate=True 时不应创建 sub1_gate（dead param）"
+        assert not hasattr(blk, 'ffn_gate'), "highway_gate=True 时不应创建 ffn_gate（dead param）"
+
+
+def test_cross_ssm_transfer_changes_output():
+    """开启 cross_ssm_transfer 后输出应与关闭时不同（训练后权重非 0）。"""
+    m_on = _small_hybrid(cross_ssm_transfer=True, num_layers=4,
+                         layer_plan='attn,hybrid,hybrid,attn')
+    m_off = _small_hybrid(cross_ssm_transfer=False, num_layers=4,
+                          layer_plan='attn,hybrid,hybrid,attn')
+    # 让 cross_ssm_proj 权重非 0
+    with torch.no_grad():
+        m_on.cross_ssm_proj.weight.normal_(0, 0.1)
+    m_on.eval(); m_off.eval()
+    x = torch.randint(0, 200, (2, 10))
+    with torch.no_grad():
+        out_on = m_on(x)
+        out_off = m_off(x)
+    assert not torch.allclose(out_on, out_off), "cross_ssm_transfer 未改变输出"
+
+
+def test_cross_ssm_transfer_backward():
+    """cross_ssm_proj 收到梯度。"""
+    m = _small_hybrid(cross_ssm_transfer=True, num_layers=4,
+                      layer_plan='attn,hybrid,hybrid,attn')
+    m.train()
+    # 让权重非 0
+    with torch.no_grad():
+        m.cross_ssm_proj.weight.normal_(0, 0.1)
+    x = torch.randint(0, 200, (2, 10))
+    out = m(x)
+    logits = out["logits"] if isinstance(out, dict) else out
+    logits.sum().backward()
+    assert m.cross_ssm_proj.weight.grad is not None, "cross_ssm_proj 未收到梯度"
+
+
+def test_cross_ssm_transfer_incremental_decode():
+    """cross_ssm_transfer + 增量解码不崩溃。"""
+    m = _small_hybrid(cross_ssm_transfer=True, ssm_as_memory=True,
+                      num_layers=4, layer_plan='attn,hybrid,hybrid,attn')
+    m.eval()
+    with torch.no_grad():
+        out, past = m(torch.randint(0, 200, (1, 5)), use_cache=True)
+        for _ in range(3):
+            out, past = m(torch.randint(0, 200, (1, 1)),
+                          past_key_values=past, use_cache=True)
+    assert out.shape[-1] == 200
+
+
+def test_progressive_residual_gate_values():
+    """渐进式残差：深层门控 init 值 < 浅层（1/sqrt(depth) 衰减）。"""
+    import math
+    m = _small_hybrid(progressive_residual=True, num_layers=4,
+                      layer_plan='attn,hybrid,hybrid,attn', residual_gate=True)
+    # layer 0 不变（1.0），layer 1 = 1/sqrt(2), layer 2 = 1/sqrt(3), layer 3 = 1/sqrt(4)
+    for i, blk in enumerate(m.blocks):
+        if i == 0:
+            continue
+        if hasattr(blk, 'ffn_gate'):
+            expected = 1.0 / math.sqrt(i + 1)
+            actual = blk.ffn_gate.item()
+            assert abs(actual - expected) < 1e-5, f"layer {i} ffn_gate={actual}, expected={expected}"
+
+
+def test_progressive_residual_no_harm():
+    """渐进式残差开启时模型仍能前向+反向。"""
+    m = _small_hybrid(progressive_residual=True, num_layers=4,
+                      layer_plan='attn,hybrid,hybrid,attn')
+    m.train()
+    x = torch.randint(0, 200, (2, 10))
+    out = m(x)
+    logits = out["logits"] if isinstance(out, dict) else out
+    logits.sum().backward()
+    assert any(p.grad is not None for p in m.parameters() if p.requires_grad)
+
+
+# ---------------------------------------------------------------------------
+# 第十三轮：跨层 FiLM 调制 + 动态残差门控（highway_gate）
+# ---------------------------------------------------------------------------
+
+def test_layer_film_param_created():
+    """layer_film 启用时创建 layer_film_projs（layer 0 为 Identity，其余为 Linear）。"""
+    m = _small(layer_film=True, num_layers=3)
+    assert hasattr(m, 'layer_film_projs'), "layer_film_projs 未创建"
+    assert isinstance(m.layer_film_projs[0], torch.nn.Identity), "layer 0 应为 Identity"
+    assert isinstance(m.layer_film_projs[1], torch.nn.Linear), "layer 1 应为 Linear"
+    # init: weight=0, bias=0 → γ=β=0 → 恒等（向后兼容）
+    assert m.layer_film_projs[1].weight.abs().max().item() == 0.0, "layer_film weight 应 init 0"
+    assert m.layer_film_projs[1].bias.abs().max().item() == 0.0, "layer_film bias 应 init 0"
+
+
+def test_layer_film_identity_at_init():
+    """init 时 layer_film 不改变输出（γ=β=0 → 恒等）。"""
+    m_on = _small(layer_film=True, num_layers=3)
+    m_off = _small(layer_film=False, num_layers=3)
+    # 复制权重确保两模型等价（除 layer_film_projs 外）
+    m_off.load_state_dict({k: v for k, v in m_on.state_dict().items()
+                           if 'layer_film_projs' not in k}, strict=False)
+    m_on.eval(); m_off.eval()
+    x = torch.randint(0, 200, (2, 8))
+    with torch.no_grad():
+        out_on = m_on(x)
+        out_off = m_off(x)
+    # init 时 layer_film=恒等，两模型输出应近似（仅浮点误差）
+    diff = (out_on - out_off).abs().max().item()
+    assert diff < 1e-4, f"layer_film init 应为恒等，实际 diff={diff}"
+
+
+def test_layer_film_changes_output_after_training():
+    """layer_film_projs 权重非 0 后输出应改变。"""
+    m_on = _small(layer_film=True, num_layers=3)
+    m_off = _small(layer_film=False, num_layers=3)
+    m_off.load_state_dict({k: v for k, v in m_on.state_dict().items()
+                           if 'layer_film_projs' not in k}, strict=False)
+    # 让 layer_film_projs 权重非 0
+    with torch.no_grad():
+        for proj in m_on.layer_film_projs:
+            if isinstance(proj, torch.nn.Linear):
+                proj.weight.normal_(0, 0.1)
+                proj.bias.normal_(0, 0.1)
+    m_on.eval(); m_off.eval()
+    x = torch.randint(0, 200, (2, 8))
+    with torch.no_grad():
+        out_on = m_on(x)
+        out_off = m_off(x)
+    assert not torch.allclose(out_on, out_off, atol=1e-5), "layer_film 权重非 0 后未改变输出"
+
+
+def test_layer_film_backward():
+    """layer_film_projs 收到梯度。"""
+    m = _small(layer_film=True, num_layers=3)
+    m.train()
+    # 让权重非 0 以产生梯度信号
+    with torch.no_grad():
+        for proj in m.layer_film_projs:
+            if isinstance(proj, torch.nn.Linear):
+                proj.weight.normal_(0, 0.1)
+    x = torch.randint(0, 200, (2, 8))
+    out = m(x)
+    logits = out["logits"] if isinstance(out, dict) else out
+    logits.sum().backward()
+    for proj in m.layer_film_projs:
+        if isinstance(proj, torch.nn.Linear):
+            assert proj.weight.grad is not None, "layer_film_projs.weight 未收到梯度"
+
+
+def test_layer_film_cache_parity():
+    """layer_film 训练/推理路径数值一致（cache parity）。"""
+    m = _small(layer_film=True, num_layers=3)
+    # 让权重非 0 以真正测试调制路径
+    with torch.no_grad():
+        for proj in m.layer_film_projs:
+            if isinstance(proj, torch.nn.Linear):
+                proj.weight.normal_(0, 0.1)
+                proj.bias.normal_(0, 0.1)
+    m.eval()
+    ids = torch.randint(0, m.vocab_size, (1, 8))
+    with torch.no_grad():
+        full = m(ids, use_cache=False)
+        cached = m(ids, use_cache=True)
+    diff = (_get_logits(full) - _get_logits(cached)).abs().max().item()
+    assert diff < 1e-4, f"layer_film 训练/推理不一致：max_diff={diff}"
+
+
+def test_layer_film_incremental_decode():
+    """layer_film + 增量解码不崩溃。"""
+    m = _small(layer_film=True, num_layers=3)
+    m.eval()
+    with torch.no_grad():
+        out, past = m(torch.randint(0, 200, (1, 5)), use_cache=True)
+        for _ in range(3):
+            out, past = m(torch.randint(0, 200, (1, 1)),
+                          past_key_values=past, use_cache=True)
+    assert out.shape[-1] == 200
+
+
+def test_highway_gate_param_created():
+    """highway_gate 启用时创建 sub1_highway/ffn_highway Linear。"""
+    m = _small(highway_gate=True, num_layers=2)
+    blk = m.blocks[0]
+    assert hasattr(blk, 'sub1_highway'), "sub1_highway 未创建"
+    assert hasattr(blk, 'ffn_highway'), "ffn_highway 未创建"
+    # init: weight=0, bias=3.0 → sigmoid(3)≈0.95
+    assert blk.sub1_highway.weight.abs().max().item() == 0.0, "sub1_highway weight 应 init 0"
+    assert abs(blk.sub1_highway.bias.item() - 3.0) < 1e-6, "sub1_highway bias 应为 3.0"
+    assert blk.ffn_highway.weight.abs().max().item() == 0.0, "ffn_highway weight 应 init 0"
+    assert abs(blk.ffn_highway.bias.item() - 3.0) < 1e-6, "ffn_highway bias 应为 3.0"
+
+
+def test_highway_gate_changes_output():
+    """highway_gate 开启后输出应与关闭时不同（gate 是 input-dependent 而非静态）。"""
+    m_on = _small(highway_gate=True, num_layers=2)
+    m_off = _small(highway_gate=False, num_layers=2)
+    # 对齐两模型权重（除 highway 专属参数外）以确保差异仅来自 highway_gate 路径
+    m_off.load_state_dict({k: v for k, v in m_on.state_dict().items()
+                           if 'highway' not in k}, strict=False)
+    # 让 highway Linear 权重非 0（init weight=0 时 gate 仅依赖 bias，仍与静态 gate 不同）
+    with torch.no_grad():
+        for blk in m_on.blocks:
+            if hasattr(blk, 'sub1_highway'):
+                blk.sub1_highway.weight.normal_(0, 0.1)
+            if hasattr(blk, 'ffn_highway'):
+                blk.ffn_highway.weight.normal_(0, 0.1)
+    m_on.eval(); m_off.eval()
+    x = torch.randint(0, 200, (2, 8))
+    with torch.no_grad():
+        out_on = m_on(x)
+        out_off = m_off(x)
+    assert not torch.allclose(out_on, out_off, atol=1e-5), "highway_gate 未改变输出"
+
+
+def test_highway_gate_backward():
+    """highway_gate 参数收到梯度。"""
+    m = _small(highway_gate=True, num_layers=2)
+    m.train()
+    x = torch.randint(0, 200, (2, 8))
+    out = m(x)
+    logits = out["logits"] if isinstance(out, dict) else out
+    logits.sum().backward()
+    blk = m.blocks[0]
+    assert blk.sub1_highway.weight.grad is not None, "sub1_highway.weight 无梯度"
+    assert blk.ffn_highway.weight.grad is not None, "ffn_highway.weight 无梯度"
+
+
+def test_highway_gate_cache_parity():
+    """highway_gate 训练/推理路径数值一致（cache parity）。"""
+    m = _small(highway_gate=True, num_layers=3)
+    # 让权重非 0 以真正测试动态门控
+    with torch.no_grad():
+        for blk in m.blocks:
+            if hasattr(blk, 'sub1_highway'):
+                blk.sub1_highway.weight.normal_(0, 0.1)
+            if hasattr(blk, 'ffn_highway'):
+                blk.ffn_highway.weight.normal_(0, 0.1)
+    m.eval()
+    ids = torch.randint(0, m.vocab_size, (1, 8))
+    with torch.no_grad():
+        full = m(ids, use_cache=False)
+        cached = m(ids, use_cache=True)
+    diff = (_get_logits(full) - _get_logits(cached)).abs().max().item()
+    assert diff < 1e-4, f"highway_gate 训练/推理不一致：max_diff={diff}"
+
+
+def test_highway_gate_incremental_decode():
+    """highway_gate + 增量解码不崩溃。"""
+    m = _small(highway_gate=True, num_layers=3)
+    m.eval()
+    with torch.no_grad():
+        out, past = m(torch.randint(0, 200, (1, 5)), use_cache=True)
+        for _ in range(3):
+            out, past = m(torch.randint(0, 200, (1, 1)),
+                          past_key_values=past, use_cache=True)
+    assert out.shape[-1] == 200
+
+
+def test_layer_film_and_highway_gate_combined():
+    """layer_film + highway_gate + 全特性组合不崩溃（前向+反向+增量解码）。"""
+    m = _small(layer_film=True, highway_gate=True,
+               cross_layer_routing=True, cross_layer_topk=2,
+               progressive_residual=True, num_layers=4,
+               layer_plan='attn,hybrid,hybrid,attn')
+    # 让动态参数非 0 以真正测试路径
+    with torch.no_grad():
+        for proj in m.layer_film_projs:
+            if isinstance(proj, torch.nn.Linear):
+                proj.weight.normal_(0, 0.1)
+        for blk in m.blocks:
+            if hasattr(blk, 'sub1_highway'):
+                blk.sub1_highway.weight.normal_(0, 0.1)
+            if hasattr(blk, 'ffn_highway'):
+                blk.ffn_highway.weight.normal_(0, 0.1)
+    m.train()
+    x = torch.randint(0, 200, (2, 8))
+    out = m(x)
+    logits = out["logits"] if isinstance(out, dict) else out
+    logits.sum().backward()
+    assert any(p.grad is not None for p in m.parameters() if p.requires_grad)
+    # 增量解码
+    m.eval()
+    with torch.no_grad():
+        out, past = m(torch.randint(0, 200, (1, 5)), use_cache=True)
+        for _ in range(3):
+            out, past = m(torch.randint(0, 200, (1, 1)),
+                          past_key_values=past, use_cache=True)
+    assert out.shape[-1] == 200
 
