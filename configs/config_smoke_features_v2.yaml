@@ -1,5 +1,6 @@
-# 第十一轮全特性冒烟训练：在 smoke_4k 基础上开启全部新架构特性
-# 目的：验证 linear_correction + pe_gate + cross_layer + QAT + ssm_as_memory + ngram 防护
+# 第十三轮全特性冒烟训练：在 smoke_4k 基础上开启全部新架构特性
+# 目的：验证 linear_correction + pe_gate + cross_layer + QAT + ssm_as_memory
+#       + cross_ssm_transfer + progressive_residual + layer_film + highway_gate
 model:
   vocab_size: 12000
   embedding_dim: 256
@@ -31,6 +32,11 @@ model:
   cross_layer_topk: 2
   ssm_as_memory: true
   qat_bits: 8
+  # 第十二/十三轮跨层协作新特性
+  cross_ssm_transfer: true     # hybrid 块间 SSM 状态传递
+  progressive_residual: true   # 渐进式残差（深层 1/sqrt(d) 衰减）
+  layer_film: true             # 跨层 FiLM 调制（浅层→深层 γ,β）
+  highway_gate: true           # 动态残差门控（input-dependent gate）
 
 training:
   batch_size: 16

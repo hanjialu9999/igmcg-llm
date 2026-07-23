@@ -45,7 +45,8 @@ class TransformerBlock(nn.Module):
              shared_ffn: Optional[SwiGLU] = None,
              shared_lns: Optional[Tuple[RMSNorm, RMSNorm]] = None,
              linear_correction: bool = False,
-             ssm_as_memory: bool = False):
+             ssm_as_memory: bool = False,
+             highway_gate: bool = False):
         super().__init__()
         self.block_type = block_type
         self.drop = nn.Dropout(dropout)
@@ -55,7 +56,8 @@ class TransformerBlock(nn.Module):
         self.residual_gate_enabled = residual_gate
         self.hybrid_gate_enabled = hybrid_gate
         # 运行时增强开关（按开关粒度，用于"交替/分段增强"训练）：默认全开
-        self._rt: Dict[str, bool] = {"residual_gate": True, "hybrid_gate": True}
+        self._rt: Dict[str, bool] = {"residual_gate": True, "hybrid_gate": True,
+                                     "highway_gate": True, "layer_film": True}
         self.gradient_checkpointing = gradient_checkpointing
         # 第十一轮：线性注意力修正模式——主注意力为基础，线性注意力输出"修正项"
         # 补主注意力遗漏（而非凸组合替代）。默认关（linear_correction=False 走原凸组合）。
@@ -104,11 +106,22 @@ class TransformerBlock(nn.Module):
         self.ln2 = shared_lns[1] if shared_lns is not None else RMSNorm(dim)
         self.ffn = shared_ffn if shared_ffn is not None else SwiGLU(dim, hidden_dim)
         # ②/⑥ 每层可学习残差门控：x = x + gate * f(x)（init 1.0，默认行为不变）
-        if residual_gate:
+        # 第十三轮：highway_gate 与静态 residual_gate 互斥——highway_gate=True 时不创建
+        # sub1_gate/ffn_gate（避免 dead params：highway 路径从不读取静态门）。
+        self.highway_gate_enabled = highway_gate and residual_gate
+        if residual_gate and not self.highway_gate_enabled:
             # hybrid 块的第一子层用 hybrid_attn_gate/hybrid_ssm_gate，sub1_gate 无用，跳过分配
             if block_type != 'hybrid':
                 self.sub1_gate = nn.Parameter(torch.ones(1))   # 第一子层残差（attn 或 ssm）
             self.ffn_gate = nn.Parameter(torch.ones(1))    # FFN 子层残差
+        # 第十三轮：动态残差门控（highway_gate）——input-dependent gate 替代静态标量
+        # residual_gate。gate = sigmoid(W·x + b)，x_out = x + gate·f(x)。
+        # init: W=0, b=3.0 → sigmoid(3)≈0.95 → x + 0.95·f(x) ≈ 原 residual_gate=1.0 行为，
+        # 平滑过渡；训练中模型逐 token 自决残差强度（不确定时 gate↓ 保留输入，有把握时 gate↑ 强变换）。
+        if self.highway_gate_enabled:
+            if block_type != 'hybrid':
+                self.sub1_highway = nn.Linear(dim, 1)
+            self.ffn_highway = nn.Linear(dim, 1)
         # ⭐A 混合块内 attn/ssm 两路可学习门控（init 1.0）
         if hybrid_gate and block_type == 'hybrid':
             self.hybrid_attn_gate = nn.Parameter(torch.ones(1))
@@ -222,9 +235,22 @@ class TransformerBlock(nn.Module):
                 h = mg * h + (1.0 - mg) * lh
             if use_cache and lpresent is not None:
                 # 两路 KV 缓存合并：把线性注意力状态 S 和分母累积 z 塞进 attn_kv 元组
-                # (k, v, linear_S, z_final)，保持块级 (attn_kv, ssm_state, ssm_conv_state) 三元组不变。
-                present = ((present[0], present[1], lpresent[2], lpresent[3] if len(lpresent) > 3 else None), None, None)
+                # (k, v, linear_S, z_final)。block forward 会自行包装为
+                # (attn_kv, ssm_state, ssm_conv_state) 三元组，此处只返回 attn_kv 部分。
+                present = (present[0], present[1], lpresent[2], lpresent[3] if len(lpresent) > 3 else None)
         return h, present
+
+    def _run_ssm(self, xn: torch.Tensor, ssm_past_state, ssm_past_conv_state,
+                 use_cache: bool, ckpt: bool):
+        """统一运行 SSM（ckpt/non-ckpt 分支归一点），返回 (h, state, conv_state)。
+
+        消除 ssm 块 / hybrid+ssm_as_memory / hybrid 并行三处重复的 if-ckpt 分支。
+        """
+        if ckpt:
+            return checkpoint(self.ssm, xn, ssm_past_state, ssm_past_conv_state,
+                              use_cache, use_reentrant=False)
+        return self.ssm(xn, past_state=ssm_past_state,
+                        past_conv_state=ssm_past_conv_state, use_cache=use_cache)
 
     def forward(self, x: torch.Tensor, past_kv: Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]] = None, use_cache: bool = False, start_pos: int = 0, ssm_past_state: Optional[torch.Tensor] = None, ssm_past_conv_state: Optional[torch.Tensor] = None,
                 memory: Optional['MemoryBank'] = None) -> Tuple[torch.Tensor, Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]]]:
@@ -237,8 +263,20 @@ class TransformerBlock(nn.Module):
             attn_past_kv = past_kv[0]
         mem_kv = memory.get_kv() if memory is not None else None
         ckpt = self.training and self.gradient_checkpointing
-        gate1 = (getattr(self, 'sub1_gate', None) if (self.residual_gate_enabled and self._rt["residual_gate"]) else None)
-        gate2 = (self.ffn_gate if (self.residual_gate_enabled and self._rt["residual_gate"]) else None)
+        # 第十三轮：动态残差门控 highway_gate 优先于静态 residual_gate
+        # highway_gate: gate = sigmoid(W·x + b)，逐 token 动态（init b=3 → sigmoid≈0.95）
+        # residual_gate: 静态标量 gate（init 1.0），整个层共享
+        # SEL 交替训练：_rt["highway_gate"]=False 时回退到静态 residual_gate 行为
+        if self.highway_gate_enabled and self._rt.get("highway_gate", True):
+            # 第一子层动态门控（hybrid 块用 hybrid_attn_gate/hybrid_ssm_gate，无 sub1_highway）
+            if self.block_type != 'hybrid' and hasattr(self, 'sub1_highway'):
+                gate1 = torch.sigmoid(self.sub1_highway(x))  # (B,T,1)
+            else:
+                gate1 = None
+            gate2 = torch.sigmoid(self.ffn_highway(x))  # (B,T,1)
+        else:
+            gate1 = (getattr(self, 'sub1_gate', None) if (self.residual_gate_enabled and self._rt["residual_gate"]) else None)
+            gate2 = (getattr(self, 'ffn_gate', None) if (self.residual_gate_enabled and self._rt["residual_gate"]) else None)
         # 阶段6：跳过层门控（skip_gate 经 sigmoid 映射到 (0,1)；_skip_active=False 时跳过失效恒为 1）
         sk = torch.sigmoid(self.skip_gate) if (self.skip_enabled and getattr(self, '_skip_active', True)) else None
 
@@ -250,10 +288,8 @@ class TransformerBlock(nn.Module):
             h_eff = (sk * h) if sk is not None else h
             x = x + self.drop(gate1 * h_eff if gate1 is not None else h_eff)
         elif self.block_type == 'ssm':
-            if ckpt:
-                h, ssm_present_state, ssm_present_conv_state = checkpoint(self.ssm, self.ln1(x), ssm_past_state, ssm_past_conv_state, use_cache, use_reentrant=False)
-            else:
-                h, ssm_present_state, ssm_present_conv_state = self.ssm(self.ln1(x), past_state=ssm_past_state, past_conv_state=ssm_past_conv_state, use_cache=use_cache)
+            h, ssm_present_state, ssm_present_conv_state = self._run_ssm(
+                self.ln1(x), ssm_past_state, ssm_past_conv_state, use_cache, ckpt)
             h_eff = (sk * h) if sk is not None else h
             x = x + self.drop(gate1 * h_eff if gate1 is not None else h_eff)
         elif self.block_type == 'hybrid':
@@ -261,10 +297,8 @@ class TransformerBlock(nn.Module):
             if self.ssm_as_memory_enabled:
                 # 第十一轮：SSM 作隐式记忆——先算 SSM，把 ssm_h mean-pool 投影为
                 # 单个记忆槽注入 mem_kv，让注意力能"查到"SSM 的序列理解。
-                if ckpt:
-                    ssm_h, ssm_present_state, ssm_present_conv_state = checkpoint(self.ssm, xn, ssm_past_state, ssm_past_conv_state, use_cache, use_reentrant=False)
-                else:
-                    ssm_h, ssm_present_state, ssm_present_conv_state = self.ssm(xn, past_state=ssm_past_state, past_conv_state=ssm_past_conv_state, use_cache=use_cache)
+                ssm_h, ssm_present_state, ssm_present_conv_state = self._run_ssm(
+                    xn, ssm_past_state, ssm_past_conv_state, use_cache, ckpt)
                 # ssm_h: (B,T,D) → mean-pool (B,1,D) → 投影 (B,1,head_dim)
                 ssm_pool = ssm_h.mean(dim=1, keepdim=True)
                 ssm_k = self.ssm_k_proj(ssm_pool)  # (B,1,head_dim)
@@ -279,10 +313,8 @@ class TransformerBlock(nn.Module):
             else:
                 # 原始并行：attn 与 ssm 同时算（不互相依赖）
                 h, attn_present = self._run_attn_mixer(xn, attn_past_kv, use_cache, start_pos, mem_kv, ckpt)
-                if ckpt:
-                    ssm_h, ssm_present_state, ssm_present_conv_state = checkpoint(self.ssm, xn, ssm_past_state, ssm_past_conv_state, use_cache, use_reentrant=False)
-                else:
-                    ssm_h, ssm_present_state, ssm_present_conv_state = self.ssm(xn, past_state=ssm_past_state, past_conv_state=ssm_past_conv_state, use_cache=use_cache)
+                ssm_h, ssm_present_state, ssm_present_conv_state = self._run_ssm(
+                    xn, ssm_past_state, ssm_past_conv_state, use_cache, ckpt)
             h_eff = (sk * h) if sk is not None else h
             ssm_eff = (sk * ssm_h) if sk is not None else ssm_h
             if self.hybrid_single_gate and self._rt.get("hybrid_gate", True):
@@ -311,9 +343,9 @@ class TransformerBlock(nn.Module):
         # Combine attn KV cache and SSM state
         if use_cache:
             if self.block_type == 'attn':
-                # hybrid mixer 已构造 (attn_kv, linear_S, None) 三元组，勿重复包裹
-                if getattr(self, 'linear_attn', None) is None:
-                    present = (present, None, None)  # (attn_kv, ssm_state, ssm_conv_state)
+                # present 来自 _run_attn_mixer：(k,v) 二元组或 (k,v,linear_S,z) 四元组
+                # 统一包装为块级 (attn_kv, ssm_state, ssm_conv_state) 三元组
+                present = (present, None, None)
             elif self.block_type == 'ssm':
                 present = (None, ssm_present_state, ssm_present_conv_state)
             elif self.block_type == 'hybrid':
@@ -325,7 +357,8 @@ class TransformerBlock(nn.Module):
         用于“交替/分段增强”训练，关闭时跳过对应残差门控/混合门控（恒等）。"""
         if isinstance(spec, bool):
             on = spec
-            self._rt = {"residual_gate": on, "hybrid_gate": on}
+            self._rt = {"residual_gate": on, "hybrid_gate": on,
+                        "highway_gate": on, "layer_film": on}
         elif isinstance(spec, dict):
             for k, v in spec.items():
                 if k in self._rt:
@@ -437,9 +470,11 @@ class TransformerModel(nn.Module):
     """
 
     # INT-3：增强开关键名单一事实来源（attn 层 qk_norm/attn_temp + block 层
-    # residual_gate/hybrid_gate 的并集中所有可分段 SEL 交替的开关），供
-    # train.py 的 enhancement_schedule 与测试派生，避免键名清单散落 4 处漂移。
-    ENHANCEMENT_KEYS = ("qk_norm", "attn_temp", "residual_gate", "hybrid_gate")
+    # residual_gate/hybrid_gate + 第十三轮 layer_film/highway_gate 的并集中所有
+    # 可分段 SEL 交替的开关），供 train.py 的 enhancement_schedule 与测试派生，
+    # 避免键名清单散落多处漂移。
+    ENHANCEMENT_KEYS = ("qk_norm", "attn_temp", "residual_gate", "hybrid_gate",
+                        "layer_film", "highway_gate")
 
     def __init__(self, vocab_size: int, embedding_dim: int, num_heads: int, num_layers: int,
                  hidden_dim: int, max_seq_length: int, dropout: float = 0.0, tie_weights: bool = True,
@@ -481,7 +516,11 @@ class TransformerModel(nn.Module):
                    linear_correction: bool = False,
                    cross_layer_routing: bool = False,
                    cross_layer_topk: int = 2,
-                   ssm_as_memory: bool = False):
+                   ssm_as_memory: bool = False,
+                   cross_ssm_transfer: bool = False,
+                   progressive_residual: bool = False,
+                   layer_film: bool = False,
+                   highway_gate: bool = False):
         super(TransformerModel, self).__init__()
 
         self.vocab_size = vocab_size
@@ -582,7 +621,8 @@ class TransformerModel(nn.Module):
                              shared_qkv=_shared_qkv, shared_proj=_shared_proj,
                              shared_ffn=_shared_ffn, shared_lns=_shared_lns,
                              linear_correction=linear_correction,
-                             ssm_as_memory=ssm_as_memory)
+                             ssm_as_memory=ssm_as_memory,
+                             highway_gate=highway_gate)
             for bt in self.layer_plan
         ])
         self.ln_f = RMSNorm(embedding_dim)
@@ -603,8 +643,42 @@ class TransformerModel(nn.Module):
         if cross_layer_routing and num_layers > 1:
             self.cross_router = CrossLayerRouter(embedding_dim, num_layers,
                                                  topk=min(cross_layer_topk, num_layers - 1))
+        # 第十二轮：层间 SSM 状态传递——hybrid 块间传递 SSM 信息
+        # 前一个 hybrid 块的输出经 cross_ssm_proj 投影后加到下一个 hybrid 块的输入，
+        # 让深层 SSM 能接收到浅层 SSM 的序列理解（跨层 SSM 信息流）。
+        # 与 ssm_as_memory（SSM→Attention）互补：ssm_as_memory 是块内 SSM→Attn，
+        # cross_ssm_transfer 是块间 SSM→SSM（经投影残差注入）。
+        self.cross_ssm_transfer = cross_ssm_transfer
+        if cross_ssm_transfer and any(bt == 'hybrid' for bt in self.layer_plan):
+            self.cross_ssm_proj = nn.Linear(embedding_dim, embedding_dim, bias=False)
+        # 第十二轮：渐进式残差——浅层残差大（保留信息），深层残差小（激进变换）
+        # 通过缩放残差门控的 init 值实现：layer 0 不变（1.0），后续层按 1/sqrt(depth) 衰减
+        self.progressive_residual = progressive_residual
+        # 第十三轮：跨层 FiLM 调制——浅层输出经线性投影产生 (γ, β)，调制深层 input：
+        #   x_out = x * (1 + γ) + β（init γ=0, β=0 → 恒等，向后兼容）
+        # 与 cross_layer_routing（top-k 残差注入）/ cross_ssm_transfer（SSM 传递）正交：
+        #   layer_film 是仿射调制（multiplicative + additive），更细粒度的跨层信息流。
+        # 每层一个 Linear(D → 2D)（layer 0 用 Identity 占位保持索引对齐）。
+        self.layer_film_enabled = layer_film and num_layers > 1
+        if self.layer_film_enabled:
+            self.layer_film_projs = nn.ModuleList([
+                nn.Linear(embedding_dim, 2 * embedding_dim) if i > 0 else nn.Identity()
+                for i in range(num_layers)
+            ])
+        # 第十三轮：动态残差门控已透传到 TransformerBlock（highway_gate 参数）
+        self.highway_gate = highway_gate
+        # SEL 交替训练：layer_film 模型级开关（默认 True，由 set_enhancements_active 切换）
+        self._rt_layer_film = self.layer_film_enabled
         # 权重初始化（_init_weights 遍历所有 Linear 用 N(0,0.02)，再对 SSM 调 proper_init 覆盖）
         self._init_weights()
+        # 专用初始化必须在 _init_weights 之后重新应用（否则被通用 N(0,0.02)/zeros 覆盖）：
+        #   - cross_ssm_proj.weight=0（弱注入，开始时不影响模型）
+        #   - cross_router.routers: weight=0, bias=-3（sigmoid≈0.05 弱注入）
+        #   - progressive_residual: 残差门控按 1/sqrt(depth) 衰减
+        #   - layer_film_projs: weight=0, bias=0 → γ=β=0 → 恒等
+        #   - highway_gate (sub1_highway/ffn_highway): weight=0, bias=3.0 → sigmoid≈0.95
+        # 与 SSM proper_init 同理（也在 _init_weights 后调用）。
+        self._apply_specialized_inits()
 
     @classmethod
     def from_config(cls, cfg: 'ModelConfig', ngram_model=None) -> TransformerModel:
@@ -669,11 +743,22 @@ class TransformerModel(nn.Module):
             cross_layer_routing=cfg.cross_layer_routing,
             cross_layer_topk=cfg.cross_layer_topk,
             ssm_as_memory=cfg.ssm_as_memory,
+            cross_ssm_transfer=cfg.cross_ssm_transfer,
+            progressive_residual=cfg.progressive_residual,
+            layer_film=cfg.layer_film,
+            highway_gate=cfg.highway_gate,
         )
 
     def set_enhancements_active(self, spec):
         """运行时开关（按开关粒度）：`spec=True/False` 全开/全关；`spec=dict` 按键更新。
         用于"交替/分段增强"训练（关闭则跳过对应增强，恒等）。"""
+        # 模型级特性（layer_film）开关
+        if isinstance(spec, bool):
+            self._rt_layer_film = spec and self.layer_film_enabled
+        elif isinstance(spec, dict):
+            if 'layer_film' in spec:
+                self._rt_layer_film = bool(spec['layer_film']) and self.layer_film_enabled
+        # 块级特性（residual_gate/hybrid_gate/highway_gate/qk_norm/attn_temp）开关
         for blk in self.blocks:
             blk.set_enhancements_active(spec)
 
@@ -785,6 +870,57 @@ class TransformerModel(nn.Module):
             if type(m) is MambaSSM:
                 m.proper_init()
 
+    def _apply_specialized_inits(self):
+        """重新应用被 _init_weights 通用 N(0,0.02)/zeros 覆盖的专用初始化。
+
+        历史 bug：cross_ssm_proj / cross_router.routers 在 __init__ 中先做专用初始化
+        （zero weight / bias=-3），随后 _init_weights 遍历所有 nn.Linear 用通用分布
+        覆盖，导致弱注入设计意图失效（cross_router.bias 由 -3→0，sigmoid 由 0.05→0.5）。
+        此方法在 _init_weights 之后调用，恢复专用初始化。
+        """
+        # cross_ssm_proj.weight=0（弱注入，开始时不影响模型）
+        if self.cross_ssm_transfer and hasattr(self, 'cross_ssm_proj'):
+            nn.init.zeros_(self.cross_ssm_proj.weight)
+        # cross_router.routers: weight=0, bias=-3（sigmoid≈0.05 弱注入）
+        if hasattr(self, 'cross_router'):
+            for r in self.cross_router.routers:
+                if isinstance(r, nn.Linear):
+                    nn.init.zeros_(r.weight)
+                    nn.init.constant_(r.bias, -3.0)
+        # progressive_residual: 残差门控按 1/sqrt(depth) 衰减
+        # - 静态 residual_gate 模式：缩放 sub1_gate/ffn_gate（乘性门）
+        # - highway_gate 模式：缩放 sub1_highway/ffn_highway 的 bias（sigmoid 前缩放，
+        #   bias=3/sqrt(d) → sigmoid 衰减，等效深层残差更小）
+        # 注意：highway bias 缩放必须在 highway_gate init 之后执行（否则被覆盖）
+        if self.progressive_residual:
+            for i, blk in enumerate(self.blocks):
+                if i > 0:
+                    g = 1.0 / math.sqrt(i + 1)
+                    with torch.no_grad():
+                        if hasattr(blk, 'sub1_gate'):
+                            blk.sub1_gate.fill_(g)
+                        if hasattr(blk, 'ffn_gate'):
+                            blk.ffn_gate.fill_(g)
+        # layer_film_projs: weight=0, bias=0 → γ=β=0 → 恒等（向后兼容）
+        if self.layer_film_enabled:
+            for proj in self.layer_film_projs:
+                if isinstance(proj, nn.Linear):
+                    nn.init.zeros_(proj.weight)
+                    nn.init.zeros_(proj.bias)
+        # highway_gate: sub1_highway/ffn_highway weight=0, bias=3.0
+        # → sigmoid(3)≈0.95 → x + 0.95·f(x) ≈ 原 residual_gate=1.0 行为
+        # progressive_residual + highway_gate 组合：bias=3.0/sqrt(depth)（深层衰减）
+        for i, blk in enumerate(self.blocks):
+            if getattr(blk, 'highway_gate_enabled', False):
+                # layer 0 不衰减（bias=3.0），layer i>0 按 1/sqrt(depth) 衰减
+                bias_val = 3.0 if i == 0 or not self.progressive_residual else 3.0 / math.sqrt(i + 1)
+                if hasattr(blk, 'sub1_highway'):
+                    nn.init.zeros_(blk.sub1_highway.weight)
+                    nn.init.constant_(blk.sub1_highway.bias, bias_val)
+                if hasattr(blk, 'ffn_highway'):
+                    nn.init.zeros_(blk.ffn_highway.weight)
+                    nn.init.constant_(blk.ffn_highway.bias, bias_val)
+
     def tie_weights(self):
         """重新绑定 output_head 和 embedding 的权重（在 .to(device) 后调用以确保共享生效）。"""
         if self._tie_weights:
@@ -853,6 +989,8 @@ class TransformerModel(nn.Module):
         # 第十一轮：跨层稀疏路由——收集每层输出供后续层 top-k 路由（残差注入）。
         # 仅 cross_layer_routing=True 且 num_layers>1 时启用（cross_router 已在 __init__ 创建）。
         prev_outputs: List[torch.Tensor] = [] if self.cross_layer_routing else []
+        # 第十二轮：层间 SSM 状态传递——跟踪前一个 hybrid 块的输出
+        prev_hybrid_x: Optional[torch.Tensor] = None
         for i, block in enumerate(self.blocks):
             if (not self.training) and getattr(self, '_pruned_layers', None) and i in self._pruned_layers:
                 presents.append(block_states[i])
@@ -860,9 +998,26 @@ class TransformerModel(nn.Module):
                 if self.cross_layer_routing:
                     prev_outputs.append(x)
                 continue
+            # 第十三轮：跨层 FiLM 调制——用前一层输出 x（此时 x 即 layer i-1 的输出）
+            # 经 layer_film_projs[i] 产生 (γ, β)，仿射调制当前层输入：x = x*(1+γ) + β
+            # init γ=β=0 → 恒等，向后兼容；逐 token 调制（非标量），比 cross_layer_routing
+            # 的 top-k 残差注入更细粒度（multiplicative + additive）。
+            # SEL 交替训练：_rt["layer_film"]=False 时跳过（恒等）
+            if (self.layer_film_enabled and i > 0
+                    and getattr(self, '_rt_layer_film', True)):
+                gamma_beta = self.layer_film_projs[i](x)  # (B, T, 2D)
+                gamma, beta = gamma_beta.chunk(2, dim=-1)  # each (B, T, D)
+                # tanh 限制 gamma∈(-1,1) → x*(1+γ)∈(0, 2x)，防止深层堆叠数值爆炸
+                gamma = torch.tanh(gamma)
+                x = x * (1.0 + gamma) + beta
             # 跨层路由：在 block 处理前注入前层 top-k 加权残差到 x（稀疏+残差+选择性）
             if self.cross_layer_routing and i > 0 and prev_outputs:
                 x = self.cross_router.route(i, x, prev_outputs)
+            # 第十二轮：层间 SSM 状态传递——hybrid 块间传递 SSM 信息
+            # 前一个 hybrid 块的输出经 cross_ssm_proj 投影后加到当前 hybrid 块的输入
+            if (self.cross_ssm_transfer and i > 0 and prev_hybrid_x is not None
+                    and self.layer_plan[i] == 'hybrid'):
+                x = x + self.cross_ssm_proj(prev_hybrid_x)
             ssm_past_state = ssm_states[i] if use_cache else None
             ssm_past_conv_state = ssm_conv_states[i] if use_cache else None
             # block 内部仍用旧元组接口（TransformerBlock.forward 未改），传入 block_states[i].to_tuple()
@@ -871,6 +1026,9 @@ class TransformerModel(nn.Module):
             presents.append(BlockState.from_tuple(present))
             if self.cross_layer_routing:
                 prev_outputs.append(x)
+            # 记录 hybrid 块输出供下一个 hybrid 块使用
+            if self.cross_ssm_transfer and self.layer_plan[i] == 'hybrid':
+                prev_hybrid_x = x
         x = self.ln_f(x)
         # 阶段8.1：n-gram 神经融合——z_neural + g_t·ngram_vec。ngram_vec 是固定统计缓冲
         # （.detach() 不引梯度，主干 z_neural 仍吃完整 CE 梯度、不被缩放 → 不塌缩）。
