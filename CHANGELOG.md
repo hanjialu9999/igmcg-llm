@@ -23,7 +23,7 @@
 - test: **新增 6 个回归测试**——DifferentialAttention cache 布局/start_pos 正确性/增量解码一致性、MLA+diff 配置校验、convert_legacy_state_dict 预扫描、_sync_window 推理期跳过、checkpoint 自动转换 SwiGLU。pytest **347 passed / 1 skipped**（+6）。
 - smoke: **双配置 CPU 训练验证**——config_smoke_mla.yaml（MLA kv_latent_dim=128）Val 6.5847；config_smoke_fuse_swiglu.yaml（SwiGLU 合并）Val 6.1352。
 
-## `（本地，基于 `4e9e8f3`，待推送，第十六轮：Gate 抽象统一 + 代码债清理）
+## `837d821`（已推送，基于 `4e9e8f3`，第十六轮：Gate 抽象统一 + 代码债清理）
 
 - refactor: **Gate 抽象统一**——新建 `models/gates.py`，定义 `GateConfig` dataclass + 6 个工具函数（`apply_direct`/`apply_sigmoid_scalar`/`apply_linear_gate`/`convex_combine_scalar`/`convex_combine_linear`/`apply_correction`）。`TransformerBlock.__init__` 的 6 个散落 bool 门控参数（`residual_gate`/`hybrid_gate`/`skip`/`hybrid_single_gate`/`linear_correction`/`highway_gate`）收口为单一 `gate_cfg: GateConfig` 参数，__init__ 签名从 20 个参数精简到 15 个。`forward` 中散乱的 `if gate is not None` 分支统一用工具函数替代。**参数注册方式不变，state_dict 100% 兼容**。
 - test: **新增 13 个 Gate 抽象回归测试**——覆盖 GateConfig 默认值/from_kwargs 兼容、6 个工具函数的 None passthrough 和数值正确性、gate_cfg 构造与默认构造的 state_dict key 一致性、highway_gate 互斥约束、全特性前向+反向。pytest **317 passed / 1 skipped**（+13）。
