@@ -129,9 +129,22 @@ def load_model(model_path, vocab_path, device: 'Union[str, torch.device]' = 'cpu
             f"model_config.vocab_size={model_config.get('vocab_size')} 小于分词器词表 "
             f"{len(vocab)}，token id 将越界。请确认训练与推理使用同一套 vocab_size。")
 
+    # SwiGLU 格式自动转换：checkpoint 是 w1/w3 分离但模型配置 fuse_swiglu=True（需 w13）时，
+    # 静默缺失 w13 + 静默丢弃 w1/w3 → FFN 随机初始化。自动检测并转换避免静默失败。
+    _ckpt_sd = checkpoint['model_state_dict']
+    _model_sd = model.state_dict()
+    _model_has_w13 = any(k == 'w13.weight' or k.endswith('.w13.weight') for k in _model_sd)
+    _ckpt_has_w1 = any(k == 'w1.weight' or k.endswith('.w1.weight') for k in _ckpt_sd)
+    _ckpt_has_w13 = any(k == 'w13.weight' or k.endswith('.w13.weight') for k in _ckpt_sd)
+    if _model_has_w13 and _ckpt_has_w1 and not _ckpt_has_w13:
+        from models.mixers import SwiGLU
+        _ckpt_sd = SwiGLU.convert_legacy_state_dict(_ckpt_sd)
+        print("[info] 检测到旧格式 SwiGLU 权重（w1/w3），已自动转换为 w13 合并格式")
+        checkpoint['model_state_dict'] = _ckpt_sd
+
     model.load_state_dict(checkpoint['model_state_dict'], strict=False)
-    # 架构型参数（hybrid_mix / ngram_gate）缺失/多余属静默质量风险，主动告警而非 strict 吞掉。
-    _arch_keys = ['hybrid_mix', 'ngram_gate']
+    # 架构型参数（hybrid_mix / ngram_gate / w13 / kv_decompress）缺失/多余属静默质量风险，主动告警。
+    _arch_keys = ['hybrid_mix', 'ngram_gate', 'w13.weight', 'kv_decompress']
     _missing = [k for k in model.state_dict().keys() if any(ak in k for ak in _arch_keys)
                 and k not in checkpoint['model_state_dict']]
     _extra = [k for k in checkpoint['model_state_dict'].keys() if any(ak in k for ak in _arch_keys)

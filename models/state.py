@@ -45,9 +45,15 @@ class BlockState:
 
     @property
     def start_pos(self) -> int:
-        """从 attn_kv 推断当前位置。"""
+        """从 attn_kv 推断当前位置。
+
+        两种缓存格式：
+        - 标准：(k, v)，k 为 4D (B, H, T, head_dim) → seq_len = k.size(2)
+        - MLA：(c_kv, None)，c_kv 为 3D (B, T, kv_latent_dim) → seq_len = c_kv.size(1)
+        """
         if self.attn_kv is not None and isinstance(self.attn_kv, tuple):
-            # attn_kv = (k, v) 或 (k, v, S, z)；k 的 shape = (B, H, T, D)
-            if len(self.attn_kv) >= 2 and isinstance(self.attn_kv[0], torch.Tensor):
-                return self.attn_kv[0].size(2)
+            if len(self.attn_kv) >= 1 and isinstance(self.attn_kv[0], torch.Tensor):
+                t = self.attn_kv[0]
+                # 4D = 标准 KV cache (B,H,T,D)；3D = MLA 潜空间 cache (B,T,latent)
+                return t.size(2) if t.dim() == 4 else t.size(1)
         return 0

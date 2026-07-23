@@ -3069,3 +3069,430 @@ def test_gate_cfg_all_features_forward_backward():
     # skip_gate 应收到梯度
     assert blk.skip_gate.grad is not None, "skip_gate 无梯度"
 
+
+# ============= 第十七轮 MLA 风格 KV 潜空间压缩回归测试 =============
+
+def test_mla_params_created():
+    """MLA 开启时创建 kv_compress/kv_decompress 参数（合并 GEMM）。"""
+    m = _small(use_mla_kv=True, kv_latent_dim=32)
+    attn = m.blocks[0].attn
+    assert hasattr(attn, 'kv_compress'), "MLA 应创建 kv_compress"
+    assert hasattr(attn, 'kv_decompress'), "MLA 应创建 kv_decompress（合并 GEMM）"
+    assert attn.kv_compress.in_features == 2 * 64, "kv_compress 输入应为 2*dim"
+    assert attn.kv_compress.out_features == 32, "kv_compress 输出应为 kv_latent_dim"
+    assert attn.kv_decompress.in_features == 32, "kv_decompress 输入应为 kv_latent_dim"
+    assert attn.kv_decompress.out_features == 2 * 64, "kv_decompress 输出应为 2*dim（K+V 合并）"
+
+
+def test_mla_disabled_no_params():
+    """MLA 关闭时不创建压缩参数（向后兼容）。"""
+    m = _small(use_mla_kv=False)
+    attn = m.blocks[0].attn
+    assert not hasattr(attn, 'kv_compress'), "MLA 关闭时不应创建 kv_compress"
+    assert not hasattr(attn, 'kv_decompress'), "MLA 关闭时不应创建 kv_decompress"
+    assert not attn.mla_kv_enabled
+
+
+def test_mla_forward_shape():
+    """MLA 前向输出形状与非 MLA 一致。"""
+    m = _small(use_mla_kv=True, kv_latent_dim=32)
+    m.eval()
+    ids = torch.randint(0, 200, (2, 8))
+    with torch.no_grad():
+        out = m(ids, use_cache=False)
+    assert _get_logits(out).shape == (2, 8, 200)
+
+
+def test_mla_project_and_norm_returns_c_kv():
+    """MLA 开启时 project_and_norm 返回四元组，c_kv 非空且形状正确。"""
+    m = _small(use_mla_kv=True, kv_latent_dim=32)
+    attn = m.blocks[0].attn
+    x = torch.randn(2, 8, 64)
+    q, k, v, c_kv = attn.project_and_norm(x)
+    assert q.shape == (2, 4, 8, 16), f"q shape 错误: {q.shape}"
+    assert c_kv is not None, "MLA 开启时 c_kv 应非空"
+    assert c_kv.shape == (2, 8, 32), f"c_kv shape 错误: {c_kv.shape}"
+
+
+def test_mla_disabled_c_kv_none():
+    """MLA 关闭时 project_and_norm 返回四元组但 c_kv=None。"""
+    m = _small(use_mla_kv=False)
+    attn = m.blocks[0].attn
+    x = torch.randn(2, 8, 64)
+    q, k, v, c_kv = attn.project_and_norm(x)
+    assert c_kv is None, "MLA 关闭时 c_kv 应为 None"
+
+
+def test_mla_cache_format():
+    """MLA cache 格式为 (c_kv, None) 而非 (k, v)。"""
+    m = _small(use_mla_kv=True, kv_latent_dim=32)
+    m.eval()
+    ids = torch.randint(0, 200, (1, 4))
+    with torch.no_grad():
+        out, present = m(ids, use_cache=True)
+    # present 是块级 (attn_kv, ssm_state, ssm_conv_state) 三元组
+    attn_kv = present[0][0]  # 第一块的 attn_kv
+    # attn_kv 应为 (c_kv, None) 格式
+    assert attn_kv[1] is None, "MLA cache 第二元素应为 None"
+    # c_kv 应为潜向量 (B, T, kv_latent_dim)
+    assert attn_kv[0].shape == (1, 4, 32), f"c_kv cache shape 错误: {attn_kv[0].shape}"
+
+
+def test_mla_cache_parity():
+    """MLA 全量前向与增量解码结果数值一致（max_diff<1e-4）。"""
+    m = _small(use_mla_kv=True, kv_latent_dim=32)
+    m.eval()
+    L = 8
+    ids = torch.randint(0, 200, (1, L))
+    with torch.no_grad():
+        full = m(ids, use_cache=False)
+        cached = m(ids, use_cache=True)
+    diff = (_get_logits(full) - _get_logits(cached)).abs().max().item()
+    assert diff < 1e-4, f"MLA 训练/推理不一致：max_diff={diff}"
+
+
+def test_mla_gradient_flow():
+    """MLA 梯度正确回流到 kv_compress/kv_decompress（合并 GEMM）。"""
+    m = _small(use_mla_kv=True, kv_latent_dim=32)
+    m.train()
+    ids = torch.randint(0, 200, (2, 8))
+    out = m(ids, use_cache=False)
+    logits = _get_logits(out)
+    logits.sum().backward()
+    attn = m.blocks[0].attn
+    assert attn.kv_compress.weight.grad is not None, "kv_compress 无梯度"
+    assert attn.kv_decompress.weight.grad is not None, "kv_decompress 无梯度"
+    assert attn.kv_decompress.weight.grad.shape == attn.kv_decompress.weight.shape, "kv_decompress 梯度形状错误"
+
+
+def test_mla_kv_latent_dim_compression():
+    """MLA 压缩比正确：c_kv 维度 = kv_latent_dim < 2*dim。"""
+    m = _small(use_mla_kv=True, kv_latent_dim=16)
+    attn = m.blocks[0].attn
+    # 原 K+V: 2 * dim = 128；压缩后 c_kv: 16；压缩比 8x
+    assert attn.kv_compress.in_features == 128, "kv_compress 输入应为 2*dim"
+    assert attn.kv_compress.out_features == 16, "kv_compress 输出应为 kv_latent_dim"
+    # 验证 cache 内存：present[0] 是 c_kv，维度 kv_latent_dim 而非 2*dim
+
+
+def test_mla_default_kv_latent_dim():
+    """MLA 默认 kv_latent_dim=dim（压缩 2x）。"""
+    m = _small(use_mla_kv=True)  # 不指定 kv_latent_dim
+    attn = m.blocks[0].attn
+    assert attn.kv_compress.out_features == 64, "默认 kv_latent_dim 应为 dim"
+
+
+def test_mla_with_memory_bank():
+    """MLA 与 MemoryBank 同时开启时前向+cache parity 正确。"""
+    m = _small(use_mla_kv=True, kv_latent_dim=32,
+               memory_size=16, memory_comp_dim=16)
+    m.eval()
+    L = 8
+    ids = torch.randint(0, 200, (1, L))
+    with torch.no_grad():
+        full = m(ids, use_cache=False)
+        cached = m(ids, use_cache=True)
+    diff = (_get_logits(full) - _get_logits(cached)).abs().max().item()
+    assert diff < 1e-4, f"MLA+MemoryBank 训练/推理不一致：max_diff={diff}"
+
+
+def test_mla_with_hybrid_block():
+    """MLA 与 hybrid 块（attn_linear mixer）兼容。"""
+    m = _small(use_mla_kv=True, kv_latent_dim=32,
+               layer_plan='attn,hybrid', mixer='attn_linear')
+    m.eval()
+    ids = torch.randint(0, 200, (2, 8))
+    with torch.no_grad():
+        out = m(ids, use_cache=False)
+    assert _get_logits(out).shape == (2, 8, 200)
+    # hybrid 块的 attn 也应有 MLA 参数
+    hybrid_attn = m.blocks[1].attn
+    assert hasattr(hybrid_attn, 'kv_compress'), "hybrid 块的 attn 应有 MLA 参数"
+
+
+def test_mla_hybrid_cache_parity():
+    """MLA + hybrid 块全量与增量解码一致。"""
+    m = _small(use_mla_kv=True, kv_latent_dim=32,
+               layer_plan='attn,hybrid', mixer='attn_linear')
+    m.eval()
+    L = 8
+    ids = torch.randint(0, 200, (1, L))
+    with torch.no_grad():
+        full = m(ids, use_cache=False)
+        cached = m(ids, use_cache=True)
+    diff = (_get_logits(full) - _get_logits(cached)).abs().max().item()
+    assert diff < 1e-4, f"MLA+hybrid 训练/推理不一致：max_diff={diff}"
+
+
+def test_mla_with_output_gate():
+    """MLA 与 Output Gating 同时开启时前向正确。"""
+    m = _small(use_mla_kv=True, kv_latent_dim=32, output_gate=True)
+    m.eval()
+    ids = torch.randint(0, 200, (2, 8))
+    with torch.no_grad():
+        out = m(ids, use_cache=False)
+    assert _get_logits(out).shape == (2, 8, 200)
+
+
+def test_mla_incremental_decode():
+    """MLA 增量解码：逐 token 生成不崩溃且与全量一致。"""
+    m = _small(use_mla_kv=True, kv_latent_dim=32)
+    m.eval()
+    L = 6
+    ids = torch.randint(0, 200, (1, L))
+    with torch.no_grad():
+        # 全量
+        full = m(ids, use_cache=False)
+        # 逐 token 增量（TransformerModel.forward 用 past_key_values，无 start_pos）
+        out, past = m(ids[:, :1], past_key_values=None, use_cache=True)
+        for t in range(1, L):
+            out, past = m(ids[:, t:t+1], past_key_values=past, use_cache=True)
+        # 比较最后一步 logits
+        full_last = _get_logits(full)[:, -1, :]
+        incr_last = _get_logits(out)[:, -1, :]
+    diff = (full_last - incr_last).abs().max().item()
+    assert diff < 1e-4, f"MLA 增量解码不一致：max_diff={diff}"
+
+
+# ======================== SwiGLU 合并回归测试（第十七轮） ========================
+
+def test_swiglu_fuse_creates_w13():
+    """fuse_swiglu=True 时创建 w13 而非 w1/w3。"""
+    from models.mixers import SwiGLU
+    s = SwiGLU(64, 128, fuse_swiglu=True)
+    assert hasattr(s, 'w13'), "fuse_swiglu=True 应创建 w13"
+    assert not hasattr(s, 'w1'), "fuse_swiglu=True 不应创建 w1"
+    assert not hasattr(s, 'w3'), "fuse_swiglu=True 不应创建 w3"
+    assert s.w13.weight.shape == (256, 64), f"w13 weight shape 应为 (256,64)，得到 {s.w13.weight.shape}"
+
+
+def test_swiglu_no_fuse_creates_w1_w3():
+    """fuse_swiglu=False（默认）创建 w1/w2/w3。"""
+    from models.mixers import SwiGLU
+    s = SwiGLU(64, 128)
+    assert hasattr(s, 'w1'), "默认应创建 w1"
+    assert hasattr(s, 'w3'), "默认应创建 w3"
+    assert not hasattr(s, 'w13'), "默认不应创建 w13"
+
+
+def test_swiglu_forward_equivalence():
+    """fuse_swiglu=True + 转换权重 → 前向输出与 fuse_swiglu=False 完全一致。"""
+    from models.mixers import SwiGLU
+    torch.manual_seed(42)
+    s_old = SwiGLU(64, 128, fuse_swiglu=False)
+    s_new = SwiGLU(64, 128, fuse_swiglu=True)
+    # 转换旧权重到新格式
+    old_sd = s_old.state_dict()
+    new_sd = SwiGLU.convert_legacy_state_dict(old_sd)
+    s_new.load_state_dict(new_sd)
+    s_old.eval()
+    s_new.eval()
+    x = torch.randn(2, 8, 64)
+    with torch.no_grad():
+        out_old = s_old(x)
+        out_new = s_new(x)
+    diff = (out_old - out_new).abs().max().item()
+    assert diff < 1e-6, f"fuse_swiglu 前向不等价：max_diff={diff}"
+
+
+def test_swiglu_state_dict_conversion():
+    """convert_legacy_state_dict 正确映射 w1/w3 → w13。"""
+    from models.mixers import SwiGLU
+    s_old = SwiGLU(64, 128, fuse_swiglu=False)
+    old_sd = s_old.state_dict()
+    assert 'w1.weight' in old_sd
+    assert 'w3.weight' in old_sd
+    new_sd = SwiGLU.convert_legacy_state_dict(old_sd)
+    assert 'w13.weight' in new_sd, "转换后应包含 w13.weight"
+    assert 'w1.weight' not in new_sd, "转换后不应包含 w1.weight"
+    assert 'w3.weight' not in new_sd, "转换后不应包含 w3.weight"
+    assert 'w2.weight' in new_sd, "w2.weight 应保留"
+    # 验证 w13 = cat([w1, w3], dim=0)
+    expected_w13 = torch.cat([old_sd['w1.weight'], old_sd['w3.weight']], dim=0)
+    assert torch.equal(new_sd['w13.weight'], expected_w13), "w13 应等于 cat([w1, w3], dim=0)"
+
+
+def test_swiglu_gradient_flow():
+    """fuse_swiglu=True 时梯度正确回流到 w13。"""
+    from models.mixers import SwiGLU
+    s = SwiGLU(64, 128, fuse_swiglu=True)
+    s.train()
+    x = torch.randn(2, 8, 64)
+    out = s(x)
+    out.sum().backward()
+    assert s.w13.weight.grad is not None, "w13 无梯度"
+    assert s.w2.weight.grad is not None, "w2 无梯度"
+    assert s.w13.weight.grad.shape == s.w13.weight.shape, "w13 梯度形状错误"
+
+
+def test_swiglu_fuse_model_forward_shape():
+    """完整模型 fuse_swiglu=True 前向形状正确。"""
+    m = _small(fuse_swiglu=True)
+    m.eval()
+    ids = torch.randint(0, 200, (2, 8))
+    with torch.no_grad():
+        out = m(ids, use_cache=False)
+    assert _get_logits(out).shape == (2, 8, 200)
+
+
+def test_swiglu_fuse_model_cache_parity():
+    """完整模型 fuse_swiglu=True 全量前向与 cache 前向数值一致。"""
+    m = _small(fuse_swiglu=True)
+    m.eval()
+    ids = torch.randint(0, 200, (1, 8))
+    with torch.no_grad():
+        full = m(ids, use_cache=False)
+        cached = m(ids, use_cache=True)
+    diff = (_get_logits(full) - _get_logits(cached)).abs().max().item()
+    assert diff < 1e-4, f"fuse_swiglu cache parity 失败：max_diff={diff}"
+
+
+def test_swiglu_fuse_model_gradient_flow():
+    """完整模型 fuse_swiglu=True 梯度回流到 w13。"""
+    m = _small(fuse_swiglu=True)
+    m.train()
+    ids = torch.randint(0, 200, (2, 8))
+    out = m(ids, use_cache=False)
+    logits = _get_logits(out)
+    logits.sum().backward()
+    ffn = m.blocks[0].ffn
+    assert hasattr(ffn, 'w13'), "模型 FFN 应有 w13 参数"
+    assert ffn.w13.weight.grad is not None, "w13 无梯度"
+
+
+def test_swiglu_fuse_model_incremental_decode():
+    """完整模型 fuse_swiglu=True 增量解码与全量一致。"""
+    m = _small(fuse_swiglu=True)
+    m.eval()
+    L = 6
+    ids = torch.randint(0, 200, (1, L))
+    with torch.no_grad():
+        full = m(ids, use_cache=False)
+        out, past = m(ids[:, :1], past_key_values=None, use_cache=True)
+        for t in range(1, L):
+            out, past = m(ids[:, t:t+1], past_key_values=past, use_cache=True)
+    full_last = _get_logits(full)[:, -1, :]
+    incr_last = _get_logits(out)[:, -1, :]
+    diff = (full_last - incr_last).abs().max().item()
+    assert diff < 1e-4, f"fuse_swiglu 增量解码不一致：max_diff={diff}"
+
+
+# ============= 第十七轮收尾：审查修复回归测试 =============
+
+def test_diff_attention_cache_layout_bhd():
+    """DifferentialAttention cache 统一为 (B,H,T,D) 布局，BlockState.start_pos 正确返回 seq_len。
+
+    修复 pre-existing bug：原 cache 为 (B,T,H,D)，BlockState.start_pos 取 size(2) 返回 num_heads
+    而非 seq_len，混合层计划下导致后续 attn 块 start_pos 错误。
+    """
+    from models.state import BlockState
+    # mixer='diff' 让 attn 块用 DifferentialAttention；layer_plan 用标准 attn block 类型
+    m = _small(layer_plan="attn,attn", mixer='diff')
+    m.eval()
+    L = 5
+    ids = torch.randint(0, 200, (1, L))
+    with torch.no_grad():
+        out, past = m(ids[:, :1], past_key_values=None, use_cache=True)
+    # past[0] 是第一个 diff 块的状态，attn_kv = (k1, k2, v)，各 (B,H,T,D)
+    bs = BlockState.from_tuple(past[0])
+    assert bs is not None and bs.attn_kv is not None
+    k1 = bs.attn_kv[0]
+    # (B,H,T,D) 布局：size(2) 应为 seq_len=1，不是 num_heads=4
+    assert k1.dim() == 4, f"diff cache k1 应为 4D，实际 {k1.dim()}D"
+    assert k1.size(2) == 1, f"diff cache k1 size(2) 应为 seq_len=1，实际 {k1.size(2)}（疑似 num_heads）"
+    # start_pos 应返回 1（已解码 1 token）
+    assert bs.start_pos == 1, f"diff 块 start_pos 应为 1，实际 {bs.start_pos}"
+
+
+def test_diff_attention_incremental_decode():
+    """DifferentialAttention 增量解码不崩溃且与全量一致。"""
+    m = _small(layer_plan="attn,attn", mixer='diff')
+    m.eval()
+    L = 6
+    ids = torch.randint(0, 200, (1, L))
+    with torch.no_grad():
+        full = m(ids, use_cache=False)
+        out, past = m(ids[:, :1], past_key_values=None, use_cache=True)
+        for t in range(1, L):
+            out, past = m(ids[:, t:t+1], past_key_values=past, use_cache=True)
+    full_last = _get_logits(full)[:, -1, :]
+    incr_last = _get_logits(out)[:, -1, :]
+    diff = (full_last - incr_last).abs().max().item()
+    assert diff < 1e-4, f"diff 增量解码不一致：max_diff={diff}"
+
+
+def test_mla_with_diff_mixer_raises():
+    """MLA + mixer='diff' 应在 AttnConfig 校验时 raise（DifferentialAttention 不支持 MLA）。"""
+    from models.model_config import AttnConfig
+    import pytest
+    with pytest.raises(ValueError, match="use_mla_kv=True 仅支持"):
+        AttnConfig(mixer='diff', use_mla_kv=True)
+
+
+def test_swiglu_convert_legacy_w3_before_w1():
+    """convert_legacy_state_dict 预扫描：w3 在 w1 之前迭代时不残留 w3.weight。"""
+    from models.mixers import SwiGLU
+    s = SwiGLU(64, 128, fuse_swiglu=False)
+    old_sd = s.state_dict()
+    # 手动构造 w3 在 w1 之前的迭代顺序
+    ordered = {'w3.weight': old_sd['w3.weight'],
+               'w2.weight': old_sd['w2.weight'],
+               'w1.weight': old_sd['w1.weight']}
+    new_sd = SwiGLU.convert_legacy_state_dict(ordered)
+    assert 'w13.weight' in new_sd, "应生成 w13.weight"
+    assert 'w1.weight' not in new_sd, "不应残留 w1.weight"
+    assert 'w3.weight' not in new_sd, "不应残留 w3.weight（预扫描修复）"
+    assert 'w2.weight' in new_sd, "w2.weight 应保留"
+    expected = torch.cat([old_sd['w1.weight'], old_sd['w3.weight']], dim=0)
+    assert torch.equal(new_sd['w13.weight'], expected), "w13 应等于 cat([w1, w3], dim=0)"
+
+
+def test_sync_window_eval_skips_after_first():
+    """_sync_window 推理期首次同步后跳过，避免每步 DML CPU 同步税。"""
+    m = _small(learn_window=True, attn_window=8)
+    attn = m.blocks[0].attn
+    attn.eval()
+    assert not attn._window_synced, "初始 _window_synced 应为 False"
+    # 首次前向触发同步
+    ids = torch.randint(0, 200, (1, 4))
+    with torch.no_grad():
+        m(ids)
+    assert attn._window_synced, "首次前向后 _window_synced 应为 True"
+    # 记录窗口值，再次前向不应改变（推理期跳过）
+    w_before = attn.window
+    with torch.no_grad():
+        m(ids)
+    assert attn.window == w_before, "推理期窗口不应变化"
+
+
+def test_checkpoint_autoload_swiglu_conversion():
+    """checkpoint 加载时自动检测并转换 SwiGLU w1/w3 → w13 格式。
+
+    验证 checkpoint.py 中 load_model 的转换条件逻辑（不依赖实际文件 IO）。
+    """
+    from models.mixers import SwiGLU
+    # 模拟旧格式 checkpoint 的 state_dict（fuse_swiglu=False 训练产生 w1/w3）
+    m_old = _small(fuse_swiglu=False)
+    ckpt_sd = m_old.state_dict()
+    # 模拟 fuse_swiglu=True 模型的 state_dict（有 w13）
+    m_new = _small(fuse_swiglu=True)
+    model_sd = m_new.state_dict()
+    # 验证转换条件检测
+    model_has_w13 = any(k == 'w13.weight' or k.endswith('.w13.weight') for k in model_sd)
+    ckpt_has_w1 = any(k == 'w1.weight' or k.endswith('.w1.weight') for k in ckpt_sd)
+    ckpt_has_w13 = any(k == 'w13.weight' or k.endswith('.w13.weight') for k in ckpt_sd)
+    assert model_has_w13, "fuse_swiglu=True 模型应含 w13"
+    assert ckpt_has_w1, "fuse_swiglu=False checkpoint 应含 w1"
+    assert not ckpt_has_w13, "fuse_swiglu=False checkpoint 不应含 w13"
+    # 执行转换（与 checkpoint.py load_model 中逻辑一致）
+    converted = SwiGLU.convert_legacy_state_dict(ckpt_sd)
+    assert any(k == 'w13.weight' or k.endswith('.w13.weight') for k in converted), "转换后应含 w13"
+    assert not any(k == 'w1.weight' or k.endswith('.w1.weight') for k in converted), "转换后不应含 w1"
+    # 转换后应能加载到 fuse_swiglu=True 模型
+    m_new.load_state_dict(converted, strict=False)
+    # 验证 w13 权重正确加载（非随机初始化）
+    w13_loaded = m_new.blocks[0].ffn.w13.weight
+    w13_expected = torch.cat([ckpt_sd['blocks.0.ffn.w1.weight'],
+                              ckpt_sd['blocks.0.ffn.w3.weight']], dim=0)
+    assert torch.equal(w13_loaded, w13_expected), "w13 权重应等于 cat([w1, w3], dim=0)"
+

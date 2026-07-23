@@ -109,6 +109,17 @@ class RotaryEmbedding(nn.Module):
         cos, sin = self._get_cos_sin(start_pos, q.size(2), q.device, q.dtype, max_len=max_len)
         return self._rope_apply(q, cos, sin), self._rope_apply(k, cos, sin)
 
+    def apply_to_single(self, x: torch.Tensor, start_pos: int = 0, max_len: int = 2048) -> torch.Tensor:
+        """对单个张量应用 RoPE（第十七轮 MLA 支持）。
+
+        MLA 场景：q 在 project_and_norm 中应用 RoPE（位置 start_pos），
+        k 在 attend 内部还原后应用 RoPE（位置 0..T_total-1，拼接后）。
+        与 forward(q,k) 的区别：forward 假设 q,k 同长度（project_and_norm 中未拼接），
+        apply_to_single 支持独立长度和独立 start_pos（attend 中 k 是拼接后的 T_total）。
+        """
+        cos, sin = self._get_cos_sin(start_pos, x.size(2), x.device, x.dtype, max_len=max_len)
+        return self._rope_apply(x, cos, sin)
+
     @staticmethod
     def _rope_apply(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
         # 第十五轮：Partial RoPE——支持部分维度旋转。
