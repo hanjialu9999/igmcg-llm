@@ -271,26 +271,29 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
 def validate(model, dataloader, criterion, device):
     """Validate model"""
     model.eval()
-    model.set_enhancements_active(True)  # 验证用增强开启模式，反映训练所得“开”行为
-    loss_meter = AverageMeter()
-    
+    model.set_enhancements_active(True)  # 验证用增强开启模式，反映训练所得"开"行为
+    # GPU 累加 loss，仅在末尾 .item() 同步一次（避免每 batch 的 DML→CPU 同步税）
+    loss_sum = torch.zeros(1, device=device)
+    loss_count = 0
+
     with torch.no_grad():
         for batch in dataloader:
             input_ids = batch['input_ids'].to(device, non_blocking=True)
             target_ids = batch['target_ids'].to(device, non_blocking=True)
-            
+
             # Forward pass
             logits = model(input_ids)
-            
+
             # Reshape for loss calculation
             logits = logits.view(-1, logits.size(-1))
             target_ids = target_ids.view(-1)
-            
+
             # Calculate loss
             loss = criterion(logits, target_ids)
-            loss_meter.update(loss.item())
-    
-    return loss_meter.avg
+            loss_sum = loss_sum + loss.detach()
+            loss_count += 1
+
+    return (loss_sum / max(1, loss_count)).item()
 
 
 

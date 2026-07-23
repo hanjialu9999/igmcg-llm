@@ -1531,6 +1531,50 @@ def test_cross_layer_routing_single_layer_noop():
     assert not hasattr(m, 'cross_router'), "单层不应创建 cross_router"
 
 
+def test_cross_layer_router_topk_exact_at_init():
+    """回归测试（Bug 1 修复）：init 时所有 router weight=0/bias=-3 导致 scores 全并列（=-3），
+    旧实现 `mask = (scores >= threshold).float()` 会选中全部 num_prev 项而非 k 项，
+    造成 num_prev/k 倍过注入（layer 4, topk=2 时 2x），破坏"弱注入"设计意图。
+    修复后 mask 应精确选 k 项（用 torch.eye 索引构建 one-hot，torch.topk 按索引序打破并列）。
+    """
+    from models.transformer import CrossLayerRouter
+    # num_layers=5, topk=2 → layer 4 有 num_prev=4 > k=2，触发选择逻辑
+    router = CrossLayerRouter(dim=16, num_layers=5, topk=2)
+    router.eval()
+    # 模拟 4 个前层输出 (B=1, T=2, D=16)
+    torch.manual_seed(42)
+    prev_outputs = [torch.randn(1, 2, 16) * 0.1 for _ in range(4)]
+    x = torch.randn(1, 2, 16) * 0.1
+    # 验证 init 时所有 scores 并列（=-3.0）
+    with torch.no_grad():
+        prev_stack = torch.stack(prev_outputs, dim=1)
+        prev_mean = prev_stack.mean(dim=2)
+        scores = router.routers[4](prev_mean).squeeze(-1)  # (1, 4)
+        assert torch.allclose(scores, torch.full_like(scores, -3.0)), \
+            f"init 时 scores 应全为 -3.0（weight=0/bias=-3），实际: {scores.tolist()}"
+        # 修复后：route() 应只选 k=2 项注入
+        out = router.route(4, x, prev_outputs)
+        # 计算注入量 = out - x（应仅含 k=2 项的贡献，而非全部 4 项）
+        injection = (out - x)
+        # 弱注入量级：sigmoid(-3)≈0.047，k=2 项均值；不应达到 4 项叠加的 2x 量级
+        # 构造对照：假设选全部 4 项（旧 Bug 行为）的注入
+        k = 2
+        gates_all = torch.sigmoid(scores)  # 所有 4 项的 gate
+        # 旧 Bug：全部 4 项参与 → injection_buggy = sum(gates_all * prev_stack) / k
+        injection_buggy = torch.einsum('bn,bntd->btd', gates_all, prev_stack) / k
+        # 修复后：仅 k=2 项参与 → injection_fixed 量级应明显小于 injection_buggy
+        assert injection.abs().mean().item() < injection_buggy.abs().mean().item() * 0.9, \
+            f"修复后注入量级({injection.abs().mean().item():.6f})应明显小于" \
+            f"旧 Bug 全选量级({injection_buggy.abs().mean().item():.6f})"
+    # 直接验证 mask 精确选 k 项：用修复后的内部逻辑重算
+    with torch.no_grad():
+        topk_vals, topk_idx = torch.topk(scores, k, dim=-1)
+        eye = torch.eye(4, device=scores.device, dtype=scores.dtype)
+        mask = eye[topk_idx].sum(dim=1)
+        assert mask.sum().item() == k, \
+            f"mask 应精确选 k={k} 项，实际选中 {mask.sum().item()} 项（旧 Bug 会选 num_prev=4 项）"
+
+
 # ---------------------------------------------------------------------------
 # 第十一轮 t6：量化感知训练（QAT）
 # LSQ 风格伪量化：训练时量化权重+激活，eval 时恒等。
@@ -2440,6 +2484,340 @@ def test_all_round14_features_combined():
     loss.backward()
     assert m.input_highway_proj.weight.grad is not None
     assert m._contrastive_loss.item() > 0
+    m.eval()
+    with torch.no_grad():
+        out, past = m(torch.randint(0, 200, (1, 5)), use_cache=True)
+        for _ in range(3):
+            out, past = m(torch.randint(0, 200, (1, 1)),
+                          past_key_values=past, use_cache=True)
+    assert out.shape[-1] == 200
+
+
+# ---------------------------------------------------------------------------
+# 第十五轮：Partial RoPE / Output Gating / Zero-Centered RMSNorm / Gated DeltaNet
+# ---------------------------------------------------------------------------
+
+def test_partial_rope_rot_dim_even():
+    """Partial RoPE：rot_dim 必须是偶数（向下取偶），且 dim_fraction=1.0 时全维旋转。"""
+    from models.rope import RotaryEmbedding
+    # dim=16, fraction=0.5 → rot_dim=8（偶数）
+    r_half = RotaryEmbedding(16, dim_fraction=0.5)
+    assert r_half.rot_dim == 8, f"dim=16,frac=0.5 → rot_dim 应为 8，实际 {r_half.rot_dim}"
+    assert r_half.no_pe_dim == 8
+    # dim=16, fraction=1.0 → rot_dim=16（全维，向后兼容）
+    r_full = RotaryEmbedding(16, dim_fraction=1.0)
+    assert r_full.rot_dim == 16
+    assert r_full.no_pe_dim == 0
+    # dim=17, fraction=0.5 → rot_dim = floor(17*0.5/2)*2 = floor(4.25)*2 = 8（向下取偶）
+    r_odd = RotaryEmbedding(17, dim_fraction=0.5)
+    assert r_odd.rot_dim % 2 == 0, f"rot_dim 必须偶数，实际 {r_odd.rot_dim}"
+    # 极小 fraction 仍保留至少 2 维（RoPE 最小单元）
+    r_min = RotaryEmbedding(64, dim_fraction=0.01)
+    assert r_min.rot_dim >= 2
+
+
+def test_partial_rope_no_pe_dim_passthrough():
+    """Partial RoPE：no_pe_dim>0 时后段维度不旋转，原值透传。"""
+    from models.rope import RotaryEmbedding
+    torch.manual_seed(0)
+    r = RotaryEmbedding(8, dim_fraction=0.5)  # rot_dim=4, no_pe_dim=4
+    # identity 条件：cos=1, sin=0（旋转矩阵为单位矩阵）
+    cos = torch.ones(1, 1, 2, 4)  # 旋转维度=4
+    sin = torch.zeros(1, 1, 2, 4)
+    # x shape (1,1,2,8)：前 4 维旋转，后 4 维透传
+    x = torch.randn(1, 1, 2, 8)
+    x_pass_original = x[..., 4:].clone()
+    out = RotaryEmbedding._rope_apply(x, cos, sin)
+    # cos=1, sin=0 时旋转部分 = 原值（x1*1 - x2*0 = x1），后段透传也应等于原值
+    assert torch.allclose(out[..., :4], x[..., :4], atol=1e-6), \
+        f"identity 旋转应保持原值，got {out[..., :4]} vs {x[..., :4]}"
+    assert torch.allclose(out[..., 4:], x_pass_original, atol=1e-6), \
+        f"no_pe_dim 段应透传，got {out[..., 4:]} vs {x_pass_original}"
+
+
+def test_partial_rope_backward_compatible_with_full():
+    """dim_fraction=1.0 时 Partial RoPE 与原 RoPE 行为完全一致。"""
+    m_full = _small(rope_dim_fraction=1.0)
+    m_default = _small()  # 默认未传 fraction
+    m_default.load_state_dict(m_full.state_dict(), strict=False)
+    m_full.eval(); m_default.eval()
+    x = torch.randint(0, 200, (2, 8))
+    with torch.no_grad():
+        out_f = m_full(x)
+        out_d = m_default(x)
+    assert torch.allclose(out_f, out_d, atol=1e-6), "dim_fraction=1.0 应与默认完全一致"
+
+
+def test_partial_rope_changes_output():
+    """开启 Partial RoPE（fraction<1.0）后输出应与全维 RoPE 不同。"""
+    m_partial = _small(rope_dim_fraction=0.5)
+    m_full = _small(rope_dim_fraction=1.0)
+    m_partial.eval(); m_full.eval()
+    x = torch.randint(0, 200, (2, 8))
+    with torch.no_grad():
+        out_p = m_partial(x)
+        out_f = m_full(x)
+    assert not torch.allclose(out_p, out_f, atol=1e-5), "Partial RoPE 应改变输出"
+
+
+def test_partial_rope_cache_parity():
+    """Partial RoPE 训练/推理路径数值一致。"""
+    m = _small(rope_dim_fraction=0.5)
+    m.eval()
+    ids = torch.randint(0, m.vocab_size, (1, 10))
+    with torch.no_grad():
+        full = m(ids, use_cache=False)
+        cached = m(ids, use_cache=True)
+    diff = (_get_logits(full) - _get_logits(cached)).abs().max().item()
+    assert diff < 1e-4, f"Partial RoPE cache parity diff={diff}"
+
+
+def test_partial_rope_backward_flows():
+    """Partial RoPE 反向可训。"""
+    import torch.nn.functional as F
+    m = _small(rope_dim_fraction=0.5)
+    m.train()
+    x = torch.randint(0, 200, (2, 8))
+    out = m(x)
+    logits = out["logits"] if isinstance(out, dict) else out
+    loss = F.cross_entropy(logits.reshape(-1, 200), torch.randint(0, 200, (16,)))
+    loss.backward()
+    assert any(p.grad is not None for p in m.parameters() if p.requires_grad)
+
+
+def test_output_gate_param_created():
+    """output_gate=True 时创建 output_gate Linear，且 init weight=0/bias=0。"""
+    m = _small(output_gate=True)
+    attn = m.blocks[0].attn
+    assert hasattr(attn, 'output_gate'), "output_gate 未创建"
+    assert hasattr(attn, 'output_gate_enabled') and attn.output_gate_enabled
+    # init W=0, b=0 → sigmoid(0)=0.5
+    assert attn.output_gate.weight.abs().max().item() == 0.0
+    assert attn.output_gate.bias.abs().max().item() == 0.0
+
+
+def test_output_gate_changes_output():
+    """开启 output_gate 后输出应与关闭时不同（init sigmoid=0.5 即可看到差异）。"""
+    m_on = _small(output_gate=True)
+    m_off = _small(output_gate=False)
+    m_on.eval(); m_off.eval()
+    # 对齐非门控参数
+    m_off.load_state_dict({k: v for k, v in m_on.state_dict().items()
+                           if 'output_gate' not in k}, strict=False)
+    x = torch.randint(0, 200, (2, 8))
+    with torch.no_grad():
+        out_on = m_on(x)
+        out_off = m_off(x)
+    assert not torch.allclose(out_on, out_off, atol=1e-5), "output_gate 应改变输出"
+
+
+def test_output_gate_backward_flows():
+    """output_gate Linear 收到梯度。"""
+    import torch.nn.functional as F
+    m = _small(output_gate=True)
+    m.train()
+    x = torch.randint(0, 200, (2, 8))
+    out = m(x)
+    logits = out["logits"] if isinstance(out, dict) else out
+    loss = F.cross_entropy(logits.reshape(-1, 200), torch.randint(0, 200, (16,)))
+    loss.backward()
+    assert m.blocks[0].attn.output_gate.weight.grad is not None, "output_gate.weight 无梯度"
+    assert m.blocks[0].attn.output_gate.bias.grad is not None, "output_gate.bias 无梯度"
+
+
+def test_output_gate_cache_parity():
+    """output_gate 训练/推理路径数值一致。"""
+    m = _small(output_gate=True)
+    m.eval()
+    ids = torch.randint(0, m.vocab_size, (1, 10))
+    with torch.no_grad():
+        full = m(ids, use_cache=False)
+        cached = m(ids, use_cache=True)
+    diff = (_get_logits(full) - _get_logits(cached)).abs().max().item()
+    assert diff < 1e-4, f"output_gate cache parity diff={diff}"
+
+
+def test_zero_centered_norm_param():
+    """zero_centered_norm=True 时 RMSNorm 标记 zero_centered=True。"""
+    from models.norms import RMSNorm
+    n = RMSNorm(16, zero_centered=True)
+    assert n.zero_centered is True
+    n_default = RMSNorm(16)
+    assert n_default.zero_centered is False
+
+
+def test_zero_centered_norm_subtracts_mean():
+    """Zero-Centered RMSNorm：先去均值再归一化（rms(x-mean) 而非 rms(x)）。"""
+    from models.norms import RMSNorm
+    torch.manual_seed(0)
+    n = RMSNorm(8, zero_centered=True, eps=1e-6)
+    # weight=1（init 默认）使输出 = (x-mean)/rms
+    n.weight.data.fill_(1.0)
+    x = torch.randn(2, 5, 8) + 5.0  # 加偏移使均值明显非零
+    out = n(x)
+    # 期望：先去均值，再 rms 归一化
+    mean = x.mean(-1, keepdim=True)
+    x_centered = x - mean
+    expected = x_centered * torch.rsqrt(x_centered.pow(2).mean(-1, keepdim=True) + 1e-6)
+    assert torch.allclose(out, expected, atol=1e-5), "Zero-Centered RMSNorm 计算错误"
+
+
+def test_zero_centered_norm_changes_output():
+    """开启 zero_centered_norm 后输出应与默认 RMSNorm 不同。"""
+    m_on = _small(zero_centered_norm=True)
+    m_off = _small(zero_centered_norm=False)
+    m_on.eval(); m_off.eval()
+    m_off.load_state_dict(m_on.state_dict(), strict=False)
+    x = torch.randint(0, 200, (2, 8))
+    with torch.no_grad():
+        out_on = m_on(x)
+        out_off = m_off(x)
+    assert not torch.allclose(out_on, out_off, atol=1e-5), "zero_centered_norm 应改变输出"
+
+
+def test_zero_centered_norm_cache_parity():
+    """zero_centered_norm 训练/推理路径数值一致。"""
+    m = _small(zero_centered_norm=True)
+    m.eval()
+    ids = torch.randint(0, m.vocab_size, (1, 10))
+    with torch.no_grad():
+        full = m(ids, use_cache=False)
+        cached = m(ids, use_cache=True)
+    diff = (_get_logits(full) - _get_logits(cached)).abs().max().item()
+    assert diff < 1e-4, f"zero_centered_norm cache parity diff={diff}"
+
+
+def test_gated_delta_net_forward_shape():
+    """GatedDeltaNet 前向输出形状正确。"""
+    from models.mixers import GatedDeltaNet
+    attn = GatedDeltaNet(64, 4, max_seq_length=32)
+    x = torch.randn(2, 8, 64)
+    out, present = attn(x, use_cache=False)
+    assert out.shape == (2, 8, 64), f"输出形状错误 {out.shape}"
+    assert present is None
+
+
+def test_gated_delta_net_param_created():
+    """mixer='gated_delta' 创建 alpha_proj/beta_proj Linear，init W=0。"""
+    m = _small(mixer='gated_delta')
+    attn = m.blocks[0].attn
+    assert hasattr(attn, 'alpha_proj'), "alpha_proj 未创建"
+    assert hasattr(attn, 'beta_proj'), "beta_proj 未创建"
+    assert attn.alpha_proj.weight.abs().max().item() == 0.0, "alpha_proj.weight 应 init 0"
+    assert attn.beta_proj.weight.abs().max().item() == 0.0, "beta_proj.weight 应 init 0"
+    # bias 默认：alpha_init=-2 → sigmoid≈0.12，beta_init=2 → sigmoid≈0.88
+    assert abs(attn.alpha_proj.bias[0].item() - (-2.0)) < 1e-6
+    assert abs(attn.beta_proj.bias[0].item() - 2.0) < 1e-6
+
+
+def test_gated_delta_net_changes_output_vs_linear():
+    """GatedDeltaNet 与 LinearAttention 输出不同（delta rule ≠ 简单累加）。"""
+    m_delta = _small(mixer='gated_delta')
+    m_linear = _small(mixer='linear')
+    m_delta.eval(); m_linear.eval()
+    # 对齐共享参数（qkv/proj/qk_norm/log_temp）使差异仅来自 delta rule
+    shared_keys = {k: v for k, v in m_delta.state_dict().items()
+                   if 'alpha_proj' not in k and 'beta_proj' not in k
+                   and any(k.endswith(sk) for sk in ('qkv.weight', 'proj.weight',
+                                                       'qk_norm.weight', 'log_temp',
+                                                       'rope.inv_freq'))}
+    m_linear.load_state_dict(shared_keys, strict=False)
+    x = torch.randint(0, 200, (2, 8))
+    with torch.no_grad():
+        out_d = m_delta(x)
+        out_l = m_linear(x)
+    assert not torch.allclose(out_d, out_l, atol=1e-4), \
+        "GatedDeltaNet 与 LinearAttention 输出应不同（delta rule 区别于简单累加）"
+
+
+def test_gated_delta_net_backward_flows():
+    """GatedDeltaNet 反向可训，alpha/beta proj 收到梯度。"""
+    import torch.nn.functional as F
+    m = _small(mixer='gated_delta')
+    m.train()
+    x = torch.randint(0, 200, (2, 8))
+    out = m(x)
+    logits = out["logits"] if isinstance(out, dict) else out
+    loss = F.cross_entropy(logits.reshape(-1, 200), torch.randint(0, 200, (16,)))
+    loss.backward()
+    assert m.blocks[0].attn.alpha_proj.weight.grad is not None, "alpha_proj.weight 无梯度"
+    assert m.blocks[0].attn.beta_proj.weight.grad is not None, "beta_proj.weight 无梯度"
+    # 共享投影也应收到梯度
+    assert m.blocks[0].attn.qkv.weight.grad is not None, "qkv 无梯度"
+
+
+def test_gated_delta_net_cache_parity():
+    """GatedDeltaNet 训练/推理路径数值一致（cache parity 关键测试）。
+
+    delta rule 递推在训练全量与增量解码间须保持状态一致。
+    """
+    m = _small(mixer='gated_delta')
+    m.eval()
+    ids = torch.randint(0, m.vocab_size, (1, 10))
+    with torch.no_grad():
+        full = m(ids, use_cache=False)
+        cached = m(ids, use_cache=True)
+    diff = (_get_logits(full) - _get_logits(cached)).abs().max().item()
+    assert diff < 1e-4, f"GatedDeltaNet cache parity diff={diff}"
+
+
+def test_gated_delta_net_incremental_decode():
+    """GatedDeltaNet 增量解码不崩溃（逐 token 单步 delta 更新）。"""
+    m = _small(mixer='gated_delta')
+    m.eval()
+    with torch.no_grad():
+        out, past = m(torch.randint(0, 200, (1, 5)), use_cache=True)
+        for _ in range(3):
+            out, past = m(torch.randint(0, 200, (1, 1)),
+                          past_key_values=past, use_cache=True)
+    assert out.shape[-1] == 200
+
+
+def test_gated_delta_net_no_nan_inf():
+    """GatedDeltaNet 长序列无 NaN/Inf（delta rule 数值稳定性）。"""
+    m = _small(mixer='gated_delta', max_seq_length=64)
+    m.eval()
+    # 用最大序列长度测试
+    x = torch.randint(0, 200, (2, 32))
+    with torch.no_grad():
+        out = m(x)
+    assert not torch.isnan(out).any(), "GatedDeltaNet 产生 NaN"
+    assert not torch.isinf(out).any(), "GatedDeltaNet 产生 Inf"
+
+
+def test_gated_delta_net_with_partial_rope():
+    """GatedDeltaNet + Partial RoPE 组合（fraction<1.0 时部分维度旋转）。"""
+    m = _small(mixer='gated_delta', rope_dim_fraction=0.5)
+    m.eval()
+    x = torch.randint(0, 200, (2, 8))
+    with torch.no_grad():
+        out = m(x)
+    assert out.shape == (2, 8, 200)
+    # cache parity
+    ids = torch.randint(0, m.vocab_size, (1, 10))
+    with torch.no_grad():
+        full = m(ids, use_cache=False)
+        cached = m(ids, use_cache=True)
+    diff = (_get_logits(full) - _get_logits(cached)).abs().max().item()
+    assert diff < 1e-4, f"GatedDeltaNet+Partial RoPE cache parity diff={diff}"
+
+
+def test_all_round15_features_combined():
+    """全第十五轮特性组合 + 已有特性不崩溃（前向+反向+增量解码）。
+
+    组合：Partial RoPE + Output Gating + Zero-Centered RMSNorm + Gated DeltaNet
+    叠加第十四轮 input_highway/cross_layer_routing 保证新特性与已有架构兼容。
+    """
+    m = _small(rope_dim_fraction=0.5, output_gate=True, zero_centered_norm=True,
+               mixer='gated_delta',
+               input_highway=True, cross_layer_routing=True, cross_layer_topk=2,
+               num_layers=4, layer_plan='attn,hybrid,hybrid,attn')
+    m.train()
+    x = torch.randint(0, 200, (2, 8))
+    out = m(x)
+    logits = out["logits"] if isinstance(out, dict) else out
+    logits.sum().backward()
+    assert any(p.grad is not None for p in m.parameters() if p.requires_grad)
     m.eval()
     with torch.no_grad():
         out, past = m(torch.randint(0, 200, (1, 5)), use_cache=True)

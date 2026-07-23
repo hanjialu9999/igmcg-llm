@@ -9,6 +9,31 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
+## `（本地，基于 `d21464b`，待推送，第十五轮：新架构特性 + 性能优化 + 代码债清理）
+
+- feat: **Gated DeltaNet（delta rule + α/β 门控）**——`models/mixers.py` 新增 `GatedDeltaNet` 类（继承 `LinearMixerBase`），递推改为 `S_t = α_t·S_{t-1} + β_t·(v_t - S_{t-1}·k_t)⊗k_t`（gated delta rule），替代 LinearAttention 的纯加法更新。α/β 门控 per-head per-token 由输入 x 经线性+sigmoid 决定（init W=0, bias α=-2/β=2 → sigmoid 0.12/0.88 弱遗忘强写入起步）。k L2 归一化保证 delta rule 谱半径<1。config: `mixer='gated_delta'`。灵感：Gated DeltaNet (ICLR 2025) + Qwen3-Next + Kimi KDA。
+- feat: **Partial RoPE（仅前 k% 维度加 RoPE）**——`models/rope.py` `RotaryEmbedding` 新增 `dim_fraction` 参数（默认 1.0 全维，向后兼容）。`rot_dim = max(2, int(dim*fraction)//2*2)`（向下取偶），后段 `no_pe_dim` 维度不旋转（NoPE 纯内容维度）。`_rope_apply` 拆分前段旋转+后段透传。config: `rope_dim_fraction`。灵感：Qwen3-Next（前 25%）+ MLA Decoupled RoPE。
+- feat: **Output Gating（注意力输出门控）**——`models/mixers.py` `SlidingWindowCausalSelfAttention` 新增 `output_gate` Linear（dim→dim），attend 输出后 `out = out * sigmoid(W·out + b)`（init W=0, b=0 → sigmoid 0.5 半通起步）。消除 Attention Sink / Massive Activation。`_run_attn_mixer` ckpt 路径补应用（ckpt 绕过 forward 直接调 attend，须显式补 output_gate）。config: `output_gate`。灵感：Qwen3-Next Output Gating。
+- feat: **Zero-Centered RMSNorm**——`models/norms.py` `RMSNorm` 新增 `zero_centered` 选项（默认 False），先去均值 `x = x - mean(x)` 再 rms 归一化。防止 norm 权重异常增大（Massive Activation），DML 数值稳定性提升。`TransformerModel` 正确传递到 ln1/ln2/ln_f（修复 bug：原构造器接受 `zero_centered_norm` 但未传给 `TransformerBlock`）。config: `zero_centered_norm`。灵感：Qwen3-Next Zero-Centered RMSNorm。
+- fix: **GatedDeltaNet/output_gate 专用初始化被 _init_weights 覆盖（HIGH）**——`_apply_specialized_inits` 遍历 blocks 重置 alpha_proj/beta_proj（weight=0, bias=alpha_init/beta_init）和 output_gate（weight=0, bias=0），恢复专用初始化设计意图。
+- fix: **zero_centered_norm 未传递给 TransformerBlock（HIGH）**——`TransformerModel.__init__` 接受 `zero_centered_norm` 参数但构造 blocks 时未传递，导致所有 RMSNorm 恒用默认 False。修复：显式传 `zero_centered_norm=zero_centered_norm`。同时修复 `ln_f` 也使用 zero_centered。
+- fix: **output_gate 在 ckpt 路径未应用（HIGH）**——`_run_attn_mixer` 的 ckpt+attend 路径绕过 `SlidingWindowCausalSelfAttention.forward`（output_gate 在 forward 中应用），导致训练时 output_gate 参数无梯度。修复：ckpt 路径后显式补 `h = h * sigmoid(output_gate(h))`。
+- fix: **AxialLinearAttention super().__init__() 位置参数错位（HIGH）**——`AxialLinearAttention.__init__` 用位置参数调 `super().__init__()`，`shared_qkv` 被传到 `rope_dim_fraction` 位置导致 `TypeError: float() argument must be a string or a real number, not 'NoneType'`。修复：改用关键字参数。
+- fix: **Partial RoPE 测试期望错误（LOW）**——`test_partial_rope_no_pe_dim_passthrough` 用 cos=sin=0 期望 identity，但 RoPE identity 条件是 cos=1,sin=0。修复测试。
+- perf: **validate() GPU 累加 loss**——`scripts/train.py` `validate()` 原每 batch `loss.item()` 同步 DML→CPU，改为 GPU 张量累加仅在末尾 `.item()` 一次，消除 N-1 次同步税。
+- refactor: **MambaSSMWithCAST forward 去重**——提取 `_compute_dA_and_xb` 方法到 `MambaSSM`，`MambaSSMWithCAST` 只覆盖此方法（添加 CAST A_delta），删除 ~35 行重复 forward 代码。同时修复 CAST 旧 forward 缺失 `conv_kernel=1` 防御检查（基类有 `keep = max(conv_kernel-1, 0)` 保护，CAST 旧代码直接 `-(conv_kernel-1)` 在 kernel=1 时返回全长序列）。
+- smoke: **双配置 CPU 训练验证**——
+  - config_smoke_features_v4.yaml（Partial RoPE + Output Gating + Zero-Centered RMSNorm + 全套跨层协作）：225 步 Train 8.83 / Val 14.19 / ~1300 tok/s。
+  - config_smoke_gated_delta.yaml（Gated DeltaNet + Partial RoPE + Zero-Centered RMSNorm）：225 步 Train 6.15 / Val 5.58 / ~1696 tok/s。GatedDeltaNet 比 std attn 快 30%+ 且 Val Loss 显著更低（delta rule 检索能力优于纯加法线性注意力）。
+- test: **新增第十五轮回归测试**——20+ 测试覆盖 GatedDeltaNet（参数创建/初始化/前向/cache parity/梯度回流）、Partial RoPE（rot_dim 计算/passthrough/向后兼容/输出变化/cache parity）、Output Gating（参数创建/初始化/输出变化/梯度回流/cache parity）、Zero-Centered RMSNorm（参数标记/计算正确性/输出变化/cache parity）。pytest **299 passed / 1 skipped**。
+
+### 已识别但未实施的代码债（待后续清理）
+- 15+ 种 gate 机制（residual_gate/hybrid_gate/highway_gate/skip_gate/input_highway_gate 等）分散实现，建议统一为通用 Gate 抽象（kind∈{static,dynamic,affine}）
+- ~~MambaSSM vs MambaSSMWithCAST 的 forward 几乎逐字重复，可提取 MambaSSMBase~~ → **本轮已清理**（提取 `_compute_dA_and_xb` 方法）
+- SwiGLU 三个 Linear（w1/w2/w3）可合并为两个（LLaMA 风格 w13 chunk），但破坏 checkpoint 兼容，需 opt-in 或 state_dict 转换
+- MemoryConfig 与 AttnConfig 的 retrieval 字段已统一到 MemoryConfig（第十四轮已清理 AttnConfig 侧）
+- GatedDeltaNet 全量训练 for 循环可优化为 chunk-wise parallel（DeltaNet 原论文做法），当前 T≤64 开销可控
+
 ## `（本地，基于 `d21464b`，待推送，第十四轮续：死代码清理 + 性能优化 + 架构创新调研）
 
 - refactor: **移除 AxialLinearAttention 死代码**——`models/mixers.py` 移除 `pos_aware_feat`/`enable_pos_aware_feat`/`_feat_pos`/`pos_feat_alpha`。原代码注释自承"前向输出实际不变；保留接口以备未来接入"，是误导性占位特性（声称支持但实际不工作）。`tests/test_decode_merge_parity.py` 的 `test_axial_linear_pos_aware_feat` 替换为 `test_axial_linear_basic_forward`（验证死代码已移除 + 基本前向正常）。

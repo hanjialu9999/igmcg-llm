@@ -41,9 +41,15 @@ class AttnConfig:
     # 第十一轮新特性
     linear_correction: bool = False  # 线性注意力作"修正项"补主注意力（而非凸组合替代）
     pe_gate: bool = False            # 位置编码选择性门控（per-head 可学强度）
+    # 第十五轮新特性
+    rope_dim_fraction: float = 1.0   # Partial RoPE：仅前 dim*fraction 维度加 RoPE（1.0=全维，向后兼容）
+    output_gate: bool = False        # 注意力输出门控（消除 Attention Sink）
+    zero_centered_norm: bool = False # Zero-Centered RMSNorm（先去均值再归一化，防 Massive Activation）
+    delta_alpha_init: float = -2.0   # GatedDeltaNet 衰减门偏置初值（sigmoid≈0.12，弱遗忘起步）
+    delta_beta_init: float = 2.0     # GatedDeltaNet 输入门偏置初值（sigmoid≈0.88，强写入起步）
 
     def __post_init__(self):
-        _VALID = {'attn', 'linear', 'linear2d', 'attn_linear', 'hybrid_linear2d', 'diff'}
+        _VALID = {'attn', 'linear', 'linear2d', 'attn_linear', 'hybrid_linear2d', 'diff', 'gated_delta'}
         if self.mixer == 'hybrid':
             self.mixer = 'attn_linear'
         if self.mixer not in _VALID:
@@ -179,6 +185,11 @@ class ModelConfig:
             linear_attn_head_dim=mc.get('linear_attn_head_dim', None),
             linear_correction=mc.get('linear_correction', False),
             pe_gate=mc.get('pe_gate', False),
+            rope_dim_fraction=mc.get('rope_dim_fraction', 1.0),
+            output_gate=mc.get('output_gate', False),
+            zero_centered_norm=mc.get('zero_centered_norm', False),
+            delta_alpha_init=mc.get('delta_alpha_init', -2.0),
+            delta_beta_init=mc.get('delta_beta_init', 2.0),
         )
         memory = MemoryConfig(
             size=mc.get('memory_size', 0),

@@ -18,15 +18,23 @@ class RotaryEmbedding(nn.Module):
     _shared_cache_lock = threading.RLock()
     _use_shared_cache = False
 
-    def __init__(self, dim: int, base: float = ROPE_BASE, learnable: bool = False):
+    def __init__(self, dim: int, base: float = ROPE_BASE, learnable: bool = False,
+                 dim_fraction: float = 1.0):
         super().__init__()
-        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
+        # 第十五轮：Partial RoPE——仅前 dim*fraction 维度加 RoPE，后段 NoPE（纯内容维度）。
+        # 灵感：Qwen3-Next（前 25%）+ MLA Decoupled RoPE。长度外推更稳，高频维度不承载位置信息。
+        # dim_fraction=1.0 时全维旋转，完全向后兼容；<1.0 时后段不旋转。
+        # 注意：rot_dim 必须是偶数（RoPE 按维度对旋转），向下取偶。
+        self.dim_fraction = float(dim_fraction)
+        self.rot_dim = max(2, int(dim * self.dim_fraction) // 2 * 2)  # 向下取偶，最少 2
+        self.no_pe_dim = dim - self.rot_dim  # 不旋转的维度数（可为 0）
+        inv_freq = 1.0 / (base ** (torch.arange(0, self.rot_dim, 2).float() / self.rot_dim))
         self.register_buffer('inv_freq', inv_freq, persistent=False)
         self.learnable = learnable
         # 阶段5：可学习 RoPE 频率缩放——让模型调整各频率尺度，更好适应长度/尺度。
         # inv_freq 实际 = buffer * exp(log_scale)，log_scale 每维可学（init 0 = 不变）。
         if learnable:
-            self.rope_log_scale = nn.Parameter(torch.zeros(dim // 2))
+            self.rope_log_scale = nn.Parameter(torch.zeros(self.rot_dim // 2))
         # 实例级缓存：隔离不同模型/设备/dtype
         self._cache: Dict[Tuple[str, str, int], Tuple[torch.Tensor, torch.Tensor]] = {}
         self._cache_lock = threading.RLock()
@@ -103,11 +111,27 @@ class RotaryEmbedding(nn.Module):
 
     @staticmethod
     def _rope_apply(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
-        d = x.size(-1) // 2
+        # 第十五轮：Partial RoPE——支持部分维度旋转。
+        # cos/sin 的最后一维 = rot_dim（旋转维度数），x 最后一维 = dim（可能 > rot_dim）。
+        # 前 rot_dim 维做旋转，后 no_pe_dim 维不变（NoPE 纯内容维度）。
+        rot_dim = cos.size(-1)
+        no_pe_dim = x.size(-1) - rot_dim
+        if no_pe_dim > 0:
+            # Partial RoPE：前段旋转，后段不变
+            x_rot = x[..., :rot_dim]
+            x_pass = x[..., rot_dim:]
+            d = rot_dim // 2
+            x1, x2 = x_rot[..., :d], x_rot[..., d:]
+            cos_half = cos[..., :d]
+            sin_half = sin[..., :d]
+            x_rotated = torch.cat([
+                x1 * cos_half - x2 * sin_half,
+                x1 * sin_half + x2 * cos_half,
+            ], dim=-1)
+            return torch.cat([x_rotated, x_pass], dim=-1)
+        # 全维旋转（原路径，dim_fraction=1.0）
+        d = rot_dim // 2
         x1, x2 = x[..., :d], x[..., d:]
-        # 标准旋转公式：x1*cos - x2*sin, x1*sin + x2*cos（无 cat、无 neg 临时张量）。
-        # 两段用同一 cos[..., :d]（与公式一致）；不再依赖 emb=cat([freqs,freqs]) 使
-        # cos[..., :d] == cos[..., d:] 的副作用，避免未来改 emb 不复制时静默用错 cos 段。
         cos_half = cos[..., :d]
         sin_half = sin[..., :d]
         return torch.cat([

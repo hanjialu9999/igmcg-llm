@@ -16,7 +16,8 @@ from models.rope import RotaryEmbedding
 from models.memory import MemoryBank
 from models.mixers import (SlidingWindowCausalSelfAttention, LinearAttention,
                            AxialLinearAttention, DifferentialAttention, MambaSSM,
-                           MambaSSMWithCAST, SwiGLU, apply_qk_norm_and_temp)
+                           MambaSSMWithCAST, SwiGLU, apply_qk_norm_and_temp,
+                           GatedDeltaNet)
 from models.sampling import (apply_repetition_penalty, sample_next_token,
                              _decode_one_step)
 from models.layers import CharMergeLayer
@@ -29,6 +30,7 @@ __all__ = [
     "apply_qk_norm_and_temp", "apply_repetition_penalty", "sample_next_token",
     "_decode_one_step", "CharMergeLayer", "BlockState",
     "TransformerBlock", "_parse_layer_plan", "TransformerModel",
+    "GatedDeltaNet",
 ]
 
 
@@ -46,7 +48,8 @@ class TransformerBlock(nn.Module):
              shared_lns: Optional[Tuple[RMSNorm, RMSNorm]] = None,
              linear_correction: bool = False,
              ssm_as_memory: bool = False,
-             highway_gate: bool = False):
+             highway_gate: bool = False,
+             zero_centered_norm: bool = False):
         super().__init__()
         self.block_type = block_type
         self.drop = nn.Dropout(dropout)
@@ -78,7 +81,7 @@ class TransformerBlock(nn.Module):
         if shared_lns is not None:
             self.ln1, self.ln2 = shared_lns
         else:
-            self.ln1 = RMSNorm(dim)
+            self.ln1 = RMSNorm(dim, zero_centered=zero_centered_norm)
         if block_type in ('attn', 'hybrid'):
             # 阶段7 token mixer 选择：attn(默认) / linear(纯线性注意力) /
             # linear2d(2D 轴向线性注意力, O(T·√T)) /
@@ -103,7 +106,7 @@ class TransformerBlock(nn.Module):
                 self.ssm = MambaSSMWithCAST(dim, **ssm_kwargs)
             else:
                 self.ssm = MambaSSM(dim, **ssm_kwargs)
-        self.ln2 = shared_lns[1] if shared_lns is not None else RMSNorm(dim)
+        self.ln2 = shared_lns[1] if shared_lns is not None else RMSNorm(dim, zero_centered=zero_centered_norm)
         self.ffn = shared_ffn if shared_ffn is not None else SwiGLU(dim, hidden_dim)
         # ②/⑥ 每层可学习残差门控：x = x + gate * f(x)（init 1.0，默认行为不变）
         # 第十三轮：highway_gate 与静态 residual_gate 互斥——highway_gate=True 时不创建
@@ -160,7 +163,19 @@ class TransformerBlock(nn.Module):
                                    qk_norm=attn_kwargs.get('qk_norm', True),
                                    attn_temp=attn_kwargs.get('attn_temp', True),
                                    feature=attn_kwargs.get('linear_attn_feature', 'relu'),
+                                   rope_dim_fraction=attn_kwargs.get('rope_dim_fraction', 1.0),
                                    shared_qkv=shared_qkv, shared_proj=shared_proj)
+            return attn, None, None
+        if mixer == 'gated_delta':
+            # 第十五轮：Gated DeltaNet——delta rule + α/β 门控，长程检索更精确
+            attn = GatedDeltaNet(dim, num_heads, max_seq_length=max_seq_length,
+                                 qk_norm=attn_kwargs.get('qk_norm', True),
+                                 attn_temp=attn_kwargs.get('attn_temp', True),
+                                 feature=attn_kwargs.get('linear_attn_feature', 'relu'),
+                                 rope_dim_fraction=attn_kwargs.get('rope_dim_fraction', 1.0),
+                                 alpha_init=attn_kwargs.get('delta_alpha_init', -2.0),
+                                 beta_init=attn_kwargs.get('delta_beta_init', 2.0),
+                                 shared_qkv=shared_qkv, shared_proj=shared_proj)
             return attn, None, None
         if mixer == 'linear2d':
             # 2D 轴向线性注意力：O(T·√T)，适合序列长度为完全平方数或接近的场景
@@ -179,7 +194,8 @@ class TransformerBlock(nn.Module):
             return attn, None, None
         if mixer == 'attn_linear':
             attn_only = {k: v for k, v in attn_kwargs.items()
-                         if k not in ('linear_attn_feature', 'linear_attn_head_dim')}
+                         if k not in ('linear_attn_feature', 'linear_attn_head_dim',
+                                      'delta_alpha_init', 'delta_beta_init')}
             attn = SlidingWindowCausalSelfAttention(dim, num_heads, max_seq_length=max_seq_length,
                                                      shared_qkv=shared_qkv, shared_proj=shared_proj,
                                                      **attn_only)
@@ -189,12 +205,14 @@ class TransformerBlock(nn.Module):
                                           feature=attn_kwargs.get('linear_attn_feature', 'relu'),
                                           head_dim=attn_kwargs.get('linear_attn_head_dim', None),
                                           rope_learnable=attn_kwargs.get('rope_learnable', False),
+                                          rope_dim_fraction=attn_kwargs.get('rope_dim_fraction', 1.0),
                                           shared_qkv=shared_qkv, shared_proj=shared_proj)
             mixer_gate = nn.Parameter(torch.ones(1))
             return attn, linear_attn, mixer_gate
         # 默认：标准滑动窗口因果注意力
         attn_only = {k: v for k, v in attn_kwargs.items()
-                     if k not in ('linear_attn_feature', 'linear_attn_head_dim')}
+                     if k not in ('linear_attn_feature', 'linear_attn_head_dim',
+                                  'delta_alpha_init', 'delta_beta_init')}
         attn = SlidingWindowCausalSelfAttention(dim, num_heads, max_seq_length=max_seq_length,
                                                  shared_qkv=shared_qkv, shared_proj=shared_proj,
                                                  **attn_only)
@@ -212,6 +230,10 @@ class TransformerBlock(nn.Module):
             # SlidingWindowCausalSelfAttention：拆分 project_and_norm / attend 以缩小检查点重算区
             q, k, v = self.attn.project_and_norm(xn, start_pos)
             h, present = checkpoint(self.attn.attend, q, k, v, attn_past_kv, use_cache, start_pos, mem_kv, use_reentrant=False)
+            # 第十五轮：output_gate 在 forward 中应用，但 ckpt 路径绕过 forward 直接调 attend，
+            # 须在此补应用，否则训练时 output_gate 参数无梯度（forward 未被调用）。
+            if getattr(self.attn, 'output_gate_enabled', False):
+                h = h * torch.sigmoid(self.attn.output_gate(h))
         else:
             # LinearAttention 等无 attend 接口的 mixer：直接对整层前向做检查点
             if ckpt:
@@ -448,12 +470,16 @@ class CrossLayerRouter(nn.Module):
         prev_mean = prev_stack.mean(dim=2)
         # 路由打分：(B, num_prev, D) -> (B, num_prev, 1) -> (B, num_prev)
         scores = router(prev_mean).squeeze(-1)
-        # top-k 稀疏选择——用 mask 替代 gather/scatter（DML 兼容）
-        # 取第 k 大值作阈值，>= 阈值的位置为 top-k（浮点极少并列，可安全用 >=）
+        # top-k 稀疏选择——用 one-hot 掩码替代 gather/scatter（DML 兼容）
+        # 用 torch.eye 高级索引构建精确 k 个 1 的 one-hot（只读 op，DML 原生支持）。
+        # 历史 Bug（已修）：曾用 `mask = (scores >= threshold).float()`，但 init 时
+        # 所有 router weight=0/bias=-3 导致 scores 全并列（=-3），>= 阈值会选中所有
+        # num_prev 项而非 k 项，造成 num_prev/k 倍过注入（layer 11,topk=2 时 5.5x），
+        # 直接破坏"弱注入"设计意图。torch.topk 按索引序打破并列，精确选 k 个。
         k = min(self.topk, num_prev)
-        topk_vals, _ = torch.topk(scores, k, dim=-1)  # (B, k)
-        threshold = topk_vals[:, -1:]  # (B, 1) 第 k 大值
-        mask = (scores >= threshold).float()  # (B, num_prev) 1=选中
+        topk_vals, topk_idx = torch.topk(scores, k, dim=-1)  # (B, k)
+        eye = torch.eye(num_prev, device=scores.device, dtype=scores.dtype)
+        mask = eye[topk_idx].sum(dim=1)  # (B, num_prev) 精确 k 个 1
         # sigmoid 选择性门控（对所有前层算，mask 清零非 top-k）
         gates = torch.sigmoid(scores) * mask  # (B, num_prev)
         # 加权求和：einsum 避免 gather/scatter，DML 原生支持
@@ -507,6 +533,11 @@ class TransformerModel(nn.Module):
                    linear_attn_feature: str = 'relu',
                    linear_attn_head_dim: Optional[int] = None,
                    pe_gate: bool = False,
+                   rope_dim_fraction: float = 1.0,
+                   output_gate: bool = False,
+                   zero_centered_norm: bool = False,
+                   delta_alpha_init: float = -2.0,
+                   delta_beta_init: float = 2.0,
                    ngram_fusion: bool = False, ngram_model=None,
                    ngram_gate_scale: float = 1.0, igmcg: bool = False,
                    share_attn_proj: bool = False,
@@ -595,7 +626,15 @@ class TransformerModel(nn.Module):
                            learn_window=learn_window, window_base=window_base,
                            linear_attn_feature=linear_attn_feature,
                            linear_attn_head_dim=linear_attn_head_dim,
-                           pe_gate=pe_gate)
+                           pe_gate=pe_gate,
+                           rope_dim_fraction=rope_dim_fraction,
+                           output_gate=output_gate,
+                           delta_alpha_init=delta_alpha_init,
+                           delta_beta_init=delta_beta_init)
+        # 第十五轮：保存 GatedDeltaNet 专用初始化参数，供 _apply_specialized_inits 重置
+        # （_init_weights 通用 N(0,0.02) 会覆盖 alpha_proj/beta_proj 的 zero weight + 专用 bias）
+        self._delta_alpha_init = float(delta_alpha_init)
+        self._delta_beta_init = float(delta_beta_init)
         # 层间共享 attention projection（share_attn_proj=True）：
         # 各层复用同一组 QKV + Output 投影参数，减少 ~40% 参数量并起正则化作用。
         # 仅影响 attn/linear 混合器（SSM/FFN/Memory 参数保持独立）。
@@ -610,7 +649,8 @@ class TransformerModel(nn.Module):
         if share_ffn:
             self.shared_ffn = _shared_ffn
         # 层间共享 LayerNorm（share_norm=True）：各层复用同一组 RMSNorm 参数
-        _shared_lns = (RMSNorm(embedding_dim), RMSNorm(embedding_dim)) if share_norm else None
+        _shared_lns = (RMSNorm(embedding_dim, zero_centered=zero_centered_norm),
+                       RMSNorm(embedding_dim, zero_centered=zero_centered_norm)) if share_norm else None
         if share_norm:
             self.shared_lns = nn.ModuleList(_shared_lns)
         self.blocks = nn.ModuleList([
@@ -625,7 +665,8 @@ class TransformerModel(nn.Module):
                              shared_ffn=_shared_ffn, shared_lns=_shared_lns,
                              linear_correction=linear_correction,
                              ssm_as_memory=ssm_as_memory,
-                             highway_gate=highway_gate)
+                             highway_gate=highway_gate,
+                             zero_centered_norm=zero_centered_norm)
             for bt in self.layer_plan
         ])
         # 第十四轮：ALiBi 跨层共享——所有注意力层共用第一层的 alibi_slopes buffer
@@ -638,7 +679,7 @@ class TransformerModel(nn.Module):
                         _shared_slopes = blk.attn.alibi_slopes
                     else:
                         blk.attn.alibi_slopes = _shared_slopes
-        self.ln_f = RMSNorm(embedding_dim)
+        self.ln_f = RMSNorm(embedding_dim, zero_centered=zero_centered_norm)
         self.output_head = nn.Linear(embedding_dim, vocab_size, bias=False)
         self._tie_weights = tie_weights
         if tie_weights:
@@ -762,6 +803,11 @@ class TransformerModel(nn.Module):
             linear_attn_feature=cfg.attn.linear_attn_feature,
             linear_attn_head_dim=cfg.attn.linear_attn_head_dim,
             pe_gate=cfg.attn.pe_gate,
+            rope_dim_fraction=cfg.attn.rope_dim_fraction,
+            output_gate=cfg.attn.output_gate,
+            zero_centered_norm=cfg.attn.zero_centered_norm,
+            delta_alpha_init=cfg.attn.delta_alpha_init,
+            delta_beta_init=cfg.attn.delta_beta_init,
             ngram_fusion=cfg.ngram_fusion,
             ngram_model=ngram_model,
             ngram_gate_scale=cfg.ngram_gate_scale,
@@ -966,6 +1012,25 @@ class TransformerModel(nn.Module):
                 if isinstance(gate, nn.Linear):
                     nn.init.zeros_(gate.weight)
                     nn.init.constant_(gate.bias, -3.0)
+        # 第十五轮：GatedDeltaNet 专用初始化重置
+        # alpha_proj/beta_proj 在 __init__ 中已做 zero weight + 专用 bias（alpha_init/beta_init），
+        # 但 _init_weights 遍历 nn.Linear 时用 N(0,0.02) 覆盖了 weight，用 zeros 覆盖了 bias。
+        # 此处按 GatedDeltaNet 设计意图恢复：weight=0（弱门控，逐 token 由模型自决），
+        # bias=alpha_init/beta_init（alpha sigmoid≈0.12 弱遗忘起步 / beta sigmoid≈0.88 强写入起步）。
+        # 同时重置 SlidingWindowCausalSelfAttention.output_gate（weight=0, bias=0 → sigmoid=0.5 半通起步）。
+        for blk in self.blocks:
+            attn = getattr(blk, 'attn', None)
+            if attn is None:
+                continue
+            if hasattr(attn, 'alpha_proj'):
+                nn.init.zeros_(attn.alpha_proj.weight)
+                nn.init.constant_(attn.alpha_proj.bias, self._delta_alpha_init)
+            if hasattr(attn, 'beta_proj'):
+                nn.init.zeros_(attn.beta_proj.weight)
+                nn.init.constant_(attn.beta_proj.bias, self._delta_beta_init)
+            if getattr(attn, 'output_gate_enabled', False) and hasattr(attn, 'output_gate'):
+                nn.init.zeros_(attn.output_gate.weight)
+                nn.init.zeros_(attn.output_gate.bias)
 
     def tie_weights(self):
         """重新绑定 output_head 和 embedding 的权重（在 .to(device) 后调用以确保共享生效）。"""
