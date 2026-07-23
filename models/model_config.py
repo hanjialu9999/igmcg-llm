@@ -120,6 +120,7 @@ class ModelConfig:
     cross_layer_routing: bool = False  # 跨层稀疏路由信息流动（DenseNet 风格 top-k 跳跃连接）
     cross_layer_topk: int = 2          # 跨层路由每层检索的前层数量
     qat_bits: int = 0                  # 量化感知训练位宽（0=关闭，8=int8 量化噪声模拟）
+    ssm_as_memory: bool = False        # SSM 输出作隐式记忆注入 hybrid 块注意力（需 hybrid 层）
 
     # n-gram
     ngram_fusion: bool = False
@@ -212,6 +213,7 @@ class ModelConfig:
             cross_layer_routing=mc.get('cross_layer_routing', False),
             cross_layer_topk=int(mc.get('cross_layer_topk', 2)),
             qat_bits=int(mc.get('qat_bits', 0)),
+            ssm_as_memory=bool(mc.get('ssm_as_memory', False)),
             ngram_fusion=mc.get('ngram_fusion', False),
             ngram_gate_scale=float(mc.get('ngram_gate_scale', 1.0)),
             igmcg=bool(mc.get('igmcg', False)),

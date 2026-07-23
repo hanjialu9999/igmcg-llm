@@ -75,8 +75,9 @@ def enable_qat(model: nn.Module, bits: int = 8) -> nn.Module:
         return model  # 已启用，避免重复 patch
     qmax = float(2 ** (bits - 1) - 1)
     # 共享可学习步长：init 用模型所有 Linear 权重 std 估，避免过小导致 round 全 0
+    # 在 CPU 上计算 std（DML 的 aten::std.correction 回退 CPU，直接 CPU 省一次传输）
     with torch.no_grad():
-        all_w = torch.cat([m.weight.flatten()
+        all_w = torch.cat([m.weight.detach().cpu().flatten()
                            for m in model.modules() if isinstance(m, nn.Linear)])
         init_s = (all_w.std() / qmax).clamp(min=1e-6).item()
     model._qat_scale = nn.Parameter(torch.tensor(init_s))
@@ -84,10 +85,11 @@ def enable_qat(model: nn.Module, bits: int = 8) -> nn.Module:
     model._qat_enabled = True
 
     # monkey-patch 每个 Linear 的 forward：训练时伪量化权重+激活，eval 时恒等
+    # 注意：权重缓存优化在 LSQ（可学步长）下不适用——_qat_scale 每步被优化器更新，
+    # r=round(w/s) 随 s 变化，缓存 r 会用过时 scale 导致数值偏差（Val Loss 升高）。
     for m in model.modules():
         if isinstance(m, nn.Linear):
             def make_q_forward(mod: nn.Linear):
-                # 闭包捕获 mod 和共享步长；mod.training 决定是否量化
                 def q_forward(x: torch.Tensor) -> torch.Tensor:
                     if not mod.training:
                         return F.linear(x, mod.weight, mod.bias)

@@ -1608,3 +1608,182 @@ def test_qat_disable_restores_forward():
     diff = (out1 - out2).abs().max().item()
     assert diff < 1e-7, f"disable_qat 后应恢复原始 forward，max_diff={diff}"
 
+
+# ---------------------------------------------------------------------------
+# 第十一轮 t7：SSM 状态作隐式记忆（ssm_as_memory）
+# hybrid 块中先算 SSM，把 ssm_h 投影为单记忆槽注入注意力 mem_kv。
+# ---------------------------------------------------------------------------
+
+def test_ssm_as_memory_param_created():
+    """ssm_as_memory=True + hybrid 块时创建 ssm_k_proj/ssm_v_proj。"""
+    m = _small_hybrid(ssm_as_memory=True)
+    # block 0 是 attn（无 ssm_as_memory），block 1 是 hybrid（有 ssm_k_proj）
+    assert not hasattr(m.blocks[0], 'ssm_k_proj'), "attn 块不应创建 ssm_k_proj"
+    assert hasattr(m.blocks[1], 'ssm_k_proj'), "hybrid 块未创建 ssm_k_proj"
+    assert hasattr(m.blocks[1], 'ssm_v_proj'), "hybrid 块未创建 ssm_v_proj"
+
+
+def test_ssm_as_memory_changes_output():
+    """开启 ssm_as_memory 后输出应与原始并行 hybrid 不同。"""
+    m_ssm = _small_hybrid(ssm_as_memory=True)
+    m_no = _small_hybrid(ssm_as_memory=False)
+    m_ssm.eval(); m_no.eval()
+    x = torch.randint(0, 200, (2, 8))
+    with torch.no_grad():
+        out_s = m_ssm(x)
+        out_n = m_no(x)
+    assert not torch.allclose(out_s, out_n, atol=1e-5), "ssm_as_memory 应改变输出"
+
+
+def test_ssm_as_memory_backward_flows():
+    """ssm_k_proj/ssm_v_proj 收到梯度。"""
+    import torch.nn.functional as F
+    m = _small_hybrid(ssm_as_memory=True)
+    m.train()
+    x = torch.randint(0, 200, (2, 8))
+    out = m(x)
+    loss = F.cross_entropy(out.reshape(-1, 200), torch.randint(0, 200, (16,)))
+    loss.backward()
+    assert m.blocks[1].ssm_k_proj.weight.grad is not None, "ssm_k_proj 无梯度"
+    assert m.blocks[1].ssm_v_proj.weight.grad is not None, "ssm_v_proj 无梯度"
+
+
+def test_ssm_as_memory_cache_parity():
+    """ssm_as_memory 训练/推理路径数值一致（cache parity）。"""
+    m = _small_hybrid(ssm_as_memory=True)
+    m.eval()
+    ids = torch.randint(0, m.vocab_size, (1, 8))
+    with torch.no_grad():
+        full = m(ids, use_cache=False)
+        cached = m(ids, use_cache=True)
+    diff = (_get_logits(full) - _get_logits(cached)).abs().max().item()
+    assert diff < 1e-4, f"ssm_as_memory cache parity 失败：max_diff={diff}"
+
+
+def test_ssm_as_memory_no_hybrid_noop():
+    """非 hybrid 块（attn/ssm）不创建 ssm_k_proj（noop）。"""
+    m = _small(num_layers=2, ssm_as_memory=True)  # 默认全 attn 块
+    assert not hasattr(m.blocks[0], 'ssm_k_proj'), "attn 块不应创建 ssm_k_proj"
+
+
+# ---------------------------------------------------------------------------
+# 第十一轮 t8：n-gram 爆炸防护
+# 验证 ngram_vec clamp / temperature clamp / scale clamp / NaN-Inf 兜底。
+# ---------------------------------------------------------------------------
+
+def _small_ngram_explosion():
+    """构造带 n-gram 融合的模型，用于爆炸防护测试。"""
+    v, ng = _small_ngram()
+    return _small(vocab_size=len(v), ngram_fusion=True, ngram_model=ng,
+                  ngram_gate_scale=1.0)
+
+
+def test_ngram_vec_clamped():
+    """ngram_vec 被 clamp 到 [-30, 0]（log prob 理论 ≤ 0，极负值防爆）。"""
+    m = _small_ngram_explosion()
+    m.eval()
+    x = torch.randint(0, m.vocab_size, (2, 8))
+    with torch.no_grad():
+        out = m(x)
+    # 输出不应有极端值（<-100 或 >100 说明未 clamp）
+    assert out.min().item() > -100.1, f"输出有极端负值 {out.min().item()}（ngram_vec 未 clamp）"
+    assert out.max().item() < 100.1, f"输出有极端正值 {out.max().item()}（未 clamp）"
+
+
+def test_ngram_gate_scale_clamped():
+    """ngram_gate_scale 设为极端值（100）时仍被 clamp 到 10（防爆）。"""
+    v, ng = _small_ngram()
+    m = _small(vocab_size=len(v), ngram_fusion=True, ngram_model=ng,
+               ngram_gate_scale=100.0)  # 极端值
+    m.eval()
+    m.set_ngram_gate_scale(100.0)  # 推理期总闸也设极端值
+    x = torch.randint(0, m.vocab_size, (2, 8))
+    with torch.no_grad():
+        out = m(x)
+    # 即使 scale=100，clamp 到 10 后输出不应爆炸
+    assert not torch.isnan(out).any(), "scale=100 产生 NaN（未 clamp）"
+    assert not torch.isinf(out).any(), "scale=100 产生 Inf（未 clamp）"
+    assert out.min().item() > -100.1, f"scale=100 后输出极端 {out.min().item()}"
+
+
+def test_ngram_temperature_clamped():
+    """temperature=0 不再爆炸（clamp 到 0.01）。"""
+    m = _small_ngram_explosion()
+    m.eval()
+    x = torch.randint(0, m.vocab_size, (2, 8))
+    with torch.no_grad():
+        # temperature=0 应被 clamp 到 0.01，不再除零
+        out = m(x, temperature=0.0)
+    assert not torch.isnan(out).any(), "temperature=0 产生 NaN"
+    assert not torch.isinf(out).any(), "temperature=0 产生 Inf"
+
+
+def test_ngram_no_nan_inf_with_extreme_input():
+    """极端输入（全 pad token）不产生 NaN/Inf。"""
+    m = _small_ngram_explosion()
+    m.eval()
+    # 全 0 输入（pad token，n-gram 上下文为空）
+    x = torch.zeros(2, 8, dtype=torch.long)
+    with torch.no_grad():
+        out = m(x)
+    assert not torch.isnan(out).any(), "全 pad 输入产生 NaN"
+    assert not torch.isinf(out).any(), "全 pad 输入产生 Inf"
+
+
+def test_ngram_fused_logits_bounded():
+    """融合后 logits 在 [-100, 100] 范围内（最终 clamp 防爆）。"""
+    m = _small_ngram_explosion()
+    m.eval()
+    m.set_ngram_gate_scale(10.0)  # 最大允许值
+    x = torch.randint(0, m.vocab_size, (2, 8))
+    with torch.no_grad():
+        out = m(x, temperature=0.01)  # 最小允许温度
+    assert out.min().item() >= -100.0, f"logits 下界 {out.min().item()} < -100"
+    assert out.max().item() <= 100.0, f"logits 上界 {out.max().item()} > 100"
+
+
+def test_ngram_ord_nan_inf_sanitized():
+    """防护 0：ngram_ord 中的 -inf/NaN 被 nan_to_num 兜底，不传播到 ngram_vec。"""
+    m = _small_ngram_explosion()
+    m.eval()
+    # 全 pad token + 极短序列，构造可能产生空上下文/除零的场景
+    x = torch.zeros(1, 2, dtype=torch.long)
+    with torch.no_grad():
+        out = m(x)
+    # 输出不应有 NaN/Inf（即使 ngram_ord 内部有 -inf 也被兜底）
+    assert not torch.isnan(out).any(), "ngram_ord -inf/NaN 未被兜底，传播到输出"
+    assert not torch.isinf(out).any(), "ngram_ord Inf 未被兜底，传播到输出"
+
+
+def test_ngram_order_logits_clamped():
+    """防护 0b：ngram_order_logits 极端值时 softmax 不饱和（clamp 到 [-10, 10]）。"""
+    v, ng = _small_ngram()
+    m = _small(vocab_size=len(v), ngram_fusion=True, ngram_model=ng, ngram_gate_scale=1.0)
+    m.eval()
+    # 把 ngram_order_logits 推到极端值（±1000），softmax 无 clamp 时会饱和
+    with torch.no_grad():
+        m.ngram_order_logits.fill_(1000.0)
+    x = torch.randint(0, len(v), (2, 8))
+    with torch.no_grad():
+        out = m(x)
+    # 即使 logits=1000，clamp 到 10 后 softmax 均匀，输出不应爆炸
+    assert not torch.isnan(out).any(), "order_logits=1000 产生 NaN（softmax 饱和）"
+    assert not torch.isinf(out).any(), "order_logits=1000 产生 Inf"
+    # softmax(均匀) → 各阶等权 → ngram_vec 是各阶均值，不应极端
+    assert out.min().item() > -100.1, f"order_logits=1000 后输出极端 {out.min().item()}"
+
+
+def test_ngram_gate_clamped():
+    """防护 3b：gate 被 clamp 到 [0, 10]，即使 igmcg 路径也不超限。"""
+    v, ng = _small_ngram()
+    m = _small(vocab_size=len(v), ngram_fusion=True, ngram_model=ng,
+               ngram_gate_scale=10.0, igmcg=True)  # igmcg 路径 gate = p_use * g_strength * _scale
+    m.eval()
+    m.set_ngram_gate_scale(10.0)
+    x = torch.randint(0, len(v), (2, 8))
+    with torch.no_grad():
+        out = m(x, temperature=0.01)  # 最小温度 + 最大 scale
+    # gate·ngram_vec 即使最大也不应使 logits 超出 [-100, 100]
+    assert out.min().item() >= -100.0, f"igmcg gate 未 clamp，logits {out.min().item()} < -100"
+    assert out.max().item() <= 100.0, f"igmcg gate 未 clamp，logits {out.max().item()} > 100"
+

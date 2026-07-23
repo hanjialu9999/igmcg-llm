@@ -9,7 +9,25 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
-## `（本地，基于 `76a431d`，待推送，第十一轮 4 新特性 + product_key 回归 + 6 想法评估）
+## `（本地，基于 `cbb2df8`，待推送，第十一轮续：SSM 作记忆 + ngram 8层防护 + DML 全特性训练 + 性能优化）
+
+- feat: **SSM 输出作隐式记忆（ssm_as_memory）**——`models/transformer.py` TransformerBlock hybrid 块新增 SSM-first 顺序：先算 SSM，把 ssm_h mean-pool 投影为单记忆槽（ssm_k_proj/ssm_v_proj → head_dim），注入注意力 mem_kv。让注意力能"查到"SSM 的序列理解，实现 SSM→Attention 的信息流。仅 hybrid 块生效；config: `ssm_as_memory`。5 个回归测试（参数创建/输出变化/梯度回流/cache parity/非 hybrid noop）。
+- fix: **CrossLayerRouter DML 兼容**——原 route() 用 torch.gather + advanced indexing，在 DML 上报 "scatter doesn't allow partially modified dimensions"。三次重写最终用 mask+einsum 完全避免 gather/scatter：`mask = (scores >= threshold).float()` + `torch.einsum('bn,bntd->btd', gates, prev_stack)`。CPU + DML 均通过。
+- feat: **n-gram 爆炸防护 5→8 层**——`models/transformer.py` _apply_ngram_fusion 新增 3 层防护：(0) ngram_ord nan_to_num 兜底（防 -inf/NaN 传播）；(0b) ngram_order_logits clamp [-10,10]（防 softmax 饱和失去多阶信息）；(3b) gate clamp [0,10]（防浮点误差使 gate·ngram_vec 超限）。3 个新回归测试。
+- perf: **ngram NaN/Inf 检查优化**——原 `if torch.isnan(fused).any() or torch.isinf(fused).any()` 有两次全量 reduce + CPU 同步税，改为直接 `torch.nan_to_num`（一次操作，DML 原生 kernel，正常情况下 no-op）。
+- perf: **pe_gate 冗余 .to(device) 删除**——`models/mixers.py` log_pe_gate 是 Parameter 已在设备上，`.to(bias.device)` 是冗余操作。
+- perf: **QAT init std() 在 CPU 计算**——`models/qat.py` 原 `all_w.std()` 在 DML 上回退 CPU（aten::std.correction 不支持），改为直接在 CPU 上计算（`.detach().cpu()` 后 std），省一次 DML→CPU 回退。
+- exp: **QAT 权重缓存尝试与回退**——尝试缓存权重量化整数值 r（round+clip 结果），用 mod.weight._version 检测变化。但 LSQ 可学步长下 _qat_scale 每步被优化器更新，r=round(w/s) 随 s 变化，缓存 r 会用过时 scale 导致 Val Loss 升高（9.22→12.70）。回退到原始 _fake_quant。教训：LSQ 可学步长下权重量化缓存不适用。
+- smoke: **全特性 DML 训练验证（3 次）**——config_smoke_features_v2.yaml 全特性开（alibi+pe_gate+attn_linear+linear_correction+cross_layer+ssm_as_memory+QAT 8bit）。3 次训练结果：Train 8.37-9.48 / Val 9.22-10.94 / ~893-935ms/step。Val Loss 略升因新增 ngram 防护层限制模型灵活性（稳定性 trade-off）。速度 ~1.07-1.12 it/s，主要瓶颈在 QAT 双重量化（每 Linear 两次 _fake_quant）和 ssm_as_memory 串行化。
+- test: **3 个 ngram 防护回归测试**——test_ngram_ord_nan_inf_sanitized / test_ngram_order_logits_clamped / test_ngram_gate_clamped。pytest **238 passed / 1 skipped**（较基线 235 + 3）。
+- review: **2 个子代理审查**——架构审查（合并点+性能+合理性）和 bug 审查。无严重 bug，架构合理。合并建议：_small_* 测试辅助函数可整合（低优先级）；性能建议已部分实施。
+
+### 教训补充（本轮）
+- **QAT 权重缓存在 LSQ 下不适用**：_qat_scale 每步被优化器更新，r=round(w/s) 随 s 变化，缓存 r 会用过时 scale 导致 Val Loss 升高（9.22→12.70）。回退到原始 _fake_quant。
+- **DML advanced indexing scatter 不稳定**：`base[k-1, idx] = vals` 在 DML 上可能报 "partially modified dimensions"（但隔离测试中又通过了）。CrossLayerRouter 的 gather/scatter 已改为 mask+einsum（DML 原生支持）。
+- **ngram 防护需多层**：8 层防护从 ngram_ord 兜底到最终 logits clamp，缺任何一层都可能在极端输入下爆炸。
+
+## `cbb2df8`（已推送，基于 `76a431d`，第十一轮 4 新特性 + product_key 回归 + 6 想法评估）
 
 - feat: **线性注意力修正模式（linear_correction）**——`models/transformer.py` TransformerBlock 新增修正模式：主注意力 h 为基础，线性注意力 lh 提供"修正项"（lh - h），`h = h + sigmoid(correction_gate) * (lh - h)`。correction_gate init -1.0（sigmoid≈0.27）平滑过渡。相比原凸组合（mg·h+(1-mg)·lh），修正模式保留主注意力主体地位，线性注意力仅补充差异。config: `attn.linear_correction`。
 - feat: **位置编码选择性门控（pe_gate）**——`models/mixers.py` SlidingWindowCausalSelfAttention 新增 per-head 可学强度控制 ALiBi 位置偏置：`pe_strength = 1.0 + tanh(log_pe_gate)`，init 0 → 1.0（精确向后兼容），范围 (0,2)。让模型自决每个头对位置信息的依赖。config: `attn.pe_gate`（需 alibi=True）。

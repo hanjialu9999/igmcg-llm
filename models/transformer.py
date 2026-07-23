@@ -44,7 +44,8 @@ class TransformerBlock(nn.Module):
              shared_proj: Optional[nn.Linear] = None,
              shared_ffn: Optional[SwiGLU] = None,
              shared_lns: Optional[Tuple[RMSNorm, RMSNorm]] = None,
-             linear_correction: bool = False):
+             linear_correction: bool = False,
+             ssm_as_memory: bool = False):
         super().__init__()
         self.block_type = block_type
         self.drop = nn.Dropout(dropout)
@@ -63,6 +64,14 @@ class TransformerBlock(nn.Module):
             # init -1.0（sigmoid≈0.27）使初始修正行为接近原凸组合默认（mixer_gate init 1.0
             # → sigmoid≈0.73 → 0.73h+0.27lh），开启时平滑过渡，训练中自决修正强度。
             self.correction_gate = nn.Parameter(torch.tensor(-1.0))
+        # 第十一轮：SSM 输出作隐式记忆——hybrid 块中先算 SSM，把 ssm_h 投影为
+        # 单个"SSM 摘要"记忆槽注入注意力 mem_kv，让注意力能查到 SSM 的序列理解。
+        # 仅 hybrid 块生效；head_dim 与 MemoryBank 一致（dim // num_heads）。
+        self.ssm_as_memory_enabled = ssm_as_memory and block_type == 'hybrid'
+        if self.ssm_as_memory_enabled:
+            _head_dim = dim // num_heads
+            self.ssm_k_proj = nn.Linear(dim, _head_dim, bias=False)
+            self.ssm_v_proj = nn.Linear(dim, _head_dim, bias=False)
         # Both attn and ssm blocks need a pre-norm layer
         if shared_lns is not None:
             self.ln1, self.ln2 = shared_lns
@@ -249,12 +258,31 @@ class TransformerBlock(nn.Module):
             x = x + self.drop(gate1 * h_eff if gate1 is not None else h_eff)
         elif self.block_type == 'hybrid':
             xn = self.ln1(x)
-            # attn 部分经 _run_attn_mixer 运行（与 attn 块共用）；ssm 部分并行。
-            h, attn_present = self._run_attn_mixer(xn, attn_past_kv, use_cache, start_pos, mem_kv, ckpt)
-            if ckpt:
-                ssm_h, ssm_present_state, ssm_present_conv_state = checkpoint(self.ssm, xn, ssm_past_state, ssm_past_conv_state, use_cache, use_reentrant=False)
+            if self.ssm_as_memory_enabled:
+                # 第十一轮：SSM 作隐式记忆——先算 SSM，把 ssm_h mean-pool 投影为
+                # 单个记忆槽注入 mem_kv，让注意力能"查到"SSM 的序列理解。
+                if ckpt:
+                    ssm_h, ssm_present_state, ssm_present_conv_state = checkpoint(self.ssm, xn, ssm_past_state, ssm_past_conv_state, use_cache, use_reentrant=False)
+                else:
+                    ssm_h, ssm_present_state, ssm_present_conv_state = self.ssm(xn, past_state=ssm_past_state, past_conv_state=ssm_past_conv_state, use_cache=use_cache)
+                # ssm_h: (B,T,D) → mean-pool (B,1,D) → 投影 (B,1,head_dim)
+                ssm_pool = ssm_h.mean(dim=1, keepdim=True)
+                ssm_k = self.ssm_k_proj(ssm_pool)  # (B,1,head_dim)
+                ssm_v = self.ssm_v_proj(ssm_pool)
+                # 合并到 mem_kv（无 MemoryBank 时直接创建）
+                if mem_kv is not None:
+                    mk, mv, meta = mem_kv
+                    mem_kv = (torch.cat([mk, ssm_k], dim=1), torch.cat([mv, ssm_v], dim=1), meta)
+                else:
+                    mem_kv = (ssm_k, ssm_v, None)
+                h, attn_present = self._run_attn_mixer(xn, attn_past_kv, use_cache, start_pos, mem_kv, ckpt)
             else:
-                ssm_h, ssm_present_state, ssm_present_conv_state = self.ssm(xn, past_state=ssm_past_state, past_conv_state=ssm_past_conv_state, use_cache=use_cache)
+                # 原始并行：attn 与 ssm 同时算（不互相依赖）
+                h, attn_present = self._run_attn_mixer(xn, attn_past_kv, use_cache, start_pos, mem_kv, ckpt)
+                if ckpt:
+                    ssm_h, ssm_present_state, ssm_present_conv_state = checkpoint(self.ssm, xn, ssm_past_state, ssm_past_conv_state, use_cache, use_reentrant=False)
+                else:
+                    ssm_h, ssm_present_state, ssm_present_conv_state = self.ssm(xn, past_state=ssm_past_state, past_conv_state=ssm_past_conv_state, use_cache=use_cache)
             h_eff = (sk * h) if sk is not None else h
             ssm_eff = (sk * ssm_h) if sk is not None else ssm_h
             if self.hybrid_single_gate and self._rt.get("hybrid_gate", True):
@@ -387,16 +415,17 @@ class CrossLayerRouter(nn.Module):
         prev_mean = prev_stack.mean(dim=2)
         # 路由打分：(B, num_prev, D) -> (B, num_prev, 1) -> (B, num_prev)
         scores = router(prev_mean).squeeze(-1)
-        # top-k 稀疏选择
+        # top-k 稀疏选择——用 mask 替代 gather/scatter（DML 兼容）
+        # 取第 k 大值作阈值，>= 阈值的位置为 top-k（浮点极少并列，可安全用 >=）
         k = min(self.topk, num_prev)
-        topk_vals, topk_idx = torch.topk(scores, k, dim=-1)  # (B, k)
-        # sigmoid 选择性门控
-        gates = torch.sigmoid(topk_vals)  # (B, k)
-        # gather 选中的前层输出：(B, k, T, D)
-        idx_exp = topk_idx.view(B, k, 1, 1).expand(-1, -1, T, D)
-        selected = torch.gather(prev_stack, dim=1, index=idx_exp)
-        # 加权求和后除以 k 归一化（保持 magnitude 不随 k 爆炸）
-        routed = (selected * gates.view(B, k, 1, 1)).sum(dim=1) / k  # (B, T, D)
+        topk_vals, _ = torch.topk(scores, k, dim=-1)  # (B, k)
+        threshold = topk_vals[:, -1:]  # (B, 1) 第 k 大值
+        mask = (scores >= threshold).float()  # (B, num_prev) 1=选中
+        # sigmoid 选择性门控（对所有前层算，mask 清零非 top-k）
+        gates = torch.sigmoid(scores) * mask  # (B, num_prev)
+        # 加权求和：einsum 避免 gather/scatter，DML 原生支持
+        routed = torch.einsum('bn,bntd->btd', gates, prev_stack)  # (B, T, D)
+        routed = routed / k  # 归一化（保持 magnitude 不随 k 爆炸）
         return x + routed
 
 
@@ -451,7 +480,8 @@ class TransformerModel(nn.Module):
                    ssm_type: str = 'standard',
                    linear_correction: bool = False,
                    cross_layer_routing: bool = False,
-                   cross_layer_topk: int = 2):
+                   cross_layer_topk: int = 2,
+                   ssm_as_memory: bool = False):
         super(TransformerModel, self).__init__()
 
         self.vocab_size = vocab_size
@@ -551,7 +581,8 @@ class TransformerModel(nn.Module):
                              skip=layer_skip, mixer=mixer,
                              shared_qkv=_shared_qkv, shared_proj=_shared_proj,
                              shared_ffn=_shared_ffn, shared_lns=_shared_lns,
-                             linear_correction=linear_correction)
+                             linear_correction=linear_correction,
+                             ssm_as_memory=ssm_as_memory)
             for bt in self.layer_plan
         ])
         self.ln_f = RMSNorm(embedding_dim)
@@ -637,6 +668,7 @@ class TransformerModel(nn.Module):
             linear_correction=cfg.attn.linear_correction,
             cross_layer_routing=cfg.cross_layer_routing,
             cross_layer_topk=cfg.cross_layer_topk,
+            ssm_as_memory=cfg.ssm_as_memory,
         )
 
     def set_enhancements_active(self, spec):
@@ -885,21 +917,43 @@ class TransformerModel(nn.Module):
                 self._ngram_last_ids = torch.cat([self._ngram_last_ids, src], dim=1)[:, -ctx_len:]
             else:
                 ngram_ord = self.ngram_model.logprob_orders_matrix(src, x.device)
-        _ow = torch.softmax(self.ngram_order_logits, dim=0)
+        # 爆炸防护 0：ngram_ord 可能含 -inf（log(0)）或 NaN（空上下文除零），
+        # 在加权混合前先兜底，防 -inf * weight 传播到 ngram_vec。
+        ngram_ord = torch.nan_to_num(ngram_ord, nan=0.0, posinf=0.0, neginf=-30.0)
+        # 爆炸防护 0b：ngram_order_logits clamp 到 [-10, 10]——防 softmax 饱和
+        # （极端 logits 使某阶权重→1，其他→0，失去多阶混合意义；softmax 本身
+        # 数值稳定但失去多阶信息）。init=0 → softmax 均匀，clamp 不影响初始行为。
+        _ow = torch.softmax(self.ngram_order_logits.clamp(-10.0, 10.0), dim=0)
         ngram_vec = (ngram_ord * _ow.view(1, 1, 1, -1)).sum(-1)
+        # 爆炸防护 1：n-gram log 概率理论上 ≤ 0，但数值噪声可能略正；极罕见 token
+        # 的 log prob 可达 -50+，经 gate 放大后使 logits 爆炸。clamp 到 [-30, 0]
+        # （exp(-30)≈1e-13，已远低于 softmax 有效阈值，不影响采样分布）。
+        ngram_vec = ngram_vec.clamp(-30.0, 0.0)
         z = self.output_head(x)
-        _t = torch.as_tensor(temperature, dtype=z.dtype, device=z.device).view(-1, 1, 1)
+        # 爆炸防护 2：温度 clamp 到 [0.01, 10]——过小 z/_t 爆炸到 ±inf，过大退化为均匀。
+        _t = torch.as_tensor(max(0.01, min(10.0, float(temperature))), dtype=z.dtype, device=z.device).view(-1, 1, 1)
         logp = F.log_softmax(z / _t, dim=-1)
         g_strength = torch.sigmoid(self.ngram_gate(x))
+        # 爆炸防护 3：ngram_gate_scale clamp 到 [0, 10]——用户可经 set_ngram_gate_scale
+        # 设大值（如 100），此时 gate·ngram_vec 可使 logits 极端化致采样塌缩。
+        _scale = max(0.0, min(10.0, float(self.ngram_gate_scale)))
         if self.igmcg_enabled and not igmcg_force_off:
             _shift = 0.0
             if intuition is not None:
                 _shift = self.intuition_proj(intuition).unsqueeze(1)
             p_use = torch.sigmoid(self.igmcg_use_gate(x) + _shift)
-            gate = p_use * g_strength * self.ngram_gate_scale
+            gate = p_use * g_strength * _scale
         else:
-            gate = g_strength * self.ngram_gate_scale
-        return logp + gate * ngram_vec
+            gate = g_strength * _scale
+        # 爆炸防护 3b：gate clamp 到 [0, 10]——g_strength∈(0,1) * _scale∈[0,10] ≤10，
+        # 但浮点误差可能略超；clamp 确保 gate·ngram_vec 的 magnitude 有界。
+        gate = gate.clamp(0.0, 10.0)
+        fused = logp + gate * ngram_vec
+        # 爆炸防护 4：NaN/Inf 兜底——直接 nan_to_num（无 .any() 的 CPU 同步税）。
+        # 正常情况下无 NaN/Inf，nan_to_num 是 no-op（DML 原生 kernel，开销极小）。
+        fused = torch.nan_to_num(fused, nan=0.0, posinf=0.0, neginf=-30.0)
+        # 爆炸防护 5：最终 logits clamp 到 [-100, 100]——防 exp() 溢出，softmax 后不影响排名。
+        return fused.clamp(-100.0, 100.0)
 
     def generate(self, token_ids: List[int], max_length: int = 50, temperature: float = 1.0, top_k: int = 50,
                   device: str = 'cpu', repetition_penalty: float = 2.0,
