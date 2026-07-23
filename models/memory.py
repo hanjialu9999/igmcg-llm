@@ -85,10 +85,16 @@ class MemoryBank(nn.Module):
         衰减次数不同导致 train/infer divergence。修复：把 forget 衰减移入逐 token 循环，
         按 token 数衰减（训练 1 次 write T token → 衰减 T 次；增量 T 次 write → 共 T 次），保证一致。
 
-        product_key 跨块顺序注意：product_key 模式下 gate 依赖 slots，slots 随写入变化。
-        训练是 block-major（block0 写全部 T token → block1 写），增量是 token-major（各 block 逐 token）。
-        两者 slots 演化路径不同 → 产生 divergence。这是已知架构限制，product_key 模式建议
-        仅在单层或 train/infer 同序时使用；多层 + 增量解码场景请用非 product_key 路径。
+        跨块顺序 divergence（已知架构限制，MemoryBank 跨层共享导致）：
+        训练全量前向是 block-major（block0 写全部 T token → block1 写），增量解码是
+        token-major（各 block 逐 token 交替写）。两种顺序下：
+          - product_key：gate=softmax(sim(comp,slots)) 依赖 slots，slots 随写入演化，
+            路径不同 → divergence。
+          - forget_gate：衰减是乘法（slots=f^N·slots_0+Σ f^{衰减_t}·update_t），衰减系数
+            依赖 update 的时序位置，乘法不满足交换律 → 各 update 衰减系数不同 → divergence。
+          - 无 forget 的非 product_key：update 纯加法（交换律）→ parity 成立。
+        建议多层 + 增量解码场景关 product_key 与 forget，或接受已知 divergence。
+        彻底消除需每层独立 MemoryBank 或 forget 按全局位置衰减（未来工作）。
         """
         B, T, D = x.shape
         # slots 即将变更 → 失效 K/V 缓存（get_kv 下次重算）
