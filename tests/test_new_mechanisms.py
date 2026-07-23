@@ -2261,6 +2261,72 @@ def test_input_highway_cache_parity():
     assert diff < 1e-4, f"input_highway cache parity diff={diff}"
 
 
+def test_input_highway_x0_cached_across_decode_steps():
+    """增量解码多步时 x0 应缓存首步值，且后续步 x0 mean-pool 对齐当前 x shape。
+
+    回归 bug 1：原实现 x0=x 每步重算，第二步开始 src 只 1 token，
+    input_highway 注入错误内容（单 token embedding 而非完整 prompt）。
+    修复 1：首步缓存 _cached_x0，后续步用缓存值。
+
+    回归 bug 2：后续步 x shape [B,1,D] 与 x0 shape [B,T_prompt,D] 不匹配，
+    直接 broadcast 会让 x 被放大到 [B,T_prompt,D] 破坏 cross_layer_routing stack。
+    修复 2：后续步取 x0 mean-pool 到 [B,1,D] 与当前 x 对齐。
+    """
+    m = _small(input_highway=True, num_layers=3)
+    m.eval()
+    # 训练 input_highway 参数使其非恒等（否则 proj=0 测不出差异）
+    with torch.no_grad():
+        m.input_highway_proj.weight.normal_(0, 0.1)
+        for g in m.input_highway_gates:
+            if isinstance(g, nn.Linear):
+                g.bias.fill_(0.0)  # sigmoid(0)=0.5，让注入可见
+    ids = torch.randint(0, 200, (1, 8))
+    with torch.no_grad():
+        # 首步：缓存 x0
+        out1, pres = m(ids, use_cache=True)
+        cached_x0_after_first = getattr(m, '_cached_x0', None)
+        assert cached_x0_after_first is not None, "首步未缓存 _cached_x0"
+        assert cached_x0_after_first.shape == (1, 8, 64), \
+            f"_cached_x0 shape 错误：{cached_x0_after_first.shape}"
+        # 后续步：_cached_x0 保持首步 shape，且不崩溃（cross_layer_routing stack 成功）
+        next_tok = torch.tensor([[5]])
+        out2, pres = m(next_tok, past_key_values=pres, use_cache=True)
+        cached_x0_after_second = getattr(m, '_cached_x0', None)
+        assert cached_x0_after_second.shape == (1, 8, 64), \
+            f"第二步后 _cached_x0 shape 错误：{cached_x0_after_second.shape}（应保持首步 (1,8,64)）"
+        # 输出 shape 应该是 [1, 1, vocab]（后续步单 token）
+        logits2 = out2 if isinstance(out2, torch.Tensor) else out2[0]
+        assert logits2.shape == (1, 1, 200), \
+            f"后续步输出 shape 错误：{logits2.shape}（应为 (1,1,200)）"
+
+
+def test_input_highway_incremental_with_cross_layer_routing():
+    """input_highway + cross_layer_routing 多步增量解码不崩溃。
+
+    回归 bug：input_highway 让 x shape 从 [B,1,D] 被放大到 [B,T_prompt,D]，
+    导致 cross_layer_routing 的 torch.stack(prev_outputs) shape 不一致崩溃。
+    修复后：x0 mean-pool 对齐，x shape 保持 [B,1,D]，stack 成功。
+    """
+    m = _small(input_highway=True, cross_layer_routing=True, cross_layer_topk=2,
+               num_layers=4, layer_plan='attn,hybrid,hybrid,attn')
+    m.eval()
+    with torch.no_grad():
+        m.input_highway_proj.weight.normal_(0, 0.1)
+        for g in m.input_highway_gates:
+            if isinstance(g, nn.Linear):
+                g.bias.fill_(0.0)
+    ids = torch.randint(0, 200, (1, 6))
+    with torch.no_grad():
+        # 多步增量解码（关键：cross_layer_routing stack 不崩溃）
+        out, pres = m(ids, use_cache=True)
+        for _ in range(3):
+            next_tok = torch.tensor([[torch.randint(0, 200, (1,)).item()]])
+            out, pres = m(next_tok, past_key_values=pres, use_cache=True)
+            logits = out if isinstance(out, torch.Tensor) else out[0]
+            assert logits.shape == (1, 1, 200), \
+                f"增量解码输出 shape 错误：{logits.shape}"
+
+
 def test_input_highway_specialized_init():
     """input_highway 专用初始化（proj=0, gate bias=-3）不被 _init_weights 覆盖。"""
     m = _small(input_highway=True, num_layers=3)
@@ -2341,6 +2407,22 @@ def test_shared_alibi_cache_parity():
         cached = m(ids, use_cache=True)
     diff = (_get_logits(full) - _get_logits(cached)).abs().max().item()
     assert diff < 1e-4, f"shared_alibi cache parity diff={diff}"
+
+
+def test_shared_alibi_survives_to_device():
+    """shared_alibi 在 .to(device) 后共享关系应保留。
+
+    回归 bug：PyTorch _apply 遍历每个 module 独立处理 buffer，
+    会打破 alibi_slopes 的对象共享（数值仍正确，但失去减参优势）。
+    修复：重写 to() 方法，在设备迁移后重新绑定共享。
+    """
+    m = _small(shared_alibi=True, alibi=True, num_layers=3)
+    # .to('cpu') 模拟设备迁移（CPU 上 .to 是 no-op 但 _apply 仍会遍历）
+    m = m.to('cpu')
+    slopes = [blk.attn.alibi_slopes for blk in m.blocks if hasattr(blk.attn, 'alibi_slopes')]
+    assert len(slopes) >= 2, "需要至少 2 个有 alibi_slopes 的层"
+    assert all(s is slopes[0] for s in slopes), \
+        "alibi_slopes 在 .to(device) 后共享被打破（应为同一对象）"
 
 
 def test_all_round14_features_combined():

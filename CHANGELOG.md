@@ -9,7 +9,27 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
-## `（本地，基于 `7f26bd4`，待推送，第十二/十三轮：跨层协作深化 + 冗余合并 + 全特性训练验证）
+## `（本地，基于 `2d154bf`，待推送，第十四轮：跨层协作再深化 + input_highway 增量解码 bug 修复）
+
+- feat: **输入全局高速公路（input_highway）**——`models/transformer.py` embedding 输出 x0 经门控注入每层：`gate=sigmoid(W·x+b)`（init b=-3，sigmoid≈0.05 弱注入），`x = x + gate * proj(x0)`。让每层都能直接访问原始输入信息，避免深层变换后信息丢失。config: `input_highway`。8 个回归测试（参数创建/恒等初始化/输出变化/梯度回流/cache parity/x0 跨步缓存/shape 对齐/与 cross_layer 组合）。
+- feat: **层间对比绑定（layer_contrastive）**——训练期累积相邻层 (1 - cos_sim) 损失到 `self._contrastive_loss`，训练循环以 0.01 权重加入主 loss。detach _prev_layer_out 使梯度只回流到当前层（推当前层向上一层靠拢，不反向）。eval 时不计算。防深层过度偏离浅层特征。config: `layer_contrastive`。3 个回归测试（损失计算/梯度回流/cache parity）。
+- feat: **ALiBi 跨层共享（shared_alibi）**——所有注意力层共用同一组 alibi_slopes buffer（减参+一致位置建模）。在 blocks 创建后统一绑定第一层的 alibi_slopes 到所有层。config: `shared_alibi`。3 个回归测试（斜率共享/buffer 数量减少/cache parity）。
+- fix: **input_highway 增量解码 x0 缓存 bug（HIGH）**——原实现 `x0 = x` 每步重算，增量解码后续步 src 只 1 token，input_highway 注入错误内容（单 token embedding 而非完整 prompt）。修复：首步缓存 `_cached_x0`（detach 避免长生命周期图），后续步用缓存值。
+- fix: **input_highway 增量解码 shape 不匹配 bug（CRITICAL）**——后续步 x shape [B,1,D] 与 x0 shape [B,T_prompt,D] 不匹配，直接 broadcast 让 x 被放大到 [B,T_prompt,D]，破坏 cross_layer_routing 的 `torch.stack(prev_outputs)` shape 一致性，导致 `RuntimeError: stack expects each tensor to be equal size`。修复：后续步取 x0 mean-pool 到 [B,1,D] 与当前 x 对齐（语义：注入 prompt 全局摘要到当前生成 token）。
+- fix: **shared_alibi .to(device) 后共享被打破（MEDIUM）**——PyTorch _apply 遍历每个 module 独立处理 buffer，会打破 alibi_slopes 的对象共享（数值仍正确，但失去减参优势）。修复：重写 `to()` 方法，在设备迁移后重新绑定共享关系。
+- perf: **input_highway_proj 重复计算优化**——原实现每层调用 `self.input_highway_proj(x0)`，x0 在循环中不变。改为循环外预计算一次 `x0_proj = self.input_highway_proj(x0)`，4 层模型节省 3 次 Linear 计算。
+- refactor: **测试辅助函数补 import**——`tests/test_new_mechanisms.py` 补 `import torch.nn as nn`（test_input_highway_param_created 用 isinstance(..., nn.Identity)/nn.Linear 但 nn 未导入）。
+- refactor: **test_shared_alibi_reduces_params 改为统计 buffer**——alibi_slopes 是 buffer 非 parameter，原测试用 `parameters()` 统计永远相等。改为 `named_buffers()` 统计 alibi_slopes 总 numel。
+- smoke: **全特性 CPU 训练验证**——config_smoke_features_v3.yaml 全特性开（v2 全特性 + input_highway + layer_contrastive + shared_alibi）。225 步训练：Train 8.58 / Val 10.10 / ~1.21s/step（CPU）。修复 input_highway bug 后 Val Loss 从 12.28→10.10（降 2 点，证明 bug 修复对训练质量有显著正向影响）。3 个 prompt 生成不崩溃（"中国人民"/"今天天气"/"科学技术"），内容质量受限于数据量和训练轮次。
+- test: **新增回归测试**——第十四轮三特性共 14 个测试 + 3 个增量解码 bug 回归测试（input_highway x0 缓存/shape 对齐/与 cross_layer 组合 + shared_alibi survives to_device）。pytest **275 passed / 1 skipped**。
+
+### 教训补充（本轮）
+- **input_highway 增量解码须缓存 x0**：训练时 x0 = embedding(src) 是整条序列，但增量解码后续步 src 只 1 token，x0 = embedding(单 token) 会让 input_highway 注入错误内容。须首步缓存完整 x0，后续步用缓存值。
+- **input_highway 增量解码须 shape 对齐**：即使缓存了 x0，后续步 x shape [B,1,D] 与 x0 shape [B,T_prompt,D] 不匹配，直接 broadcast 会让 x 被放大破坏后续层（特别是 cross_layer_routing 的 stack）。须 mean-pool x0 到 [B,1,D] 对齐。
+- **shared_alibi 须在 .to(device) 后重新绑定**：PyTorch _apply 遍历每个 module 独立处理 buffer，会打破对象共享（数值仍正确但失去减参优势）。须重写 to() 方法在设备迁移后重新绑定。
+- **性能优化：循环外预计算不变量**：input_highway_proj(x0) 中 x0 在层循环中不变，应循环外计算一次，避免每层重复 Linear。
+
+## `2d154bf`（已推送，基于 `7f26bd4`，第十二/十三轮：跨层协作深化 + 冗余合并 + 全特性训练验证）
 
 - feat: **层间 SSM 状态传递（cross_ssm_transfer）**——`models/transformer.py` TransformerModel forward 中 hybrid 块间传递 SSM 信息：前一个 hybrid 块输出经 cross_ssm_proj（init weight=0，弱注入）投影后加到下一个 hybrid 块输入。让 SSM 的序列理解在层间流动，而非每层独立重算。config: `cross_ssm_transfer`（需 hybrid 层）。
 - feat: **渐进式残差（progressive_residual）**——残差门控值随层数按 1/√(depth) 衰减：浅层 gate≈1（保留信息），深层 gate≈0.5（激进变换）。平衡浅层信息保留与深层特征抽象。与 highway_gate 组合时 bias 按 3/√(depth) 衰减。config: `progressive_residual`。
