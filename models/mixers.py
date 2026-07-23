@@ -121,7 +121,8 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
                  rope_learnable: bool = False, alibi: bool = False, retrieval_full: bool = False,
                  retrieval_topk: int = 32, learn_window: bool = False, window_base: int = 64,
                  shared_qkv: Optional[nn.Linear] = None, shared_proj: Optional[nn.Linear] = None,
-                 pe_gate: bool = False):
+                 pe_gate: bool = False, rope_dim_fraction: float = 1.0,
+                 output_gate: bool = False):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
@@ -140,7 +141,7 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         # 层间共享：传入 shared_qkv/shared_proj 时复用外部投影，不在本层创建新参数
         self.qkv = shared_qkv if shared_qkv is not None else nn.Linear(dim, 3 * dim, bias=False)
         self.proj = shared_proj if shared_proj is not None else nn.Linear(dim, dim, bias=False)
-        self.rope = RotaryEmbedding(self.head_dim, learnable=rope_learnable)
+        self.rope = RotaryEmbedding(self.head_dim, learnable=rope_learnable, dim_fraction=rope_dim_fraction)
         if self.rel_bias:
             # T5 风格相对位置偏置表：(heads, 2T-1)
             self.rel_bias_table = nn.Parameter(torch.zeros(num_heads, 2 * max_seq_length - 1))
@@ -158,6 +159,14 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         self.pe_gate_enabled = pe_gate and alibi
         if self.pe_gate_enabled:
             self.log_pe_gate = nn.Parameter(torch.zeros(num_heads))
+        # 第十五轮：Output Gating——注意力输出后加门控 sigmoid(W·out)，消除 Attention Sink。
+        # 灵感：Qwen3-Next Output Gating。init W=0, b=0 → sigmoid=0.5（半通），训练中自决。
+        # 默认关（向后兼容），config 显式开启。
+        self.output_gate_enabled = output_gate
+        if self.output_gate_enabled:
+            self.output_gate = nn.Linear(dim, dim, bias=True)
+            nn.init.zeros_(self.output_gate.weight)
+            nn.init.zeros_(self.output_gate.bias)
         # ① QK-Norm：对 Q/K 各自做 RMSNorm 后再进注意力，与 RoPE 互补、稳定训练（默认开）
         self.qk_norm_enabled = qk_norm
         if qk_norm:
@@ -216,7 +225,11 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
     def forward(self, x: torch.Tensor, past_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None, use_cache: bool = False, start_pos: int = 0,
                 memory_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         q, k, v = self.project_and_norm(x, start_pos)
-        return self.attend(q, k, v, past_kv, use_cache, start_pos, memory_kv)
+        out, present = self.attend(q, k, v, past_kv, use_cache, start_pos, memory_kv)
+        # 第十五轮：Output Gating——对注意力最终输出加门控，消除 Attention Sink / Massive Activation
+        if self.output_gate_enabled:
+            out = out * torch.sigmoid(self.output_gate(out))
+        return out, present
 
     def _alibi_bias(self, Tq: int, Tkv: int, device: torch.device, start_pos: int = 0,
                     mem_cols: int = 0) -> Optional[torch.Tensor]:
@@ -487,7 +500,7 @@ class LinearMixerBase(nn.Module, EnhancementsMixin):
 
     def __init__(self, dim: int, num_heads: int, qk_norm: bool = True, attn_temp: bool = True,
                  max_seq_length: int = 64, feature: str = 'relu', head_dim: Optional[int] = None,
-                 rope_learnable: bool = False,
+                 rope_learnable: bool = False, rope_dim_fraction: float = 1.0,
                  shared_qkv: Optional[nn.Linear] = None, shared_proj: Optional[nn.Linear] = None):
         super().__init__()
         self.num_heads = num_heads
@@ -496,7 +509,7 @@ class LinearMixerBase(nn.Module, EnhancementsMixin):
         self.feature = feature
         self.qkv = shared_qkv if shared_qkv is not None else nn.Linear(dim, 3 * self.num_heads * self.head_dim, bias=False)
         self.proj = shared_proj if shared_proj is not None else nn.Linear(self.num_heads * self.head_dim, dim, bias=False)
-        self.rope = RotaryEmbedding(self.head_dim, learnable=rope_learnable)
+        self.rope = RotaryEmbedding(self.head_dim, learnable=rope_learnable, dim_fraction=rope_dim_fraction)
         self.qk_norm_enabled = qk_norm
         if qk_norm:
             self.qk_norm = RMSNorm(self.head_dim)
@@ -566,6 +579,108 @@ class LinearAttention(LinearMixerBase):
         return self.proj(out), present
 
 
+class GatedDeltaNet(LinearMixerBase):
+    """Gated DeltaNet：门控 delta rule 线性注意力（ICLR 2025，Qwen3-Next 采纳）。
+
+    用门控 delta rule 替换 LinearAttention 的简单累加：
+        S_t = α_t · S_{t-1} + β_t · (v_t - S_{t-1}·k_t) ⊗ k_t
+        z_t = α_t · z_{t-1} + β_t · k_t
+        o_t = (S_t · q_t) / (z_t · q_t + ε)
+
+    α_t（衰减门）控制遗忘，β_t（输入门）控制写入；delta rule 让新 (k,v) 覆盖旧记忆中
+    相似 key 的关联，而非简单叠加——长程检索更精确，对"key 冲突"场景（同义改写、
+    指代消解）表现优于朴素线性注意力。
+
+    灵感（不可复用源码，仅参考思路，结合本项目重写）：
+      - Qwen3-Next：Gated DeltaNet + Gated Attention 3:1 混合（验证 delta rule 在 LLM 上的有效性）
+      - Mamba2/SSD：α/β 门控统一 SSM 与线性注意力递推
+      - DeltaNet (ICLR 2025)：delta rule 替代 simple write，提升检索精度
+
+    与项目内 LinearAttention 同接口（project_and_norm + forward），mixer='gated_delta' 启用，
+    默认关（AttnConfig.mixer 默认 'attn'，向后兼容）。
+
+    训练全量路径：T≤64 时用 for 循环递推（D·D 矩阵-向量乘开销小，循环开销可接受）。
+    增量解码：T=1 单步 delta 更新，O(D²) 内存。
+    TODO: 后续可优化为 chunk-wise parallel（DeltaNet 原论文做法）以支持更长训练序列。
+
+    参数:
+        alpha_init: 衰减门偏置初值（init -2.0 → sigmoid≈0.12，弱遗忘起步，保留长程信息）
+        beta_init:  输入门偏置初值（init 2.0 → sigmoid≈0.88，强写入起步，确保新信息注入）
+    """
+
+    def __init__(self, dim: int, num_heads: int, qk_norm: bool = True, attn_temp: bool = True,
+                 max_seq_length: int = 64, feature: str = 'relu', head_dim: Optional[int] = None,
+                 rope_learnable: bool = False, rope_dim_fraction: float = 1.0,
+                 alpha_init: float = -2.0, beta_init: float = 2.0,
+                 shared_qkv: Optional[nn.Linear] = None, shared_proj: Optional[nn.Linear] = None):
+        super().__init__(dim, num_heads, qk_norm, attn_temp, max_seq_length, feature,
+                         head_dim, rope_learnable, rope_dim_fraction,
+                         shared_qkv, shared_proj)
+        # 门控投影：per-head per-token 的 α/β，输入 x 经线性 + sigmoid
+        # init W=0 使门控仅由 bias 决定（α_init/beta_init），训练中 W 学习 x-dependent 调制
+        self.alpha_proj = nn.Linear(dim, num_heads, bias=True)
+        self.beta_proj = nn.Linear(dim, num_heads, bias=True)
+        nn.init.zeros_(self.alpha_proj.weight)
+        nn.init.constant_(self.alpha_proj.bias, alpha_init)
+        nn.init.zeros_(self.beta_proj.weight)
+        nn.init.constant_(self.beta_proj.bias, beta_init)
+
+    def _compute_gates(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """计算 per-head per-token 门控 α/β。返回 (B,H,T,1)。"""
+        # x: (B,T,C) → proj → (B,T,H) → transpose → (B,H,T) → unsqueeze → (B,H,T,1)
+        alpha = torch.sigmoid(self.alpha_proj(x).transpose(1, 2)).unsqueeze(-1)
+        beta = torch.sigmoid(self.beta_proj(x).transpose(1, 2)).unsqueeze(-1)
+        return alpha, beta
+
+    def forward(self, x: torch.Tensor, past_kv=None, use_cache: bool = False, start_pos: int = 0,
+                memory_kv=None):
+        q, k, v = self.project_and_norm(x, start_pos)
+        B, H, T, D = q.shape
+        qf = self._feat(q)
+        kf = self._feat(k)
+        # delta rule 数值稳定要求：k L2 归一化，使 (I - β·k·k^T) 谱半径 < 1 防爆炸
+        kf = kf / (kf.norm(dim=-1, keepdim=True) + 1e-6)
+        alpha, beta = self._compute_gates(x)  # 各 (B,H,T,1)
+
+        if use_cache and past_kv is not None and len(past_kv) >= 4 and past_kv[2] is not None:
+            # 增量解码：T=1，单步 delta 更新
+            S = past_kv[2]  # (B,H,D,D)
+            z = past_kv[3]  # (B,H,D)
+            kf_t = kf[:, :, 0, :]      # (B,H,D)
+            v_t = v[:, :, 0, :]        # (B,H,D)
+            alpha_t = alpha[:, :, 0, :].unsqueeze(-1)  # (B,H,1,1) 与 S (B,H,D,D) 广播
+            beta_t = beta[:, :, 0, :].unsqueeze(-1)
+            # S·k_t：当前 key 与旧状态的关联
+            Sk = torch.einsum('bhd,bhde->bhe', kf_t, S)  # (B,H,D)
+            # delta 更新：S = α·S + β·(v - S·k)⊗k
+            S = alpha_t * S + beta_t * (v_t - Sk).unsqueeze(-1) * kf_t.unsqueeze(-2)
+            z = alpha_t.squeeze(-1) * z + beta_t.squeeze(-1) * kf_t
+            num = torch.einsum('bhd,bhde->bhe', qf[:, :, 0, :], S)  # (B,H,D)
+            den = torch.einsum('bhd,bhd->bh', qf[:, :, 0, :], z).unsqueeze(-1).clamp_min(1e-6)
+            out = (num / den).transpose(1, 2).reshape(B, 1, H * D)
+            return self.proj(out), (k, v, S, z)
+
+        # 全量训练：for 循环递推（T≤64 开销可控；后续可优化为 chunk-wise parallel）
+        S = torch.zeros(B, H, D, D, device=x.device, dtype=x.dtype)
+        z = torch.zeros(B, H, D, device=x.device, dtype=x.dtype)
+        outs = []
+        for t in range(T):
+            kf_t = kf[:, :, t, :]
+            v_t = v[:, :, t, :]
+            alpha_t = alpha[:, :, t, :].unsqueeze(-1)   # (B,H,1,1) 与 S (B,H,D,D) 广播
+            beta_t = beta[:, :, t, :].unsqueeze(-1)
+            Sk = torch.einsum('bhd,bhde->bhe', kf_t, S)
+            S = alpha_t * S + beta_t * (v_t - Sk).unsqueeze(-1) * kf_t.unsqueeze(-2)
+            z = alpha_t.squeeze(-1) * z + beta_t.squeeze(-1) * kf_t
+            num = torch.einsum('bhd,bhde->bhe', qf[:, :, t, :], S)
+            den = torch.einsum('bhd,bhd->bh', qf[:, :, t, :], z).unsqueeze(-1).clamp_min(1e-6)
+            outs.append(num / den)
+        out = torch.stack(outs, dim=2)  # (B,H,T,D)
+        out = out.transpose(1, 2).reshape(B, T, H * D)
+        present = (k, v, S, z) if use_cache else None
+        return self.proj(out), present
+
+
 class AxialLinearAttention(LinearMixerBase):
     """2D 轴向线性注意力：将 1D 序列视为 row×col 网格，先行后列各做线性注意力，
     输出加权融合。复杂度 O(T·√T)，兼顾效率与 2D 空间归纳偏置。
@@ -583,8 +698,9 @@ class AxialLinearAttention(LinearMixerBase):
                  rope_learnable: bool = False, grid_size: Optional[Tuple[int, int]] = None,
                  gate_init: float = 0.0,
                  shared_qkv: Optional[nn.Linear] = None, shared_proj: Optional[nn.Linear] = None):
-        super().__init__(dim, num_heads, qk_norm, attn_temp, max_seq_length, feature,
-                         head_dim, rope_learnable, shared_qkv, shared_proj)
+        super().__init__(dim, num_heads, qk_norm=qk_norm, attn_temp=attn_temp,
+                         max_seq_length=max_seq_length, feature=feature, head_dim=head_dim,
+                         rope_learnable=rope_learnable, shared_qkv=shared_qkv, shared_proj=shared_proj)
         self.grid_size = grid_size
         # col 轴独立投影（row 轴复用基类的 qkv/proj）
         self.qkv_col = nn.Linear(dim, 3 * self.num_heads * self.head_dim, bias=False)
@@ -920,6 +1036,23 @@ class MambaSSM(nn.Module):
         nn.init.ones_(self.D)
         self.D.data.mul_(self.D_init)
 
+    def _compute_dA_and_xb(self, x_conv: torch.Tensor, dt: torch.Tensor,
+                            Bp: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """计算离散化转移矩阵 dA 和融合输入 xb。
+
+        标准 Mamba：A 静态（A = -exp(A_log)），dA = exp(dt * A)。
+        MambaSSMWithCAST 覆盖此方法添加上下文调制 A_delta。
+
+        Returns:
+            dA: (B, L, d_inner, d_state)
+            xb: (B, L, d_inner, d_state) 融合 dB * x_conv
+        """
+        A = -torch.exp(self.A_log)                   # (d_inner, d_state)
+        dA = torch.exp(dt.unsqueeze(-1) * A)          # (B, L, d_inner, d_state)
+        # 融合 dB * x_conv 为单次运算，避免 (B,L,d_inner,d_state) 中间张量分配
+        xb = (dt.unsqueeze(-1) * Bp.unsqueeze(2)) * x_conv.unsqueeze(-1)
+        return dA, xb
+
     def forward(self, x: torch.Tensor, past_state: Optional[torch.Tensor] = None, past_conv_state: Optional[torch.Tensor] = None, use_cache: bool = False) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
         Args:
@@ -936,7 +1069,7 @@ class MambaSSM(nn.Module):
         x = self.norm(x)
         xz = self.in_proj(x)                          # (B, L, 2*d_inner)
         x_in, z = xz.chunk(2, dim=-1)
-        
+
         # 因果卷积：conv 用左填充（padding=conv_kernel-1），输出取前 L 个位置（增量时取最后 1 个），
         # 确保仅依赖当前及历史 token，不泄露未来
         if past_conv_state is not None and past_conv_state.shape[0] == B and L == 1:
@@ -956,28 +1089,24 @@ class MambaSSM(nn.Module):
                     x_in.new_zeros(x_in.size(0), x_in.transpose(1, 2).size(1), 0)
             else:
                 present_conv_state = None
-        
+
         x_conv = self.act(x_conv)                    # (B, L, d_inner)
         ssm = self.x_proj(x_conv)                    # (B, L, dt_rank + 2*d_state)
-        dt_in, Bp, Cp = ssm.split([self.dt_rank, self.d_state, self.d_state], dim=-1)
+        dt_in, Bp, C = ssm.split([self.dt_rank, self.d_state, self.d_state], dim=-1)
         dt = torch.nn.functional.softplus(self.dt_proj(dt_in))   # (B, L, d_inner)
-        A = -torch.exp(self.A_log)                   # (d_inner, d_state)
-        dA = torch.exp(dt.unsqueeze(-1) * A)          # (B, L, d_inner, d_state)
-        # 融合 dB * x_conv 为单次运算，避免 (B,L,d_inner,d_state) 中间张量分配
-        xb = (dt.unsqueeze(-1) * Bp.unsqueeze(2)) * x_conv.unsqueeze(-1)  # (B, L, d_inner, d_state)
-        C = Cp                                        # (B, L, d_state)
-        
+        dA, xb = self._compute_dA_and_xb(x_conv, dt, Bp)
+
         if past_state is not None and L == 1:
             # 增量解码：逐 token 递推，并返回当前步 conv 状态供下一步拼接
             return self._forward_step(x, z, x_conv, dA, xb, C, past_state, use_cache, present_conv_state)
-        
+
         # 全量序列处理（训练或 prefill）
         h = self._selective_scan(dA, xb, past_state)  # (B, L, d_inner, d_state)
         y = (h * C.unsqueeze(2)).sum(-1)             # (B, L, d_inner)
         y = y + self.D * x_conv                      # 跳跃连接
         y = y * self.act(z)                          # 门控
         y = self.out_proj(y)
-        
+
         if use_cache:
             # 返回最后隐藏状态作为 present_state
             present_state = h[:, -1, :, :]  # (B, d_inner, d_state)
@@ -1057,39 +1186,17 @@ class MambaSSMWithCAST(MambaSSM):
         delta = self.cast_delta_proj(h)           # (B, L, d_inner * d_state)
         return delta.view(x.size(0), x.size(1), self.d_inner, self.d_state)
 
-    def forward(self, x: torch.Tensor, past_state=None, past_conv_state=None,
-                use_cache: bool = False):
-        B, L, _ = x.shape
-        x = self.norm(x)
-        xz = self.in_proj(x)
-        x_in, z = xz.chunk(2, dim=-1)
-        if past_conv_state is not None and past_conv_state.shape[0] == B and L == 1:
-            conv_input = torch.cat([past_conv_state, x_in.transpose(1, 2)], dim=-1)
-            x_conv = self.conv(conv_input)[:, :, self.conv_kernel - 1].unsqueeze(1)
-            present_conv_state = conv_input[:, :, -(self.conv_kernel - 1):]
-        else:
-            x_conv = self.conv(x_in.transpose(1, 2)).transpose(1, 2)[:, :L, :]
-            present_conv_state = x_in.transpose(1, 2)[:, :, -(self.conv_kernel - 1):] if use_cache and L > 0 else None
-        x_conv = self.act(x_conv)
-        proj = self.x_proj(x_conv)
-        dt = proj[:, :, :self.dt_rank]
-        Bp = proj[:, :, self.dt_rank:self.dt_rank + self.d_state]
-        Cp = proj[:, :, self.dt_rank + self.d_state:]
-        dt = F.softplus(self.dt_proj(dt))
-        # CAST：上下文调制 A
+    def _compute_dA_and_xb(self, x_conv: torch.Tensor, dt: torch.Tensor,
+                            Bp: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """CAST 覆盖：上下文调制 A（A_base + A_delta）再离散化。
+
+        继承基类 forward 的所有 conv/x_proj/selective_scan/output 逻辑，
+        仅差异在 dA 计算：标准 Mamba 用静态 A，CAST 用 A_base + A_delta。
+        同时修复基类 conv_kernel=1 防御（CAST 旧 forward 缺失此检查）。
+        """
         A_base = -torch.exp(self.A_log)
         A_delta = self._compute_cast_delta(x_conv)
         A_effective = A_base.unsqueeze(0).unsqueeze(0) + A_delta
         dA = torch.exp(dt.unsqueeze(-1) * A_effective)
         xb = (dt.unsqueeze(-1) * Bp.unsqueeze(2)) * x_conv.unsqueeze(-1)
-        C = Cp
-        if past_state is not None and L == 1:
-            return self._forward_step(x, z, x_conv, dA, xb, C, past_state, use_cache, present_conv_state)
-        h = self._selective_scan(dA, xb, past_state)
-        y = (h * C.unsqueeze(2)).sum(-1)
-        y = y + self.D * x_conv
-        y = y * self.act(z)
-        y = self.out_proj(y)
-        if use_cache:
-            return y, h[:, -1, :, :], present_conv_state
-        return y, None, present_conv_state
+        return dA, xb
