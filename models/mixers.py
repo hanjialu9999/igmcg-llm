@@ -565,6 +565,19 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         return None
 
 
+def _accum_kv(past_kv, k, v):
+    """累积 k/v 仅供纯 mixer 场景的 start_pos 推断。
+
+    hybrid 场景下 past_kv[0]/[1] 来自 attn 分支（MLA 时为 3D c_kv / None），
+    维度不匹配则跳过累积——hybrid 的 start_pos 由 attn cache 推断，
+    linear 的 k/v 被 _run_attn_mixer 合并逻辑（present[0:2] 取 attn）丢弃。
+    """
+    p0, p1 = past_kv[0], past_kv[1]
+    if p0 is not None and p0.dim() == k.dim() and p1 is not None and p1.dim() == v.dim():
+        return torch.cat([p0, k], dim=2), torch.cat([p1, v], dim=2)
+    return k, v
+
+
 class LinearMixerBase(nn.Module, EnhancementsMixin):
     """线性注意力系 mixer 的共享基础设施（LinearAttention / AxialLinearAttention）。
 
@@ -636,8 +649,8 @@ class LinearAttention(LinearMixerBase):
             z = z + kf_t
             num_t = torch.einsum('bhd,bhde->bhe', qf[:, :, 0, :], S)
             den_t = torch.einsum('bhd,bhd->bh', qf[:, :, 0, :], z).unsqueeze(-1).clamp_min(1e-6)
-            out = self.proj((num_t / den_t).transpose(1, 2).reshape(B, 1, H * D))
-            present = (k, v, S, z)
+            out = self.proj((num_t / den_t).reshape(B, 1, H * D))
+            present = (*_accum_kv(past_kv, k, v), S, z)
             return out, present
 
         # 全量路径：cumsum 向量化
@@ -730,8 +743,8 @@ class GatedDeltaNet(LinearMixerBase):
             z = alpha_t.squeeze(-1) * z + beta_t.squeeze(-1) * kf_t
             num = torch.einsum('bhd,bhde->bhe', qf[:, :, 0, :], S)  # (B,H,D)
             den = torch.einsum('bhd,bhd->bh', qf[:, :, 0, :], z).unsqueeze(-1).clamp_min(1e-6)
-            out = (num / den).transpose(1, 2).reshape(B, 1, H * D)
-            return self.proj(out), (k, v, S, z)
+            out = (num / den).reshape(B, 1, H * D)
+            return self.proj(out), (*_accum_kv(past_kv, k, v), S, z)
 
         # 全量训练：for 循环递推（T≤64 开销可控；后续可优化为 chunk-wise parallel）
         S = torch.zeros(B, H, D, D, device=x.device, dtype=x.dtype)
@@ -877,31 +890,36 @@ class AxialLinearAttention(LinearMixerBase):
     def forward(self, x: torch.Tensor, past_kv=None, use_cache: bool = False, start_pos: int = 0,
                 memory_kv=None):
         B, T, C = x.shape
-        # 增量解码（T=1）：退化为等效 1D 线性注意力（不展开网格）
-        if use_cache and T == 1:
+        if use_cache:
+            # 推理期：统一用 1D 线性注意力（保持 cache parity）
+            # 训练用 2D 轴向注意力（行+列融合），推理用 1D cumsum/RNN 递推；
+            # 2D 无法增量递推（需维护 per-row/per-col 独立状态），故推理退化为 1D
             q, k, v = self.project_and_norm(x, start_pos)
             H, D = self.num_heads, self.head_dim
-            if past_kv is not None and len(past_kv) >= 4 and past_kv[2] is not None:
+            qf = self._feat(q)
+            kf = self._feat(k)
+            if past_kv is not None and len(past_kv) >= 4 and past_kv[2] is not None and T == 1:
+                # 增量解码（T=1）：RNN 逐 token 累积
                 S, z = past_kv[2], past_kv[3]
-                kf_t = self._feat(k[:, :, 0, :])
+                kf_t = kf[:, :, 0, :]
                 v_t = v[:, :, 0, :]
                 S = S + torch.einsum('bhd,bhe->bhde', kf_t, v_t)
                 z = z + kf_t
-                qf_t = self._feat(q[:, :, 0, :])
+                qf_t = qf[:, :, 0, :]
                 num = torch.einsum('bhd,bhde->bhe', qf_t, S)
                 den = torch.einsum('bhd,bhd->bh', qf_t, z).unsqueeze(-1).clamp_min(1e-6)
-                out = self.proj((num / den).transpose(1, 2).reshape(B, 1, H * D))
-                return out, (k, v, S, z)
-            # 首步：初始化 S/z
-            qf = self._feat(q)
-            kf = self._feat(k)
-            S = torch.einsum('bhd,bhe->bhde', kf[:, :, 0, :], v[:, :, 0, :])
-            z = kf[:, :, 0, :]
-            num = torch.einsum('bhd,bhde->bhe', qf[:, :, 0, :], S)
-            den = torch.einsum('bhd,bhd->bh', qf[:, :, 0, :], z).unsqueeze(-1).clamp_min(1e-6)
-            out = self.proj((num / den).transpose(1, 2).reshape(B, 1, H * D))
-            return out, (k, v, S, z)
-        # 全量路径：轴向 2D 线性注意力
+                out = self.proj((num / den).reshape(B, 1, H * D))
+                return out, (*_accum_kv(past_kv, k, v), S, z)
+            # prefill/首步（T>=1）：cumsum 向量化 1D 路径
+            kv_all = torch.einsum('bhtd,bhte->bhtde', kf, v)
+            S_all = torch.cumsum(kv_all, dim=2)
+            z_all = torch.cumsum(kf, dim=2)
+            num = torch.einsum('bhtd,bhtde->bhte', qf, S_all)
+            den = torch.einsum('bhtd,bhtd->bht', qf, z_all).unsqueeze(-1).clamp_min(1e-6)
+            out = (num / den).transpose(1, 2).reshape(B, T, H * D)
+            present = (k, v, S_all[:, :, -1], z_all[:, :, -1])
+            return self.proj(out), present
+        # 训练期（use_cache=False）：2D 轴向线性注意力
         if memory_kv is not None:
             import warnings
             warnings.warn(
@@ -1166,8 +1184,15 @@ class MambaSSM(nn.Module):
                 # 保存最后 conv_kernel-1 个 token 供下一步增量使用。
                 # max(.,0) 防御 conv_kernel=1 时 -(1-1)=-0 等价于 0 导致返回全长序列（应空切片）
                 keep = max(self.conv_kernel - 1, 0)
-                present_conv_state = x_in.transpose(1, 2)[:, :, -keep:] if keep > 0 else \
-                    x_in.new_zeros(x_in.size(0), x_in.transpose(1, 2).size(1), 0)
+                if keep > 0:
+                    conv_state = x_in.transpose(1, 2)[:, :, -keep:]
+                    # 首步 L < keep（如 pure_incremental L=1, keep=2）时切片不足 keep 个元素，
+                    # 左补零对齐（因果卷积左填充语义：缺失位置等价于零输入）
+                    if conv_state.size(-1) < keep:
+                        conv_state = torch.nn.functional.pad(conv_state, (keep - conv_state.size(-1), 0))
+                    present_conv_state = conv_state
+                else:
+                    present_conv_state = x_in.new_zeros(x_in.size(0), x_in.transpose(1, 2).size(1), 0)
             else:
                 present_conv_state = None
 

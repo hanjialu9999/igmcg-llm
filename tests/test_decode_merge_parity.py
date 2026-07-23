@@ -184,13 +184,13 @@ def test_linear2d_mixer_forward_and_cache():
         out36 = m(x36)
     assert out16.shape == (2, 16, 200)
     assert out36.shape == (2, 36, 200)
-    # 增量缓存：linear2d 用 RNN 状态 (S,z) 而非全量 KV，故 k 仅含最新 1 token
+    # 增量缓存：linear2d 用 RNN 状态 (S,z) 做计算，k/v 累积全量用于 start_pos 推断
     with torch.no_grad():
         _, past = m(x16[:, :8], use_cache=True)
         _, past2 = m(x16[:, 8:9], past_key_values=past, use_cache=True)
     attn_past = past2[0][0]  # (k, v, S, z)
     assert len(attn_past) == 4  # linear2d cache is 4-tuple
-    assert attn_past[0].shape[2] == 1  # k only stores latest token (RNN mode)
+    assert attn_past[0].shape[2] == 9  # k accumulates 8 prefill + 1 incremental = 9
     assert attn_past[2].ndim == 4  # S state: (B, H, D, D)
     assert attn_past[3].ndim == 3  # z state: (B, H, D)
 
