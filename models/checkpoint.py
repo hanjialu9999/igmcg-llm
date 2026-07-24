@@ -142,6 +142,28 @@ def load_model(model_path, vocab_path, device: 'Union[str, torch.device]' = 'cpu
         print("[info] 检测到旧格式 SwiGLU 权重（w1/w3），已自动转换为 w13 合并格式")
         checkpoint['model_state_dict'] = _ckpt_sd
 
+    # 第十八轮：MemoryBank mem_k/mem_v → mem_kv_proj 自动转换
+    _model_has_memkv = any(k == 'mem_kv_proj.weight' or k.endswith('.mem_kv_proj.weight') for k in _model_sd)
+    _ckpt_has_memk = any(k.endswith('.mem_k.weight') for k in _ckpt_sd)
+    if _model_has_memkv and _ckpt_has_memk:
+        from models.memory import MemoryBank
+        _ckpt_sd = MemoryBank.convert_legacy_state_dict(_ckpt_sd)
+        print("[info] 检测到旧格式 MemoryBank 权重（mem_k/mem_v），已自动转换为 mem_kv_proj 合并格式")
+        checkpoint['model_state_dict'] = _ckpt_sd
+
+    # 第十八轮：ssm_k_proj/ssm_v_proj → ssm_kv_proj 自动转换
+    _model_has_ssmkv = any(k.endswith('.ssm_kv_proj.weight') for k in _model_sd)
+    _ckpt_has_ssmk = any(k.endswith('.ssm_k_proj.weight') for k in _ckpt_sd)
+    if _model_has_ssmkv and _ckpt_has_ssmk:
+        _ssm_keys = [k for k in list(_ckpt_sd) if k.endswith('.ssm_k_proj.weight')]
+        for _sk in _ssm_keys:
+            _sv = _sk.replace('ssm_k_proj.weight', 'ssm_v_proj.weight')
+            if _sv in _ckpt_sd:
+                _prefix = _sk[:-len('ssm_k_proj.weight')]
+                _ckpt_sd[_prefix + 'ssm_kv_proj.weight'] = torch.cat(
+                    [_ckpt_sd.pop(_sk), _ckpt_sd.pop(_sv)], dim=0)
+        print("[info] 检测到旧格式 ssm_k_proj/ssm_v_proj，已自动转换为 ssm_kv_proj 合并格式")
+
     model.load_state_dict(checkpoint['model_state_dict'], strict=False)
     # 架构型参数（hybrid_mix / ngram_gate / w13 / kv_decompress）缺失/多余属静默质量风险，主动告警。
     _arch_keys = ['hybrid_mix', 'ngram_gate', 'w13.weight', 'kv_decompress']

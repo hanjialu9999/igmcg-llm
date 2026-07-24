@@ -146,6 +146,8 @@ class ModelConfig:
     shared_alibi: bool = False         # ALiBi 跨层共享（所有层共用同一组斜率，减参+一致位置建模）
     # 第十七轮新特性
     fuse_swiglu: bool = False          # SwiGLU w1/w3 合并为 w13（减少 GEMM 调用，默认关向后兼容）
+    # 第十八轮新特性
+    nope_layers: List[int] = field(default_factory=list)  # iRoPE 交错 NoPE 层索引（这些层关闭 RoPE，位置信号由 ALiBi 提供）
 
     # n-gram
     ngram_fusion: bool = False
@@ -252,6 +254,7 @@ class ModelConfig:
             layer_contrastive=bool(mc.get('layer_contrastive', False)),
             shared_alibi=bool(mc.get('shared_alibi', False)),
             fuse_swiglu=bool(mc.get('fuse_swiglu', False)),
+            nope_layers=list(mc.get('nope_layers', [])),
             ngram_fusion=mc.get('ngram_fusion', False),
             ngram_gate_scale=float(mc.get('ngram_gate_scale', 1.0)),
             igmcg=bool(mc.get('igmcg', False)),

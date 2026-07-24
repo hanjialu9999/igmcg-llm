@@ -77,8 +77,7 @@ class TransformerBlock(nn.Module):
         self.ssm_as_memory_enabled = ssm_as_memory and block_type == 'hybrid'
         if self.ssm_as_memory_enabled:
             _head_dim = dim // num_heads
-            self.ssm_k_proj = nn.Linear(dim, _head_dim, bias=False)
-            self.ssm_v_proj = nn.Linear(dim, _head_dim, bias=False)
+            self.ssm_kv_proj = nn.Linear(dim, 2 * _head_dim, bias=False)
         # Both attn and ssm blocks need a pre-norm layer
         if shared_lns is not None:
             self.ln1, self.ln2 = shared_lns
@@ -231,10 +230,12 @@ class TransformerBlock(nn.Module):
             # 第十七轮 MLA：project_and_norm 返回 (q, k, v, c_kv) 四元组，c_kv 传给 attend
             q, k, v, c_kv = self.attn.project_and_norm(xn, start_pos)
             h, present = checkpoint(self.attn.attend, q, k, v, attn_past_kv, use_cache, start_pos, mem_kv, c_kv, use_reentrant=False)
-            # 第十五轮：output_gate 在 forward 中应用，但 ckpt 路径绕过 forward 直接调 attend，
-            # 须在此补应用，否则训练时 output_gate 参数无梯度（forward 未被调用）。
+            # 第十八轮：Gated Attention——门源从 out 升级为 query（NeurIPS 2025）。
+            # ckpt 路径绕过 forward，须在此补应用，否则 output_gate 参数无梯度。
             if getattr(self.attn, 'output_gate_enabled', False):
-                h = h * torch.sigmoid(self.attn.output_gate(h))
+                _B, _, _T, _ = q.shape
+                _q_flat = q.transpose(1, 2).reshape(_B, _T, -1)
+                h = h * torch.sigmoid(self.attn.output_gate(_q_flat))
         else:
             # LinearAttention 等无 attend 接口的 mixer：直接对整层前向做检查点
             if ckpt:
@@ -322,8 +323,8 @@ class TransformerBlock(nn.Module):
                     xn, ssm_past_state, ssm_past_conv_state, use_cache, ckpt)
                 # ssm_h: (B,T,D) → mean-pool (B,1,D) → 投影 (B,1,head_dim)
                 ssm_pool = ssm_h.mean(dim=1, keepdim=True)
-                ssm_k = self.ssm_k_proj(ssm_pool)  # (B,1,head_dim)
-                ssm_v = self.ssm_v_proj(ssm_pool)
+                ssm_kv = self.ssm_kv_proj(ssm_pool)  # (B,1,2*head_dim)
+                ssm_k, ssm_v = ssm_kv.chunk(2, dim=-1)  # 各 (B,1,head_dim)
                 # 合并到 mem_kv（无 MemoryBank 时直接创建）
                 if mem_kv is not None:
                     mk, mv, meta = mem_kv
@@ -539,7 +540,8 @@ class TransformerModel(nn.Module):
                    use_mla_kv: bool = False,
                    kv_latent_dim: Optional[int] = None,
                    fuse_swiglu: bool = False,
-                   ngram_fusion: bool = False, ngram_model=None,
+                  nope_layers: Optional[List[int]] = None,
+                  ngram_fusion: bool = False, ngram_model=None,
                    ngram_gate_scale: float = 1.0, igmcg: bool = False,
                    share_attn_proj: bool = False,
                    share_ffn: bool = False,
@@ -634,6 +636,8 @@ class TransformerModel(nn.Module):
                            delta_beta_init=delta_beta_init,
                            use_mla_kv=use_mla_kv,
                            kv_latent_dim=kv_latent_dim)
+        # 第十八轮：iRoPE 交错 NoPE 层——nope_layers 中的层关闭 RoPE，强制 alibi 提供位置信号
+        self.nope_layers_set = set(nope_layers or [])
         # 第十五轮：保存 GatedDeltaNet 专用初始化参数，供 _apply_specialized_inits 重置
         # （_init_weights 通用 N(0,0.02) 会覆盖 alpha_proj/beta_proj 的 zero weight + 专用 bias）
         self._delta_alpha_init = float(delta_alpha_init)
@@ -659,7 +663,10 @@ class TransformerModel(nn.Module):
         self.blocks = nn.ModuleList([
             TransformerBlock(embedding_dim, num_heads, hidden_dim, block_type=bt,
                              dropout=dropout, max_seq_length=rope_max_len,
-                             ssm_kwargs=ssm_kwargs, attn_kwargs=attn_kwargs,
+                             ssm_kwargs=ssm_kwargs,
+                             attn_kwargs={**attn_kwargs,
+                                          'use_rope': i not in self.nope_layers_set,
+                                          'alibi': alibi or (i in self.nope_layers_set)},
                              gate_cfg=GateConfig(
                                  residual_gate=residual_gate,
                                  hybrid_gate=hybrid_gate,
@@ -675,11 +682,11 @@ class TransformerModel(nn.Module):
                              ssm_as_memory=ssm_as_memory,
                              zero_centered_norm=zero_centered_norm,
                              fuse_swiglu=fuse_swiglu)
-            for bt in self.layer_plan
+            for i, bt in enumerate(self.layer_plan)
         ])
         # 第十四轮：ALiBi 跨层共享——所有注意力层共用第一层的 alibi_slopes buffer
         # 减参（num_layers→1 组斜率）+ 确保跨层位置建模一致
-        if shared_alibi and alibi:
+        if shared_alibi and (alibi or self.nope_layers_set):
             _shared_slopes = None
             for blk in self.blocks:
                 if hasattr(blk, 'attn') and hasattr(blk.attn, 'alibi_slopes'):
@@ -819,6 +826,7 @@ class TransformerModel(nn.Module):
             use_mla_kv=cfg.attn.use_mla_kv,
             kv_latent_dim=cfg.attn.kv_latent_dim,
             fuse_swiglu=cfg.fuse_swiglu,
+            nope_layers=cfg.nope_layers,
             ngram_fusion=cfg.ngram_fusion,
             ngram_model=ngram_model,
             ngram_gate_scale=cfg.ngram_gate_scale,
