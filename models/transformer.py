@@ -496,16 +496,18 @@ class CrossLayerRouter(nn.Module):
         prev_mean = prev_stack.mean(dim=2)
         # 路由打分：(B, num_prev, D) -> (B, num_prev, 1) -> (B, num_prev)
         scores = router(prev_mean).squeeze(-1)
-        # top-k 稀疏选择——用 one-hot 掩码替代 gather/scatter（DML 兼容）
-        # 用 torch.eye 高级索引构建精确 k 个 1 的 one-hot（只读 op，DML 原生支持）。
+        # top-k 稀疏选择——用广播比较构建掩码（DML 原生，无 scatter/one_hot）
+        # F.one_hot 在 DML 上也触发 scatter 错误（"partially modified dimensions"），
+        # torch.eye 高级索引同样回退 CPU。改用 (B,k,1)==(1,1,num_prev) 广播比较 + any。
         # 历史 Bug（已修）：曾用 `mask = (scores >= threshold).float()`，但 init 时
         # 所有 router weight=0/bias=-3 导致 scores 全并列（=-3），>= 阈值会选中所有
         # num_prev 项而非 k 项，造成 num_prev/k 倍过注入（layer 11,topk=2 时 5.5x），
         # 直接破坏"弱注入"设计意图。torch.topk 按索引序打破并列，精确选 k 个。
         k = min(self.topk, num_prev)
         topk_vals, topk_idx = torch.topk(scores, k, dim=-1)  # (B, k)
-        eye = torch.eye(num_prev, device=scores.device, dtype=scores.dtype)
-        mask = eye[topk_idx].sum(dim=1)  # (B, num_prev) 精确 k 个 1
+        # 广播比较构建 one-hot 掩码：(B,k,1)==(1,1,num_prev) → (B,k,num_prev) → any → (B,num_prev)
+        pos = torch.arange(num_prev, device=scores.device)
+        mask = (topk_idx.unsqueeze(-1) == pos.view(1, 1, -1)).any(dim=1).to(dtype=scores.dtype)
         # sigmoid 选择性门控（对所有前层算，mask 清零非 top-k）
         gates = torch.sigmoid(scores) * mask  # (B, num_prev)
         # 加权求和：einsum 避免 gather/scatter，DML 原生支持
@@ -596,7 +598,8 @@ class TransformerModel(nn.Module):
                    intra_hybrid_rope: bool = False,
                    intra_hybrid_ratio: float = 0.5,
                    gpas: bool = False,
-                   gpas_alpha_init: float = 0.5):
+                   gpas_alpha_init: float = 0.5,
+                   alibi_learnable: bool = False):
         super(TransformerModel, self).__init__()
 
         self.vocab_size = vocab_size
@@ -683,7 +686,8 @@ class TransformerModel(nn.Module):
                            value_relative_coding=value_relative_coding,
                            rwkv7=rwkv7,
                            intra_hybrid_rope=intra_hybrid_rope,
-                           intra_hybrid_ratio=intra_hybrid_ratio)
+                           intra_hybrid_ratio=intra_hybrid_ratio,
+                           alibi_learnable=alibi_learnable)
         # 第十八轮：iRoPE 交错 NoPE 层——nope_layers 中的层关闭 RoPE，强制 alibi 提供位置信号
         self.nope_layers_set = set(nope_layers or [])
         # 防护：nope_layers 索引越界校验（审查 Finding 3 LOW）
@@ -921,6 +925,7 @@ class TransformerModel(nn.Module):
             intra_hybrid_ratio=cfg.attn.intra_hybrid_ratio,
             gpas=cfg.attn.gpas,
             gpas_alpha_init=cfg.attn.gpas_alpha_init,
+            alibi_learnable=cfg.attn.alibi_learnable,
         )
 
     def set_enhancements_active(self, spec):

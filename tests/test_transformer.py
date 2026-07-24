@@ -169,11 +169,10 @@ def test_attention_mask_device_change():
     # First forward on CPU
     with torch.no_grad():
         _ = attn(x, use_cache=False)
-    # Change device (simulate)
-    # The cache should be rebuilt if device changes
-    assert attn._cached_T == 10
-    assert attn._mask is not None
-    assert attn._mask.device == x.device
+    # 验证实际使用的 _bias_cache（传给 SDPA 的 float attn_mask）已构建且设备正确
+    assert attn._bias_cache is not None, "_bias_cache 应在前向后构建"
+    assert attn._bias_cache.device == x.device, (
+        f"_bias_cache 设备 {attn._bias_cache.device} != 输入设备 {x.device}")
     print("✅ test_attention_mask_device_change passed")
 
 

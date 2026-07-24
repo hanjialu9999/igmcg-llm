@@ -62,6 +62,8 @@ class AttnConfig:
     # 第二十三轮新特性
     gpas: bool = False                 # GPAS 梯度保留激活缩放（LN 输出后用可学标量 α 缩放，缓解 Pre-LN 跨层方差增长）
     gpas_alpha_init: float = 0.5       # GPAS α 初始值（0.5=中等缩放；1.0≈行为不变）
+    # 第二十五轮新特性
+    alibi_learnable: bool = False      # ALiBi 斜率可学（buffer→Parameter，per-head 自由学习位置衰减模式）
 
     def __post_init__(self):
         _VALID = {'attn', 'linear', 'linear2d', 'attn_linear', 'hybrid_linear2d', 'diff', 'gated_delta'}
@@ -95,6 +97,11 @@ class AttnConfig:
             if not 0.0 < self.intra_hybrid_ratio < 1.0:
                 raise ValueError(
                     f"intra_hybrid_ratio 须在 (0,1) 开区间，当前 {self.intra_hybrid_ratio}")
+        # 第二十五轮：alibi_learnable 配置校验
+        if self.alibi_learnable and not self.alibi:
+            raise ValueError(
+                "alibi_learnable=True 须与 alibi=True 组合"
+                "（alibi=False 时无 alibi_slopes 可学）")
 
 
 @dataclass
@@ -145,8 +152,6 @@ class ModelConfig:
 
     # 架构增强
     layer_skip: bool = False
-    learn_window: bool = False
-    window_base: int = 64
     hybrid_single_gate: bool = False
     residual_gate: bool = True
     hybrid_gate: bool = True
@@ -164,7 +169,8 @@ class ModelConfig:
     # 第十一轮新特性
     cross_layer_routing: bool = False  # 跨层稀疏路由信息流动（DenseNet 风格 top-k 跳跃连接）
     cross_layer_topk: int = 2          # 跨层路由每层检索的前层数量
-    qat_bits: int = 0                  # 量化感知训练位宽（0=关闭，8=int8 量化噪声模拟）
+    # 注：qat_bits 由 train.py 直接从 config['model']['qat_bits'] 读取（QAT 在模型构建前启用），
+    # 不经过 ModelConfig，故此处不设字段。config key: qat_bits（0=关闭，8=int8）
     ssm_as_memory: bool = False        # SSM 输出作隐式记忆注入 hybrid 块注意力（需 hybrid 层）
     # 第十二轮新特性
     cross_ssm_transfer: bool = False   # 层间 SSM 状态传递（hybrid 块间传递 SSM 信息，需 hybrid 层）
@@ -251,6 +257,7 @@ class ModelConfig:
             intra_hybrid_ratio=float(mc.get('intra_hybrid_ratio', 0.5)),
             gpas=bool(mc.get('gpas', False)),
             gpas_alpha_init=float(mc.get('gpas_alpha_init', 0.5)),
+            alibi_learnable=bool(mc.get('alibi_learnable', False)),
         )
         memory = MemoryConfig(
             size=mc.get('memory_size', 0),
@@ -277,8 +284,6 @@ class ModelConfig:
             rope_max_len=mc.get('rope_max_len', None),
             mask_fill_value=mc.get('mask_fill_value', MASK_FILL_VALUE),
             layer_skip=mc.get('layer_skip', False),
-            learn_window=mc.get('learn_window', False),
-            window_base=mc.get('window_base', 64),
             hybrid_single_gate=mc.get('hybrid_single_gate', False),
             residual_gate=mc.get('residual_gate', True),
             hybrid_gate=mc.get('hybrid_gate', True),
@@ -290,7 +295,7 @@ class ModelConfig:
             share_norm=mc.get('share_norm', False),
             cross_layer_routing=mc.get('cross_layer_routing', False),
             cross_layer_topk=int(mc.get('cross_layer_topk', 2)),
-            qat_bits=int(mc.get('qat_bits', 0)),
+            # qat_bits 不经 ModelConfig（train.py 直接读 config['model']['qat_bits']）
             ssm_as_memory=bool(mc.get('ssm_as_memory', False)),
             cross_ssm_transfer=bool(mc.get('cross_ssm_transfer', False)),
             progressive_residual=bool(mc.get('progressive_residual', False)),
