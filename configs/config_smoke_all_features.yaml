@@ -1,0 +1,105 @@
+# 全特性冒烟训练：第 11~23 轮架构特性最大化开启
+# 路线：attn_linear mixer（支持 intra_hybrid_rope + 跨层协作 + hybrid 块）
+# 互斥处理：不开 use_mla_kv（与 intra_hybrid_rope 冲突）、不开 rwkv7/gated_delta_channel_wise（需 gated_delta mixer）
+# 速度基准：GPAS smoke ~7104 tok/s（CPU）/ intra_hybrid ~3134 tok/s（CPU）/ DML fused SDPA 54.9ms/step
+model:
+  vocab_size: 12000
+  embedding_dim: 256
+  num_heads: 8
+  num_layers: 4
+  hidden_dim: 512
+  max_seq_length: 64
+  dropout: 0
+  tie_weights: true
+  gradient_checkpointing: false
+  rope_base: 10000.0
+  rope_max_len: 4096
+  mask_fill_value: -1e9
+  layer_plan: "attn,hybrid,hybrid,attn"
+  ssm_d_state: 16
+  ssm_d_inner_factor: 1
+  ssm_dt_rank: null
+  ssm_conv_kernel: 3
+  ssm_dt_proj_bias_init: 0.1
+  ssm_a_log_init_range: [-1, 1]
+  ssm_D_init: 1.0
+  attn_window: 0
+  attn_rel_bias: false
+  alibi: true                    # intra_hybrid_rope + nope_layers 必需
+  mixer: "attn_linear"
+  pe_gate: true                  # 第11轮：位置编码选择性门控
+  # 学习型字符合并（架构层可学习分词，门控决定哪些字符合并成 token）
+  char_merge: true
+  char_merge_kernel: 3
+  char_merge_dropout: 0.0
+  # 第11轮：跨层协作 + QAT
+  cross_layer_routing: true
+  cross_layer_topk: 2
+  qat_bits: 8
+  ssm_as_memory: true            # hybrid 块 SSM→Attention 信息流
+  # 第12轮：层间 SSM 传递 + 渐进残差
+  cross_ssm_transfer: true
+  progressive_residual: true
+  # 第13轮：跨层 FiLM + 动态残差门
+  layer_film: true
+  highway_gate: true             # 与 residual_gate 互斥（代码自动不创建 sub1/ffn_gate）
+  # 第14轮：输入高速公路 + 层间对比 + 共享 alibi
+  input_highway: true
+  layer_contrastive: true
+  shared_alibi: true
+  # 第15轮：Partial RoPE + Output Gate + Zero-Centered Norm
+  rope_dim_fraction: 0.5
+  output_gate: true
+  zero_centered_norm: true
+  # 第17轮：SwiGLU 合并（减少 GEMM 调用）
+  fuse_swiglu: true
+  # 第18轮：iRoPE 交错 NoPE 层（第2层关 RoPE）
+  nope_layers: [1]
+  # 第19轮：YaRN 长度外推（2x 外推）
+  yarn_scale: 2.0
+  yarn_beta: 0.1
+  yarn_orig_max_seq_length: 0
+  # 第20轮：DALA 层间对齐 + 维度级 RoPE
+  aligned_training: true
+  dim_wise_rope: true
+  # 第21轮：per-head 温度 + value 相对编码
+  head_temp: true
+  value_relative_coding: true
+  # 第22轮：层内 head 拆半 RoPE/NoPE
+  intra_hybrid_rope: true
+  intra_hybrid_ratio: 0.5
+  # 第23轮：GPAS 梯度保留激活缩放
+  gpas: true
+  gpas_alpha_init: 0.5
+  # 第25轮：ALiBi 可学斜率（per-head 自由学习位置衰减模式）
+  alibi_learnable: true
+
+training:
+  batch_size: 16
+  epochs: 1
+  learning_rate: 3.0e-3
+  weight_decay: 0.0
+  gradient_clip: 1.0
+  warmup_steps: 0
+  early_stop_patience: 9999
+  label_smoothing: 0.0
+  cpu_threads: 4
+  precision: "fp32"
+  grad_accum_steps: 1
+  eta_min: 0.0
+  lr_schedule: "constant"
+  compile: false
+
+data:
+  train_file: "data/pretrain_corpus/merged_sample.txt"
+  vocab_size: 12000
+  max_seq_length: 64
+  num_workers: 0
+  test_split: 0.1
+
+paths:
+  checkpoint_dir: "checkpoints_smoke_all_features"
+  log_dir: "logs_smoke_all_features"
+
+device: "auto"
+seed: 42

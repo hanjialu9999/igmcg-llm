@@ -98,7 +98,7 @@ def test_sliding_window_mask_correctness():
     T = 20
     x = torch.randn(1, T, D)
     with torch.no_grad():
-        # 触发 forward → attend → _build_masks + _bias_cache
+        # 触发 forward → attend → _bias_cache 构建
         _ = attn(x, use_cache=False)
 
     # 验证 _bias_cache（实际使用的掩码）中窗口外+未来位置为 -1e9
@@ -446,15 +446,15 @@ def test_training_sliding_window_causal_mask():
     with torch.no_grad():
         _ = attn(x, use_cache=False)
 
-    # 验证缓存中的 _bias_cache（如果有 memory/rel_bias）
-    # 但更重要的是：_mask 必须同时满足因果+窗口
-    mask = attn._mask
+    # 验证实际使用的 _bias_cache（传给 SDPA 的 float attn_mask）
+    # _bias_cache 是 float mask：被遮蔽位置为 MASK_FILL_VALUE(-1e9)，未遮蔽位置为 0
+    mask = attn._bias_cache[0, 0]  # (T, T)
     for q in range(T):
         for k in range(T):
             should_mask = (k > q) or (q - k > window)  # 因果 OR 窗口外
-            actual_mask = mask[q, k].item()
-            assert actual_mask == should_mask, (
-                f"掩码错误 mask[{q},{k}]: 期望={should_mask}, 实际={actual_mask}")
+            is_masked = mask[q, k].item() != 0
+            assert is_masked == should_mask, (
+                f"掩码错误 mask[{q},{k}]: 期望 masked={should_mask}, 实际 masked={is_masked}")
 
     # 用滑动窗口前向验证输出有限
     with torch.no_grad():

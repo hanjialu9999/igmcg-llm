@@ -430,6 +430,17 @@ def main(config_path='configs/pretrain.yaml', resume=False):
     # 优化器工厂：支持 DML 友好的 SGD（避免 AdamW 的 CPU lerp 回退税）
     # 配置键：training.optimizer ∈ {adamw(默认), sgd, adam}；sgd 另读 training.momentum(默认0.9)
     opt_name = str(config['training'].get('optimizer', 'adamw')).lower()
+    # DML 兼容：AdamW/Adam 的 exp_avg.lerp_(grad, 1-beta1) 触发 aten::lerp.Scalar_out
+    # 不支持 DML，每步回退 CPU + DML↔CPU 数据搬运（严重性能杀手）。
+    # 数学等价替换：lerp_(end, w) = (1-w)*self + w*end → mul_(1-w).add_(end*w)
+    # 注意：不能用 add_(end, alpha=w)——DML 的 add_ alpha 参数有 bug（曾导致 val_loss 16→正常 7.5）
+    # 模型 forward 无 lerp_ 调用（已 grep 确认），全局 patch 仅影响优化器，安全。
+    if device.type == 'privateuseone' and opt_name in ('adamw', 'adam'):
+        _orig_lerp = torch.Tensor.lerp_
+        def _dml_lerp(self, end, weight):
+            return self.mul_(1 - weight).add_(end * weight)
+        torch.Tensor.lerp_ = _dml_lerp
+        print(f"[DML] 已 monkey-patch lerp_ → mul_+add_（避免 AdamW/Adam CPU 回退税）")
     if opt_name == 'sgd':
         # SGD 学习率量级远大于 AdamW，未显式配置时给一个合理的字符级 LM 默认值
         sgd_lr = float(config['training'].get('sgd_learning_rate', config['training']['learning_rate']))

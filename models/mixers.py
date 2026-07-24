@@ -55,34 +55,32 @@ def _parallel_prefix_scan(
     如果提供 past_state (B, d_inner, d_state)，将其作为 h_{-1} 用于计算 h_0 = a_0 * past_state + b_0。
     """
     L = a.shape[1]
+    # DML 兼容：roll 回退 CPU（aten::roll 不支持 DML），切片赋值触发 scatter 错误。
+    # 用 cat 替代 roll（DML 原生）+ torch.where 替代切片赋值（DML 原生，无 scatter）。
+    pos_idx = torch.arange(L, device=a.device)
     if a.requires_grad:
         A, B = a, b
         offset = 1
         while offset < L:
-            A_prev = A.roll(offset, dims=1)
-            A_prev[:, :offset] = 1.0
-            B_prev = B.roll(offset, dims=1)
-            B_prev[:, :offset] = 0.0
+            mask = (pos_idx < offset).view(1, L, 1, 1)
+            # roll(offset, dims=1) 等价于 cat([后 offset 位, 前 L-offset 位], dim=1)
+            A_prev = torch.where(mask, torch.ones_like(A),
+                                 torch.cat([A[:, -offset:], A[:, :-offset]], dim=1))
+            B_prev = torch.where(mask, torch.zeros_like(B),
+                                 torch.cat([B[:, -offset:], B[:, :-offset]], dim=1))
             A, B = A_prev * A, A * B_prev + B
             offset <<= 1
     else:
         A = a.clone()
         B = b.clone()
-        A_prev = torch.empty_like(A)
-        B_prev = torch.empty_like(B)
-        A_new = torch.empty_like(A)
-        B_new = torch.empty_like(B)
         offset = 1
         while offset < L:
-            A_prev.copy_(A.roll(offset, dims=1))
-            A_prev[:, :offset] = 1.0
-            B_prev.copy_(B.roll(offset, dims=1))
-            B_prev[:, :offset] = 0.0
-            torch.mul(A_prev, A, out=A_new)
-            torch.mul(A, B_prev, out=B_new)
-            B_new.add_(B)
-            A.copy_(A_new)
-            B.copy_(B_new)
+            mask = (pos_idx < offset).view(1, L, 1, 1)
+            A_prev = torch.where(mask, torch.ones_like(A),
+                                 torch.cat([A[:, -offset:], A[:, :-offset]], dim=1))
+            B_prev = torch.where(mask, torch.zeros_like(B),
+                                 torch.cat([B[:, -offset:], B[:, :-offset]], dim=1))
+            A, B = A_prev * A, A * B_prev + B
             offset <<= 1
     if past_state is not None:
         past_expanded = past_state.unsqueeze(1).expand(-1, L, -1, -1)
@@ -134,7 +132,8 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
                  head_temp: bool = False,
                  value_relative_coding: bool = False,
                  intra_hybrid_rope: bool = False,
-                 intra_hybrid_ratio: float = 0.5):
+                 intra_hybrid_ratio: float = 0.5,
+                 alibi_learnable: bool = False):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
@@ -163,13 +162,24 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         # 阶段5：ALiBi 线性位置偏置——对距离线性惩罚，长度外推极稳，与 RoPE 互补。
         # 每个头一个斜率 m_h = 2^(-h/H * 8)，bias = -m_h * |i-j|（注入 attn scores 前）。
         if alibi:
-            # 头斜率（固定、不可学，符合 ALiBi 原设计）；短序列也安全
+            # 头斜率：默认固定（buffer，符合 ALiBi 原设计）；alibi_learnable=True 时升级为
+            # 可学 Parameter（per-head 自由学习最优位置衰减模式，打破原几何级数先验）。
+            # 初始值仍为 m_h = 2^(-h/H * 8)，精确向后兼容；与 shared_alibi 正交兼容
+            # （shared_alibi 共享第一层 Parameter 对象，所有层共用同一组可学斜率，减参+一致）。
+            # 注意：alibi_slopes 既是 buffer 又可能是 Parameter，下游代码须用 .view() 等只读操作
+            # （不可 in-place 修改，会破坏 Parameter 的 autograd）。
             m = torch.tensor([2.0 ** (-(h + 1) / num_heads * 8.0) for h in range(num_heads)])
-            self.register_buffer('alibi_slopes', m, persistent=False)
+            self.alibi_learnable = alibi_learnable
+            if alibi_learnable:
+                self.alibi_slopes = nn.Parameter(m)
+            else:
+                self.register_buffer('alibi_slopes', m, persistent=False)
+        else:
+            self.alibi_learnable = False
         # 第十一轮：位置编码选择性门控——per-head 可学强度控制 ALiBi 位置偏置。
         # pe_strength = 1.0 + tanh(log_pe_gate)，init 0 → 1.0（精确向后兼容），范围 (0,2)。
         # 让模型自决每个头对位置信息的依赖：某些头更靠内容、某些头更靠位置。
-        # 当前仅作用于 ALiBi（每次前向重算，梯度正确回流）；rel_bias 因 _build_masks
+        # 当前仅作用于 ALiBi（每次前向重算，梯度正确回流）；rel_bias 因掩码
         # 缓存机制暂不支持 pe_gate（避免缓存导致梯度截断）。
         self.pe_gate_enabled = pe_gate and alibi
         if self.pe_gate_enabled:
@@ -243,9 +253,6 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
             self.intra_hybrid_nope_heads = 0
         # 运行时增强开关（按开关粒度，用于“交替/分段增强”训练）：默认全开
         self._rt: Dict[str, bool] = {"qk_norm": True, "attn_temp": True}
-        self._cached_T = -1
-        self._mask: Optional[torch.Tensor] = None
-        self._rbias: Optional[torch.Tensor] = None
         # 训练路径静态偏置掩码缓存（仅依赖 T/Tkv/mem_cols，逐层逐步重建代价高）：
         # 避免每步每头重复 arange/torch.zeros/cat 造成的海量分配与 DML 拷贝开销
         self._bias_key: Optional[tuple] = None
@@ -282,25 +289,6 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
             self.window = w
             self._bias_key = None  # 窗口变化 → 掩码缓存失效
         self._window_synced = True
-
-    def _build_masks(self, T: int, device: torch.device):
-        # Check if we need to rebuild: length changed OR device changed
-        if self._cached_T == T and self._mask is not None:
-            if self._mask.device == device:
-                return
-        causal = torch.triu(torch.ones(T, T, dtype=torch.bool, device=device), diagonal=1)
-        if self.window > 0:
-            dist = torch.arange(T, device=device).unsqueeze(1) - torch.arange(T, device=device).unsqueeze(0)
-            window_mask = dist > self.window
-            mask = causal | window_mask
-        else:
-            mask = causal
-        self._mask = mask  # True = 禁止
-        if self.rel_bias:
-            idx = torch.arange(T, device=device).unsqueeze(1) - torch.arange(T, device=device).unsqueeze(0)
-            idx = (idx + T - 1).clamp(0, 2 * self.max_seq_length - 1)
-            self._rbias = self.rel_bias_table[:, idx]  # (H, T, T)
-        self._cached_T = T
 
     def forward(self, x: torch.Tensor, past_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None, use_cache: bool = False, start_pos: int = 0,
                 memory_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
@@ -342,7 +330,9 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
             dist = (qpos - kpos).abs()
             self._alibi_dist_cache[cache_key] = dist
         # slopes: (H,) -> (1,H,1,1)，乘以距离 -> (1,H,Tq,Tkv)
-        # alibi_slopes 是 buffer，model.to(device) 时已移动到目标设备，无需再 .to(device)
+        # alibi_slopes 为 buffer（alibi_learnable=False）或 Parameter（alibi_learnable=True）；
+        # 两者皆在 model.to(device) 时已移动到目标设备，无需再 .to(device)。
+        # Parameter 时梯度通过 .view() (非 in-place) 正确回流到斜率本身。
         bias = -self.alibi_slopes.view(1, self.num_heads, 1, 1) * dist.unsqueeze(0).unsqueeze(0)
         if mem_cols > 0:
             bias = bias.clone()
@@ -455,7 +445,7 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         B, _, Tq, _ = q.shape
         self._sync_window()
         # DML 设备别名不一致（privateuseone vs privateuseone:0）：以本模块权重所在设备为权威，
-        # 所有掩码/缓存构建都用它，避免 q.device 被剥索引导致 _build_masks/_bias_cache 每步重建
+        # 所有掩码/缓存构建都用它，避免 q.device 被剥索引导致 _bias_cache 每步重建
         dev = self.qkv.weight.device
         # 第十七轮 MLA：还原 K/V 并应用 RoPE（在 memory 注入前，因 inject_memory 期望完整 K/V）
         if self.mla_kv_enabled:
@@ -566,7 +556,6 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
 
         # —— 非缓存（训练 / 含 SSM 模型全量重算）路径 ——
         T = q.size(2)
-        self._build_masks(T, dev)
         Tkv = k.size(2)
         # 统一构造 (1,1,T,Tkv) 注意力掩码：记忆段全 0（全局可检索），
         # 主序列段按 causal / window / rel_bias 遮蔽
@@ -578,9 +567,9 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
             base = raw_mask if raw_mask is not None else torch.zeros(1, 1, T, Tkv, device=dev)
             if self.rel_bias:
                 # 绝对位置相对偏置表（rel_bias 路径必须显式带因果掩码，不能退回 is_causal 快捷）。
-                # 注意 KV 长度 Tkv = T + mem_cols（记忆列已拼到前面），self._mask 是 (T,T) 与
-                # base (1,1,T,Tkv) 维度不符（记忆开启时越界崩溃），故此处直接用 _build_causal_window_mask
-                # 构造含记忆列的基础掩码（记忆列恒 0，全局可检索），再叠加相对偏置表。
+                # 注意 KV 长度 Tkv = T + mem_cols（记忆列已拼到前面），此处直接用
+                # _build_causal_window_mask 构造含记忆列的基础掩码（记忆列恒 0，全局可检索），
+                # 再叠加相对偏置表。
                 if raw_mask is None:
                     # 纯因果（无窗口/记忆/alibi）：显式构造因果掩码，保证 rel_bias 开启时仍有因果
                     qp = torch.arange(0, T, device=dev).unsqueeze(1)

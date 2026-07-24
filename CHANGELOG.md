@@ -9,6 +9,23 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
+## 第二十五轮：ALiBi 可学斜率（alibi_learnable，本地未提交）
+
+- feat: **ALiBi 可学斜率（alibi_learnable）**——`models/mixers.py` `SlidingWindowCausalSelfAttention.__init__` 的 ALiBi 头斜率从固定 `register_buffer('alibi_slopes', m, persistent=False)` 升级为可选 `nn.Parameter(m)`。新增 `alibi_learnable: bool = False` 参数控制（默认 False，向后兼容）。初始值精确等于原 ALiBi 几何级数 `m_h = 2^(-(h+1)/H*8)`，开启后 per-head 自由学习任意位置衰减模式（打破原几何级数先验）。与 `pe_gate`（乘法强度门控）正交：pe_gate 调节"多少位置信号"，alibi_learnable 调节"什么样的位置衰减形状"。与 `shared_alibi` 正交兼容：两者同开时所有层共用第一层的 Parameter 对象（对象级共享，减参 + 跨层位置建模一致）。config: `alibi_learnable`。
+- config: **AttnConfig 新增 `alibi_learnable` 字段**——`models/model_config.py` `AttnConfig` dataclass 新增 `alibi_learnable: bool = False`，`__post_init__` 校验 `alibi_learnable=True` 须 `alibi=True`（否则无 alibi_slopes 可学）。`from_dict` 读取 `mc.get('alibi_learnable', False)`。
+- pass-through: **TransformerModel 透传 `alibi_learnable`**——`models/transformer.py` `__init__` 新增参数，`attn_kwargs` 传递给 `SlidingWindowCausalSelfAttention`；`from_config` 读取 `cfg.attn.alibi_learnable`。`TransformerBlock` 的 `attn_only` filter 不过滤此参数（自动透传）。
+- test: **新增 tests/test_round25.py（15 项）**——配置校验（alibi_learnable 须 alibi）/ 默认关时为 buffer / 开启时为 Parameter / 初始值与原 ALiBi 一致 / 梯度回流 / init 时与固定版前向一致 / 模型级 Parameter 创建 / shared_alibi 共享同一对象 / shared_alibi 梯度共享 / cache parity / state_dict 键存在性。pytest **491 passed / 1 skipped / 1 xfailed**（+15）。
+- smoke: **config_smoke_all_features.yaml 训练验证**——全 25+ 特性开启含 alibi_learnable，8.07M 参数 225 步 Train 7.71 / Val 7.91 / ~736 tok/s（CPU）。推理生成正常，cache parity 通过。
+- audit: **子代理性能审查**——报告 10 项优化点，经核验多为已实施优化（_alibi_dist_cache/_causal_cache/_bias_cache/validate GPU 累加/合并 GEMM/惰性重算）或设计折衷（MemoryBank 顺序写保 parity/RNN 逐 token einsum）。value_relative_coding 全量前向 for 循环可优化为 parallel scan 但因 parity 风险暂不实施。
+
+## 第二十四轮：架构精简（死代码+死字段+buggy 测试修复，本地未提交）
+
+- fix: **test_dml_compat.py buggy 测试修复**——3 处测试用例使用导致训练发散的 `add_(end, alpha=weight)`（DML alpha bug 曾致 val_loss 16→7.5），改为 DML-safe 的 `add_(end * weight)`。测试在 CPU 上能过（CPU 支持 alpha）但根本没验证 DML-safe 修复，属严重回归测试错误。
+- refactor: **删除 `_build_masks` 死代码**——`models/mixers.py` `SlidingWindowCausalSelfAttention` 的 `_build_masks` 方法每步创建 `self._mask`（bool 张量）+ `self._rbias`，但两者**从未被读取**（实际 SDPA 用 `_build_causal_window_mask` 返回的 float mask 或 `is_causal=True`）。删除后每步少一次 T×T bool 张量分配 + window>0 时的 arange×2。同步删除 `_cached_T`/`_mask`/`_rbias` 属性，更新 2 个引用 `self._mask` 的过时测试。
+- refactor: **删除 ModelConfig 3 个顶级死字段**——`learn_window`/`window_base`（与 AttnConfig 子配置重复，顶级 `cfg.learn_window`/`cfg.window_base` 从未被访问，只有 `cfg.attn.learn_window`/`cfg.attn.window_base` 在用）；`qat_bits`（train.py 直接从 `config['model']['qat_bits']` 读原始字典，不经 ModelConfig）。`TransformerModel.__init__` 有自己的同名参数，不受影响。
+- test: **新增 2 项回归测试**——`test_no_dead_code_build_masks`（确保死代码不回归）/ `test_attention_forward_without_dead_code`（验证删除后掩码正确性）。pytest **476 passed / 1 skipped / 1 xfailed**（+2）。
+- audit: **4 子代理并行审查**（DML 兼容/架构简洁/性能瓶颈/Bug 狩猎）——6 类疑似 bug 经逐行验证全部为误报（forget_gate 衰减/output_gate ckpt/RWKV-7 b_proj init/ngram 爆炸防护/GatedDeltaNet start_pos/DifferentialAttention bool mask 均正确实现）。架构精简建议：RoPE 变体统一（高风险，需书面计划）/ 归一化工厂（中风险）/ 配置预设档（低风险）。
+
 ## `3a354cb`（已推送，第二十三轮：GPAS 梯度保留激活缩放 + 回审修复测试）
 
 - feat: **GPAS 梯度保留激活缩放（Gradient-Preserving Activation Scaling）**——`models/norms.py` 新增 `GPASNorm` 类，Pre-LN 架构中在 LN 输出后、子层前用可学标量 α∈(0,1) 缩放激活（`out = sigmoid(gpas_raw) · LN(x)`），缓解深层残差通路方差指数增长导致子层贡献被淹没的问题。`TransformerBlock` 的 attn/ssm/hybrid 三种 block_type 的两个子层（ln1/ln2 后）均应用。α 通过 sigmoid 限幅到 (0,1)，init raw=logit(init_alpha)，默认 init_alpha=0.5（raw=0 → sigmoid=0.5 中等缩放）。DML 零额外开销（仅标量乘法 + sigmoid）。与 zero_centered_norm/residual_gate 等正交。config: `gpas`/`gpas_alpha_init`。灵感：arXiv:2506.22049。
