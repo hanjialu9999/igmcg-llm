@@ -17,7 +17,7 @@
 - fix: **b_proj 初始化梯度死锁**——b_proj.weight=0 → b=0 → bTS=0 → rank-1=0 → 梯度=0（数学死锁，b_proj 永不更新）。修复：b_proj 用通用 N(0,0.02) 初始化（不归零），谱半径由 z_gate≈0.05 控制。
 - test: **新增 tests/test_round21.py（19 项）**——head_temp 参数维度/init/梯度/向后兼容；value_relative_coding 参数/init/梯度/向后兼容；NoPE 增强+nope_layers 组合/cache parity；rwkv7 参数创建/专用初始化/向后兼容/梯度/cache parity/弱扰动验证/训练变化/channel_wise 组合/YaRN 组合。pytest **420 passed / 1 skipped / 1 xfailed**（+19）。
 
-## `（待推送，第二十轮：DALA 层间对齐 + 维度级 RoPE + 子代理审查）`
+## `c1f692c`（已推送，第二十轮：DALA 层间对齐 + 维度级 RoPE + 子代理审查）
 
 - feat: **DALA 深度感知层间对齐（Depth-Aware Layer Alignment）**——`models/transformer.py` `TransformerModel` 新增 `aligned_training` 参数。升级 `layer_contrastive` 的"对齐到前邻"为"对齐到 geodesic 路径插值"：`target_i = α_i * x_{i-1} + (1-α_i) * x0`，`α_i = i/(N-1)`。浅层对齐 x0（保原始信号），深层对齐前层（促语义平滑演化）。与 `input_highway` 对称设计。config: `aligned_training`。灵感：Tracing Representation Progression（arXiv:2406.14479）+ DPE geodesic path。
 - feat: **维度级 RoPE 动态分配（Dimension-Wise RoPE）**——`models/rope.py` `RotaryEmbedding` 新增 `dim_wise` 参数。升级 Partial RoPE 的"前缀连续切分"为"逐维度对离散分配"：`mask = sigmoid(dim_wise_logit)`，mask≈1 旋转，mask≈0 不旋转（cos=1,sin=0）。init logit=0 → sigmoid=0.5 半旋转起步。与 Partial RoPE/YaRN 正交叠加。`SlidingWindowCausalSelfAttention`/`LinearMixerBase`/`GatedDeltaNet` 同步支持。config: `dim_wise_rope`。灵感：DPE（arXiv:2504.18857）+ LongRoPE2（ICML 2025）。
