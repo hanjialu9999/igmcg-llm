@@ -46,8 +46,9 @@ class MemoryBank(nn.Module):
             self.forget_gate = nn.Parameter(torch.zeros(num_slots))  # (M,)
         self.drop = nn.Dropout(dropout)
         # 记忆槽的 K/V 投影（解压后表示 → 注意力各头 K/V 维度）
-        self.mem_k = nn.Linear(dim, self.head_dim, bias=False)
-        self.mem_v = nn.Linear(dim, self.head_dim, bias=False)
+        # 合并为单次 GEMM（第十八轮性能优化）：两次 Linear(dim,head_dim) → 一次 Linear(dim,2*head_dim)
+        # 减少 DML 小算子启动税。前向 chunk(2, dim=-1) 拆分。旧权重 mem_k/mem_v 自动转换。
+        self.mem_kv_proj = nn.Linear(dim, 2 * self.head_dim, bias=False)
         # 阶段3 可学习检索门控：单个可学标量缩放记忆召回强度（sigmoid 软增强/抑制），受 LM loss 监督
         if retrieval:
             self.retrieval_gate = nn.Parameter(torch.zeros(1))
@@ -168,8 +169,25 @@ class MemoryBank(nn.Module):
         # 读取时统一 L2 归一化（与写入粒度无关，保证全量/增量记忆一致；幂等于已归一化情形）
         normed = self.slots / (1e-6 + self.slots.norm(dim=-1, keepdim=True))
         decomp = self.decompress(normed)  # (B, M, D)
-        self._kv_cache = (self.mem_k(decomp), self.mem_v(decomp))
+        self._kv_cache = self.mem_kv_proj(decomp).chunk(2, dim=-1)
         self._kv_cache_slots = self.slots
+
+    @staticmethod
+    def convert_legacy_state_dict(state_dict: dict) -> dict:
+        """将旧 mem_k/mem_v 权重转换为合并后的 mem_kv_proj 权重。
+
+        mem_kv_proj.weight = cat([mem_k.weight, mem_v.weight], dim=0)
+        （输出维度拼接：前 head_dim 行来自 mem_k，后 head_dim 行来自 mem_v，
+        与前向 chunk(2, dim=-1) 拆分顺序一致。）
+        """
+        mk_key = [k for k in state_dict if k.endswith('mem_k.weight')]
+        for mk in mk_key:
+            mv = mk.replace('mem_k.weight', 'mem_v.weight')
+            if mv in state_dict:
+                prefix = mk[:-len('mem_k.weight')]
+                state_dict[prefix + 'mem_kv_proj.weight'] = torch.cat(
+                    [state_dict.pop(mk), state_dict.pop(mv)], dim=0)
+        return state_dict
 
     def get_kv(self) -> Tuple[torch.Tensor, torch.Tensor, Optional[Dict[str, Any]]]:
         """返回记忆的 K/V：(B, M, head_dim) 及检索元信息（门控/稀疏）。
@@ -222,14 +240,16 @@ class MemoryBank(nn.Module):
             # 仅当开启检索/稀疏时才加偏置；否则记忆仅作为全局 KV 参与注意力（不加额外 bias）
             if meta.get('retrieval_gate') is not None:
                 # 可学门控：sigmoid → (0,1) 软增强/抑制记忆召回，受 LM loss 监督
-                gate = torch.sigmoid(meta['retrieval_gate']).view(1, 1, 1, 1).to(mlogits.device)
+                # retrieval_gate 是 Parameter，model.to(device) 时已移动，sigmoid 后继承设备
+                gate = torch.sigmoid(meta['retrieval_gate']).view(1, 1, 1, 1)
                 mlogits = mlogits * gate
             if meta.get('sparse_topk', 0) and 0 < meta['sparse_topk'] < mem_cols:
                 k_keep = meta['sparse_topk']
                 # 每查询保留 top-k 记忆槽，余下压到 -inf（可微稀疏，降低无关记忆干扰）
                 kvals, _ = torch.topk(mlogits, k_keep, dim=-1)  # (B,H,Tq,k_keep)
                 thr = kvals[..., -1:]  # 第 k 大的值作为阈值 (B,H,Tq,1)
-                drop = (mlogits < thr).to(mlogits.device)
+                # 比较结果继承操作数设备，无需 .to(mlogits.device)
+                drop = (mlogits < thr)
                 mlogits = mlogits.masked_fill(drop, mask_fill)
         mem_bias = mlogits  # (B,H,Tq,M)，作为 scores 的可加偏置
 

@@ -123,7 +123,8 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
                  shared_qkv: Optional[nn.Linear] = None, shared_proj: Optional[nn.Linear] = None,
                  pe_gate: bool = False, rope_dim_fraction: float = 1.0,
                  output_gate: bool = False,
-                 use_mla_kv: bool = False, kv_latent_dim: Optional[int] = None):
+                 use_mla_kv: bool = False, kv_latent_dim: Optional[int] = None,
+                 use_rope: bool = True):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
@@ -177,6 +178,11 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         # 不被压缩-还原破坏（与 DeepSeek-V3 decoupled RoPE 思路一致，但简化为单段压缩）。
         # 默认关（向后兼容），config 显式开启。
         self.mla_kv_enabled = use_mla_kv
+        # 第十八轮：iRoPE 交错 NoPE 层——use_rope=False 时跳过 RoPE 应用，
+        # 位置信号由 ALiBi 提供（NoPE 层须强制 alibi=True）。
+        # 灵感：LLaMA 4 iRoPE（3:1 交错 RoPE/NoPE）。NoPE 层理论上能学到任意长度外推。
+        # 默认 True（向后兼容），config 通过 nope_layers 指定哪些层关闭 RoPE。
+        self.use_rope = use_rope
         if self.mla_kv_enabled:
             # kv_latent_dim 默认 = dim（压缩 2x：2*dim K/V → dim 潜向量）
             _kv_latent = kv_latent_dim if kv_latent_dim is not None else dim
@@ -255,9 +261,13 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
                 memory_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         q, k, v, c_kv = self.project_and_norm(x, start_pos)
         out, present = self.attend(q, k, v, past_kv, use_cache, start_pos, memory_kv, c_kv=c_kv)
-        # 第十五轮：Output Gating——对注意力最终输出加门控，消除 Attention Sink / Massive Activation
+        # 第十八轮：Gated Attention（NeurIPS 2025 Best Paper）——门源从 out 升级为 query。
+        # 论文关键：门必须由 query 产生才触发 query-dependent 稀疏 + value 通路非线性，
+        # BOS 注意力下沉从 46.7%→4.8%。init W=0/b=0 → sigmoid=0.5 半通起步（向后兼容）。
         if self.output_gate_enabled:
-            out = out * torch.sigmoid(self.output_gate(out))
+            B_, _, T_, _ = q.shape
+            q_flat = q.transpose(1, 2).reshape(B_, T_, -1)  # (B,H,T,D) → (B,T,dim)
+            out = out * torch.sigmoid(self.output_gate(q_flat))
         return out, present
 
     def _alibi_bias(self, Tq: int, Tkv: int, device: torch.device, start_pos: int = 0,
@@ -355,14 +365,15 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
             self.log_temp if self.temp_enabled else None)
         if self.mla_kv_enabled:
             # MLA：q 应用 RoPE（位置 start_pos），k 不应用 RoPE（压缩前保持无 RoPE）
-            q = self.rope.apply_to_single(q, start_pos=start_pos, max_len=self.max_seq_length)
+            q = self.rope.apply_to_single(q, start_pos=start_pos, max_len=self.max_seq_length) if self.use_rope else q
             # k, v: (B,H,T,D) → (B,T,H,D) → (B,T,dim)，cat 后压缩到潜空间
             _dim = self.num_heads * self.head_dim
             k_flat = k.permute(0, 2, 1, 3).reshape(B, T, _dim)
             v_flat = v.permute(0, 2, 1, 3).reshape(B, T, _dim)
             c_kv = self.kv_compress(torch.cat([k_flat, v_flat], dim=-1))  # (B,T,kv_latent_dim)
             return q, k, v, c_kv
-        q, k = self.rope(q, k, start_pos=start_pos, max_len=self.max_seq_length)
+        if self.use_rope:
+            q, k = self.rope(q, k, start_pos=start_pos, max_len=self.max_seq_length)
         return q, k, v, None
 
     def attend(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,

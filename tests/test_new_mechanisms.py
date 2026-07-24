@@ -1665,12 +1665,11 @@ def test_qat_disable_restores_forward():
 # ---------------------------------------------------------------------------
 
 def test_ssm_as_memory_param_created():
-    """ssm_as_memory=True + hybrid 块时创建 ssm_k_proj/ssm_v_proj。"""
+    """ssm_as_memory=True + hybrid 块时创建 ssm_kv_proj（合并 GEMM）。"""
     m = _small_hybrid(ssm_as_memory=True)
-    # block 0 是 attn（无 ssm_as_memory），block 1 是 hybrid（有 ssm_k_proj）
-    assert not hasattr(m.blocks[0], 'ssm_k_proj'), "attn 块不应创建 ssm_k_proj"
-    assert hasattr(m.blocks[1], 'ssm_k_proj'), "hybrid 块未创建 ssm_k_proj"
-    assert hasattr(m.blocks[1], 'ssm_v_proj'), "hybrid 块未创建 ssm_v_proj"
+    # block 0 是 attn（无 ssm_as_memory），block 1 是 hybrid（有 ssm_kv_proj）
+    assert not hasattr(m.blocks[0], 'ssm_kv_proj'), "attn 块不应创建 ssm_kv_proj"
+    assert hasattr(m.blocks[1], 'ssm_kv_proj'), "hybrid 块未创建 ssm_kv_proj"
 
 
 def test_ssm_as_memory_changes_output():
@@ -1686,7 +1685,7 @@ def test_ssm_as_memory_changes_output():
 
 
 def test_ssm_as_memory_backward_flows():
-    """ssm_k_proj/ssm_v_proj 收到梯度。"""
+    """ssm_kv_proj 收到梯度。"""
     import torch.nn.functional as F
     m = _small_hybrid(ssm_as_memory=True)
     m.train()
@@ -1694,8 +1693,7 @@ def test_ssm_as_memory_backward_flows():
     out = m(x)
     loss = F.cross_entropy(out.reshape(-1, 200), torch.randint(0, 200, (16,)))
     loss.backward()
-    assert m.blocks[1].ssm_k_proj.weight.grad is not None, "ssm_k_proj 无梯度"
-    assert m.blocks[1].ssm_v_proj.weight.grad is not None, "ssm_v_proj 无梯度"
+    assert m.blocks[1].ssm_kv_proj.weight.grad is not None, "ssm_kv_proj 无梯度"
 
 
 def test_ssm_as_memory_cache_parity():
@@ -1711,9 +1709,9 @@ def test_ssm_as_memory_cache_parity():
 
 
 def test_ssm_as_memory_no_hybrid_noop():
-    """非 hybrid 块（attn/ssm）不创建 ssm_k_proj（noop）。"""
+    """非 hybrid 块（attn/ssm）不创建 ssm_kv_proj（noop）。"""
     m = _small(num_layers=2, ssm_as_memory=True)  # 默认全 attn 块
-    assert not hasattr(m.blocks[0], 'ssm_k_proj'), "attn 块不应创建 ssm_k_proj"
+    assert not hasattr(m.blocks[0], 'ssm_kv_proj'), "attn 块不应创建 ssm_kv_proj"
 
 
 # ---------------------------------------------------------------------------
