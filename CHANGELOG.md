@@ -9,7 +9,14 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
-## `（待提交，第二十一轮：NoPE 长度外推增强 + RWKV-7 广义 Delta Rule）`
+## `（待提交，第二十二轮：层内 head 拆半 RoPE/NoPE + 子代理审查）`
+
+- feat: **层内 head 拆半 RoPE/NoPE（intra_hybrid_rope）**——`models/mixers.py` `SlidingWindowCausalSelfAttention.project_and_norm` 新增 head 拆半逻辑：同一层内前半 head 应用 RoPE（位置精确匹配），后半 head 跳过 RoPE（NoPE，靠 ALiBi 获位置信号，内容语义+长度外推）。`intra_hybrid_ratio` 控制 NoPE head 占比（默认 0.5 半半）。DML 零额外开销（仅 split+cat，比 RoPE 三角函数计算还轻）。与 `nope_layers`（层间交错）正交：nope_layers 整层关 RoPE，intra_hybrid 层内拆半。init 关 → 全 RoPE（向后兼容）。config: `intra_hybrid_rope`/`intra_hybrid_ratio`。灵感：LLaMA 4 iRoPE 层间交错的层内版 + HARoPE head-wise PE。子代理考察结论：CLSA 共享路由索引不值得实施（需 YOCO 架构、DML top-k 不稳、无长上下文场景），head 拆半为 P1 优先级。
+- review: **4 子代理并行审查第二十一轮代码**——bug/性能/cache 协议/架构创新研究。审查结论：第二十一轮 NoPE 增强 + RWKV-7 全部正确（子代理 1 的 3 个 ⚠️ finding 经代码核验全部误报：value_relative_coding 全量用 v_parts 递推与增量一致、attn_only 两处都排除 rwkv7、MLA 解压在 vrc 之前）。架构创新考察：想法 ④ CLSA 不实施，想法 ⑦ head 拆半实施。
+- test: **新增 tests/test_round22.py（16 项）**——参数创建/ratio 计算/向后兼容/输出差异/梯度/cache parity/与 head_temp+vrc 组合/与 nope_layers 交互/与 YaRN/dim_wise_rope/Partial RoPE 组合/MLA 不兼容校验/ratio 范围校验/rope half 正确性/vrc cache parity。pytest **439 passed / 1 skipped / 1 xfailed**（+16）。
+- smoke: **config_smoke_intra_hybrid.yaml 训练验证**——intra_hybrid_rope+head_temp+value_relative_coding+ALiBi，5.70M 参数 225 步 Train 6.49 / Val 5.90 / ~3134 tok/s。比 nope_enhance（Val 5.97）更优，head 拆半比层间交错 NoPE 效果略好。
+
+## `67358e1`（已推送，第二十一轮：NoPE 长度外推增强 + RWKV-7 广义 Delta Rule）
 
 - feat: **per-head 可学注意力温度（head_temp）**——`models/mixers.py` `SlidingWindowCausalSelfAttention` 新增 `head_temp` 参数，`log_temp` 从全局标量 `(1,)` 升级为 per-head 向量 `(num_heads,)`。`apply_qk_norm_and_temp` 支持 per-head 温度广播（`scale.view(1,H,1,1)`）。init 0 → 温度=1（向后兼容）。config: `head_temp`。灵感：NoPE 长度外推（arXiv:2404.12224）——NoPE 层注意力熵分散致外推失败，per-head 温度让每个头独立控制 softmax 聚焦度。
 - feat: **value-side 相对编码（value_relative_coding）**——`models/mixers.py` `SlidingWindowCausalSelfAttention` 新增 `value_relative_coding` 参数。`v += tanh(λ)·v_{t-1}`，注入轻量相对位置信号。全量路径用 `F.pad` 右移 v；增量路径用 `past_kv[1][:, :, -1:, :]`。init λ=0 → v 不变（向后兼容）。config: `value_relative_coding`。灵感：NoPE 长度外推增强。

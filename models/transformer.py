@@ -577,7 +577,9 @@ class TransformerModel(nn.Module):
                    dim_wise_rope: bool = False,
                    head_temp: bool = False,
                    value_relative_coding: bool = False,
-                   rwkv7: bool = False):
+                   rwkv7: bool = False,
+                   intra_hybrid_rope: bool = False,
+                   intra_hybrid_ratio: float = 0.5):
         super(TransformerModel, self).__init__()
 
         self.vocab_size = vocab_size
@@ -662,7 +664,9 @@ class TransformerModel(nn.Module):
                            dim_wise_rope=dim_wise_rope,
                            head_temp=head_temp,
                            value_relative_coding=value_relative_coding,
-                           rwkv7=rwkv7)
+                           rwkv7=rwkv7,
+                           intra_hybrid_rope=intra_hybrid_rope,
+                           intra_hybrid_ratio=intra_hybrid_ratio)
         # 第十八轮：iRoPE 交错 NoPE 层——nope_layers 中的层关闭 RoPE，强制 alibi 提供位置信号
         self.nope_layers_set = set(nope_layers or [])
         # 防护：nope_layers 索引越界校验（审查 Finding 3 LOW）
@@ -894,6 +898,8 @@ class TransformerModel(nn.Module):
             head_temp=cfg.attn.head_temp,
             value_relative_coding=cfg.attn.value_relative_coding,
             rwkv7=cfg.attn.rwkv7,
+            intra_hybrid_rope=cfg.attn.intra_hybrid_rope,
+            intra_hybrid_ratio=cfg.attn.intra_hybrid_ratio,
         )
 
     def set_enhancements_active(self, spec):
@@ -1164,22 +1170,28 @@ class TransformerModel(nn.Module):
         #  - 增量解码后续步（use_cache=True 且已有 past）：保留记忆并持续累积，
         #    否则生成期每步 reset 会让记忆只剩当前 token，与训练行为（整条序列累积）脱节。
         memory = None
+        # 新序列起点判定：非缓存全量前向，或缓存解码且尚无任何 past（即首个生成步）。
+        # 注意 past_key_values 是空列表 [None]*N 而非 None，故需逐个判空；否则训练后
+        # 同一实例直接 generate 会沿用训练期的 batch 大小槽，导致形状不匹配。
+        is_fresh = (not use_cache) or all(pk is None for pk in past_key_values)
         if self.memory_enabled:
             memory = self.memory_bank
-            # 新序列起点判定：非缓存全量前向，或缓存解码且尚无任何 past（即首个生成步）。
-            # 注意 past_key_values 是空列表 [None]*N 而非 None，故需逐个判空；否则训练后
-            # 同一实例直接 generate 会沿用训练期的 batch 大小槽，导致形状不匹配。
-            is_fresh = (not use_cache) or all(pk is None for pk in past_key_values)
             if is_fresh or memory.slots.shape[0] != x.size(0):
                 # 首步重建记忆槽：用记忆库权重所在设备（DML 别名 privateuseone:0 的权威设备），
                 # 避免后续热路径每步因 x.device 被剥索引而触发 .to() 拷贝。
                 memory.reset(x.size(0), self.memory_bank.compress.weight.device, x.dtype)
-                # 清理注意力掩码缓存（训练期 _bias_cache/_mask 按大 T 构建，解码首步 T 不同，
-                # 避免复用到错误尺寸的缓存导致形状不匹配）。
-                for blk in self.blocks:
-                    if hasattr(blk, 'attn'):
-                        blk.attn._bias_key = None
-                        blk.attn._cached_T = -1
+        # 回审修复：新序列首步清理所有跨序列缓存（无论 memory 是否启用）：
+        # - 注意力掩码缓存（_bias_cache/_mask 按大 T 构建，解码首步 T 不同）
+        # - ALiBi 距离缓存（增量解码期每步 start_pos/Tkv 唯一，无限增长致 OOM）
+        # - input_highway x0_proj 缓存（上次 generate() 残留，batch_size 相同则误复用）
+        if is_fresh:
+            for blk in self.blocks:
+                if hasattr(blk, 'attn'):
+                    blk.attn._bias_key = None
+                    blk.attn._cached_T = -1
+                    if hasattr(blk.attn, '_alibi_dist_cache'):
+                        blk.attn._alibi_dist_cache.clear()
+            self._cached_x0_proj = None
 
         # 第十一轮：跨层稀疏路由——收集每层输出供后续层 top-k 路由（残差注入）。
         # 仅 cross_layer_routing=True 且 num_layers>1 时启用（cross_router 已在 __init__ 创建）。

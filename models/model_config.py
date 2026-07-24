@@ -56,6 +56,9 @@ class AttnConfig:
     head_temp: bool = False            # per-head 可学注意力温度（升级全局标量 log_temp 为 per-head 向量，NoPE 层长度外推增强）
     value_relative_coding: bool = False  # value-side 相对编码（v+=tanh(λ)·v_{t-1}，轻量相对位置信号，NoPE 层外推增强）
     rwkv7: bool = False                # RWKV-7 广义 Delta Rule（GatedDeltaNet 新增 rank-1 状态扰动项）
+    # 第二十二轮新特性
+    intra_hybrid_rope: bool = False    # 层内 head 拆半 RoPE/NoPE（前半 head 用 RoPE，后半用 NoPE 靠 ALiBi 获位置）
+    intra_hybrid_ratio: float = 0.5    # NoPE head 占比（0.5=一半一半；0.0=全 RoPE 退化为现状）
 
     def __post_init__(self):
         _VALID = {'attn', 'linear', 'linear2d', 'attn_linear', 'hybrid_linear2d', 'diff', 'gated_delta'}
@@ -69,6 +72,15 @@ class AttnConfig:
             raise ValueError(
                 f"use_mla_kv=True 仅支持 mixer in {{'attn','attn_linear'}}，"
                 f"当前 mixer='{self.mixer}' 不支持 MLA KV 压缩")
+        # 第二十二轮：intra_hybrid_rope 与 MLA 不兼容（MLA 路径 k 的 RoPE 在 attend 内部解压后应用，
+        # head 拆半需同时改 project_and_norm 和 attend 两处，复杂度高且 MLA 已压缩 KV，head 拆半收益有限）
+        if self.intra_hybrid_rope and self.use_mla_kv:
+            raise ValueError(
+                "intra_hybrid_rope=True 与 use_mla_kv=True 不兼容"
+                "（MLA 路径 k 的 RoPE 在 attend 内部应用，head 拆半需两处改动）")
+        if not 0.0 < self.intra_hybrid_ratio < 1.0:
+            raise ValueError(
+                f"intra_hybrid_ratio 须在 (0,1) 开区间，当前 {self.intra_hybrid_ratio}")
 
 
 @dataclass
@@ -221,6 +233,8 @@ class ModelConfig:
             head_temp=bool(mc.get('head_temp', False)),
             value_relative_coding=bool(mc.get('value_relative_coding', False)),
             rwkv7=bool(mc.get('rwkv7', False)),
+            intra_hybrid_rope=bool(mc.get('intra_hybrid_rope', False)),
+            intra_hybrid_ratio=float(mc.get('intra_hybrid_ratio', 0.5)),
         )
         memory = MemoryConfig(
             size=mc.get('memory_size', 0),
