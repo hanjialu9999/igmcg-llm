@@ -43,7 +43,8 @@ class RotaryEmbedding(nn.Module):
     def __init__(self, dim: int, base: float = ROPE_BASE, learnable: bool = False,
                  dim_fraction: float = 1.0,
                  yarn_scale: float = 1.0, yarn_beta: float = 0.1,
-                 yarn_orig_max_seq_length: int = 0):
+                 yarn_orig_max_seq_length: int = 0,
+                 dim_wise: bool = False):
         super().__init__()
         # 第十五轮：Partial RoPE——仅前 dim*fraction 维度加 RoPE，后段 NoPE（纯内容维度）。
         # 灵感：Qwen3-Next（前 25%）+ MLA Decoupled RoPE。长度外推更稳，高频维度不承载位置信息。
@@ -68,6 +69,16 @@ class RotaryEmbedding(nn.Module):
         # inv_freq 实际 = buffer * exp(log_scale)，log_scale 每维可学（init 0 = 不变）。
         if learnable:
             self.rope_log_scale = nn.Parameter(torch.zeros(self.rot_dim // 2))
+        # 第二十轮：维度级 RoPE 动态分配——逐维度对选择旋转/不旋转
+        # 灵感：DPE (arXiv:2504.18857) + LongRoPE2 (ICML 2025)
+        # 升级 Partial RoPE 的"前缀连续切分"为"逐维度离散分配"：
+        # mask = sigmoid(dim_wise_logit)，mask≈1 旋转，mask≈0 不旋转（cos=1,sin=0）
+        # init logit=0 → sigmoid=0.5 半旋转起步，训练中学习哪些维度对应旋转/不旋转
+        # 与 Partial RoPE 正交：Partial 选择前缀维度对，dim_wise 在 rot_dim 内逐维度对选择
+        # 与 YaRN 正交：YaRN 缩放 inv_freq 基底，dim_wise 决定是否启用旋转
+        self.dim_wise_enabled = dim_wise
+        if dim_wise:
+            self.dim_wise_logit = nn.Parameter(torch.zeros(self.rot_dim // 2))
         # 实例级缓存：隔离不同模型/设备/dtype
         self._cache: Dict[Tuple[str, str, int], Tuple[torch.Tensor, torch.Tensor]] = {}
         self._cache_lock = threading.RLock()
@@ -161,8 +172,29 @@ class RotaryEmbedding(nn.Module):
 
         return cos_full[:, :, start_pos:need, :].to(dtype), sin_full[:, :, start_pos:need, :].to(dtype)
 
+    def _apply_dim_wise_mask(self, cos: torch.Tensor, sin: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """维度级 RoPE 掩码：对 cos/sin 逐维度对施加可学软掩码。
+
+        mask = sigmoid(dim_wise_logit)，shape [rot_dim//2]。
+        cos_masked = cos * mask + (1 - mask)  → mask=0 时 cos=1（不旋转）
+        sin_masked = sin * mask               → mask=0 时 sin=0（不旋转）
+        cos/sin shape (... , rot_dim)，mask 按 rot_dim//2 广播后重复到 rot_dim。
+        """
+        if not self.dim_wise_enabled:
+            return cos, sin
+        mask = torch.sigmoid(self.dim_wise_logit)  # (rot_dim//2,)
+        # cos/sin shape (..., rot_dim)，需要 mask shape (..., rot_dim) 广播
+        # cos[..., :d] 和 cos[..., d:2d] 用同一个 mask（每对维度共享）
+        d = self.dim_wise_logit.shape[0]
+        mask_full = torch.cat([mask, mask], dim=-1)  # (rot_dim,)
+        # 广播到 cos/sin 的前导维度
+        cos = cos * mask_full + (1.0 - mask_full)
+        sin = sin * mask_full
+        return cos, sin
+
     def forward(self, q: torch.Tensor, k: torch.Tensor, start_pos: int = 0, max_len: int = 2048) -> Tuple[torch.Tensor, torch.Tensor]:
         cos, sin = self._get_cos_sin(start_pos, q.size(2), q.device, q.dtype, max_len=max_len)
+        cos, sin = self._apply_dim_wise_mask(cos, sin)
         return self._rope_apply(q, cos, sin), self._rope_apply(k, cos, sin)
 
     def apply_to_single(self, x: torch.Tensor, start_pos: int = 0, max_len: int = 2048) -> torch.Tensor:
@@ -174,6 +206,7 @@ class RotaryEmbedding(nn.Module):
         apply_to_single 支持独立长度和独立 start_pos（attend 中 k 是拼接后的 T_total）。
         """
         cos, sin = self._get_cos_sin(start_pos, x.size(2), x.device, x.dtype, max_len=max_len)
+        cos, sin = self._apply_dim_wise_mask(cos, sin)
         return self._rope_apply(x, cos, sin)
 
     @staticmethod

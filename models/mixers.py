@@ -125,7 +125,8 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
                  output_gate: bool = False,
                  use_mla_kv: bool = False, kv_latent_dim: Optional[int] = None,
                  use_rope: bool = True,
-                 yarn_scale: float = 1.0, yarn_beta: float = 0.1, yarn_orig_max_seq_length: int = 0):
+                 yarn_scale: float = 1.0, yarn_beta: float = 0.1, yarn_orig_max_seq_length: int = 0,
+                 dim_wise_rope: bool = False):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
@@ -146,7 +147,8 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         self.proj = shared_proj if shared_proj is not None else nn.Linear(dim, dim, bias=False)
         self.rope = RotaryEmbedding(self.head_dim, learnable=rope_learnable, dim_fraction=rope_dim_fraction,
                                     yarn_scale=yarn_scale, yarn_beta=yarn_beta,
-                                    yarn_orig_max_seq_length=yarn_orig_max_seq_length)
+                                    yarn_orig_max_seq_length=yarn_orig_max_seq_length,
+                                    dim_wise=dim_wise_rope)
         if self.rel_bias:
             # T5 风格相对位置偏置表：(heads, 2T-1)
             self.rel_bias_table = nn.Parameter(torch.zeros(num_heads, 2 * max_seq_length - 1))
@@ -603,7 +605,8 @@ class LinearMixerBase(nn.Module, EnhancementsMixin):
                  max_seq_length: int = 64, feature: str = 'relu', head_dim: Optional[int] = None,
                  rope_learnable: bool = False, rope_dim_fraction: float = 1.0,
                  shared_qkv: Optional[nn.Linear] = None, shared_proj: Optional[nn.Linear] = None,
-                 yarn_scale: float = 1.0, yarn_beta: float = 0.1, yarn_orig_max_seq_length: int = 0):
+                 yarn_scale: float = 1.0, yarn_beta: float = 0.1, yarn_orig_max_seq_length: int = 0,
+                 dim_wise_rope: bool = False):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = head_dim or (dim // num_heads)
@@ -613,7 +616,8 @@ class LinearMixerBase(nn.Module, EnhancementsMixin):
         self.proj = shared_proj if shared_proj is not None else nn.Linear(self.num_heads * self.head_dim, dim, bias=False)
         self.rope = RotaryEmbedding(self.head_dim, learnable=rope_learnable, dim_fraction=rope_dim_fraction,
                                     yarn_scale=yarn_scale, yarn_beta=yarn_beta,
-                                    yarn_orig_max_seq_length=yarn_orig_max_seq_length)
+                                    yarn_orig_max_seq_length=yarn_orig_max_seq_length,
+                                    dim_wise=dim_wise_rope)
         self.qk_norm_enabled = qk_norm
         if qk_norm:
             self.qk_norm = RMSNorm(self.head_dim)
@@ -718,11 +722,13 @@ class GatedDeltaNet(LinearMixerBase):
                  alpha_init: float = -2.0, beta_init: float = 2.0,
                  shared_qkv: Optional[nn.Linear] = None, shared_proj: Optional[nn.Linear] = None,
                  channel_wise: bool = False,
-                 yarn_scale: float = 1.0, yarn_beta: float = 0.1, yarn_orig_max_seq_length: int = 0):
+                 yarn_scale: float = 1.0, yarn_beta: float = 0.1, yarn_orig_max_seq_length: int = 0,
+                 dim_wise_rope: bool = False):
         super().__init__(dim, num_heads, qk_norm, attn_temp, max_seq_length, feature,
                          head_dim, rope_learnable, rope_dim_fraction,
                          shared_qkv, shared_proj,
-                         yarn_scale, yarn_beta, yarn_orig_max_seq_length)
+                         yarn_scale, yarn_beta, yarn_orig_max_seq_length,
+                         dim_wise_rope=dim_wise_rope)
         # 第十九轮 KDA（Kimi Delta Attention）：逐通道衰减 α/β（per-channel 向量而非标量）
         # 灵感：Kimi K3 KDA（arXiv:2510.26692）—— Diag(α_t)·S 让每个通道独立遗忘率，
         # 模型自决"哪些通道保留长程信息、哪些快速更新"。与 MemoryBank per-slot forget 对称。

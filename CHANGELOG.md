@@ -9,6 +9,13 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
+## `（待推送，第二十轮：DALA 层间对齐 + 维度级 RoPE + 子代理审查）`
+
+- feat: **DALA 深度感知层间对齐（Depth-Aware Layer Alignment）**——`models/transformer.py` `TransformerModel` 新增 `aligned_training` 参数。升级 `layer_contrastive` 的"对齐到前邻"为"对齐到 geodesic 路径插值"：`target_i = α_i * x_{i-1} + (1-α_i) * x0`，`α_i = i/(N-1)`。浅层对齐 x0（保原始信号），深层对齐前层（促语义平滑演化）。与 `input_highway` 对称设计。config: `aligned_training`。灵感：Tracing Representation Progression（arXiv:2406.14479）+ DPE geodesic path。
+- feat: **维度级 RoPE 动态分配（Dimension-Wise RoPE）**——`models/rope.py` `RotaryEmbedding` 新增 `dim_wise` 参数。升级 Partial RoPE 的"前缀连续切分"为"逐维度对离散分配"：`mask = sigmoid(dim_wise_logit)`，mask≈1 旋转，mask≈0 不旋转（cos=1,sin=0）。init logit=0 → sigmoid=0.5 半旋转起步。与 Partial RoPE/YaRN 正交叠加。`SlidingWindowCausalSelfAttention`/`LinearMixerBase`/`GatedDeltaNet` 同步支持。config: `dim_wise_rope`。灵感：DPE（arXiv:2504.18857）+ LongRoPE2（ICML 2025）。
+- review: **4 子代理并行审查**——bug 审查/性能优化/cache 协议/架构创新研究。审查结论：KDA/YaRN/专用初始化/MLA+NoPE 全部正确（子代理报告的问题经验证全部误报）；TransformerModel.generate 通过 BlockState.start_pos 正确推断 start_pos，GatedDeltaNet 增量解码路径正确。
+- test: **新增 tests/test_round20.py（15 项）**——DALA loss 非零/梯度/eval 关闭/向后兼容/与 layer_contrastive 差异/α_i 插值逻辑；dim_wise_rope 参数创建/init=0/梯度/向后兼容/输出差异/Partial RoPE 组合/YaRN 组合/mask 逻辑/增量解码。pytest **399 passed / 1 skipped / 1 xfailed**（+15）。
+
 ## `bb239c0`（已推送，第十九轮：KDA 逐通道衰减 + YaRN 长度外推 + 审查修复）
 
 - feat: **KDA 逐通道衰减（Kimi Delta Attention）**——`models/mixers.py` `GatedDeltaNet` 新增 `channel_wise` 参数，α/β 门控从标量（per-head）升级为逐通道向量（per-head per-dim），`alpha_proj`/`beta_proj` 输出维度从 `num_heads` → `num_heads*head_dim`。`_compute_gates` 通道模式返回 `(B,H,T,D)`，`Diag(α_t)·S` 让每个通道独立遗忘率，提升长程检索精度。init W=0（向后兼容，weight=0 时与标量模式行为等价）。config: `gated_delta_channel_wise`。灵感：Kimi K3 KDA（arXiv:2510.26692）。与 MemoryBank per-slot forget 对称。
