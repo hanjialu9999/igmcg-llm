@@ -132,7 +132,9 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
                  yarn_scale: float = 1.0, yarn_beta: float = 0.1, yarn_orig_max_seq_length: int = 0,
                  dim_wise_rope: bool = False,
                  head_temp: bool = False,
-                 value_relative_coding: bool = False):
+                 value_relative_coding: bool = False,
+                 intra_hybrid_rope: bool = False,
+                 intra_hybrid_ratio: float = 0.5):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
@@ -220,6 +222,14 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         if value_relative_coding:
             # tanh 限制 λ∈(-1,1)，init 0 → v 不变；cache 存原始 v 保证 train/infer parity
             self.value_rel_lambda = nn.Parameter(torch.zeros(1))
+        # 第二十二轮：层内 head 拆半 RoPE/NoPE——同一层内前半 head 用 RoPE（位置精确匹配），
+        # 后半 head 用 NoPE（内容语义+长度外推，靠 ALiBi 获位置信号）。
+        # 灵感：LLaMA 4 iRoPE 层间交错的层内版 + HARoPE head-wise PE。
+        # 与 nope_layers（层间交错）正交：nope_layers 整层关 RoPE，intra_hybrid 层内拆半。
+        # DML 零额外开销（仅 split+cat，比 RoPE 本身的三角函数计算还轻）。
+        # 默认关（向后兼容），config 显式开启。NoPE half 须与 alibi=True 组合。
+        self.intra_hybrid_rope_enabled = intra_hybrid_rope
+        self.intra_hybrid_nope_heads = max(1, int(num_heads * intra_hybrid_ratio)) if intra_hybrid_rope else 0
         # 运行时增强开关（按开关粒度，用于“交替/分段增强”训练）：默认全开
         self._rt: Dict[str, bool] = {"qk_norm": True, "attn_temp": True}
         self._cached_T = -1
@@ -308,6 +318,11 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
             return None
         # 距离矩阵 dist=|qpos-kpos| 仅依赖 (Tq,Tkv,start_pos,device)，确定性，可缓存
         # （第二十一轮性能优化：避免每步 arange×2+abs 的 DML 启动税，~100-200μs/层）
+        # 回审修复：增量解码每步 start_pos/Tkv 唯一，缓存键永不复用，无限增长致 OOM。
+        # 限制缓存大小——训练期（start_pos=0, T 固定）仅 1 条不会触发清理；
+        # 增量解码超过阈值时清空，代价是首步重算 1 次（~100μs，可忽略）。
+        if len(self._alibi_dist_cache) > 8:
+            self._alibi_dist_cache.clear()
         cache_key = (Tq, Tkv, start_pos, str(device))
         dist = self._alibi_dist_cache.get(cache_key)
         if dist is None:
@@ -403,7 +418,17 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
             c_kv = self.kv_compress(torch.cat([k_flat, v_flat], dim=-1))  # (B,T,kv_latent_dim)
             return q, k, v, c_kv
         if self.use_rope:
-            q, k = self.rope(q, k, start_pos=start_pos, max_len=self.max_seq_length)
+            if self.intra_hybrid_rope_enabled and self.intra_hybrid_nope_heads < self.num_heads:
+                # 层内 head 拆半：前 H_rope 个 head 应用 RoPE，后 nope_heads 个 head 跳过（NoPE）
+                # NoPE half 靠 ALiBi 提供位置信号（config 须同时开 alibi=True）
+                H_rope = self.num_heads - self.intra_hybrid_nope_heads
+                q_rope, q_nope = q[:, :H_rope], q[:, H_rope:]
+                k_rope, k_nope = k[:, :H_rope], k[:, H_rope:]
+                q_rope, k_rope = self.rope(q_rope, k_rope, start_pos=start_pos, max_len=self.max_seq_length)
+                q = torch.cat([q_rope, q_nope], dim=1)
+                k = torch.cat([k_rope, k_nope], dim=1)
+            else:
+                q, k = self.rope(q, k, start_pos=start_pos, max_len=self.max_seq_length)
         return q, k, v, None
 
     def attend(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
@@ -443,17 +468,23 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
             k = self.rope.apply_to_single(k, start_pos=0, max_len=self.max_seq_length) if self.use_rope else k
             # MLA 已处理 cache 拼接，后续 cache 分支不再拼接 past_kv
             past_kv = None
-        # 第二十一轮：value-side 相对编码——v += tanh(λ)·v_{t-1}（轻量相对位置信号）
-        # 全量前向：shift(v) 取 v_{t-1}（首 token v_prev=0）；MLA 路径 v 含全部历史同样 shift
-        # 非 MLA 增量解码：v 仅当前 token，从 past_kv 取 v_{t-1}（cache 存编码后 v）
+        # 第二十一轮：value-side 相对编码——递推 v_encoded[t] = v[t] + λ·v_encoded[t-1]
+        # 增量解码：v 仅当前 token，从 past_kv 取 v_{t-1}（cache 存编码后 v）
+        # 全量前向：必须用递推（非 shift）以与增量解码一致——cache 存编码后 v，
+        # 下一步用 encoded v_{t-1}，若全量用 shift(原 v) 会导致 train/infer parity 崩溃。
         # init λ=0 → tanh=0 → v 不变（向后兼容）；灵感：ViPE value-side relative coding
         if self.value_relative_coding_enabled:
             _lam = torch.tanh(self.value_rel_lambda).view(1, 1, 1, 1)
             if v.size(2) == 1 and use_cache and past_kv is not None and past_kv[1] is not None:
                 v = v + _lam * past_kv[1][:, :, -1:, :]
             elif v.size(2) > 1:
-                v_prev = F.pad(v[:, :, :-1, :], (0, 0, 0, 1))
-                v = v + _lam * v_prev
+                # 递推滤波：v_encoded[t] = v[t] + λ * v_encoded[t-1]
+                # 与增量解码路径一致（cache 存 encoded v，下一步复用）
+                T = v.size(2)
+                v_parts = [v[:, :, 0:1, :]]
+                for _t in range(1, T):
+                    v_parts.append(v[:, :, _t:_t + 1, :] + _lam * v_parts[-1])
+                v = torch.cat(v_parts, dim=2)
         # 阶段3 可学习检索：统一经 MemoryBank.inject_memory 注入记忆 K/V + 检索偏置，
         # 取代 cache/全量两条路径各自重复的"记忆拼接 + 稀疏门控 + 全上下文检索"逻辑（B 项收敛）。
         mem_cols = 0
