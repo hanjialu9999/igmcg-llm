@@ -9,7 +9,23 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
-## `（本地，基于 `4e9e8f3`，待推送，第十七轮：MLA KV 压缩 + SwiGLU 合并 + 审查修复）
+## `e5d87d5`（第十八轮：iRoPE 交错 NoPE + Gated Attention + GEMM 合并优化）
+
+- feat: **iRoPE 交错 NoPE 层**——`nope_layers` 配置指定层关闭 RoPE，位置信号由 ALiBi 提供（NoPE 层强制 `alibi=True`）。`SlidingWindowCausalSelfAttention` 新增 `use_rope` 参数，`project_and_norm` 中 `use_rope=False` 时跳过 RoPE 应用。灵感：LLaMA 4 iRoPE（3:1 交错 RoPE/NoPE）。NoPE 层理论上能学到任意长度外推。默认空列表（向后兼容）。config: `nope_layers=[1,5,...]`。
+- feat: **Gated Attention（output_gate 门源升级 out→query）**——`models/mixers.py` `SlidingWindowCausalSelfAttention.forward` 中 output_gate 的门源从注意力输出 `out` 升级为 `query`（`(B,H,T,D) → (B,T,dim)` 后投影）。论文关键：门必须由 query 产生才触发 query-dependent 稀疏 + value 通路非线性，BOS 注意力下沉 46.7%→4.8%。ckpt 路径（`_run_attn_mixer`）同步更新。init W=0/b=0 → sigmoid=0.5 半通起步（向后兼容）。灵感：NeurIPS 2025 Best Paper。
+- feat: **GEMM 合并优化**——(1) `TransformerBlock.ssm_k_proj`/`ssm_v_proj` 合并为 `ssm_kv_proj`（`Linear(dim, 2*head_dim)`，前向 chunk 拆分）；(2) `MemoryBank.mem_k`/`mem_v` 合并为 `mem_kv_proj`。减少 DML 小算子启动税。`checkpoint.py` 自动检测旧格式并转换（`mem_kv_proj.weight = cat([mem_k, mem_v], dim=0)`）。`MemoryBank.convert_legacy_state_dict` 静态方法。
+- perf: **inject_memory 清理 2 处冗余 .to(device)**——`retrieval_gate` 是 Parameter 已在设备；比较结果 `(mlogits < thr)` 继承操作数设备。消除热路径冗余设备检查。
+- test: **新增 tests/test_round18.py（11 项）**——iRoPE 配置/输出/梯度/默认空；Gated Attention init/梯度/输出；GEMM 合并转换/前向/checkpoint。pytest **364 passed / 1 skipped / 1 xfailed**（+11）。
+
+## `08d4c09`（第十七轮审查后续修复：cache 协议与增量解码一致性）
+
+- fix: **CRITICAL #1 RNN-state mixers 增量解码 start_pos 永远返回 1**——LinearAttention/GatedDeltaNet/AxialLinearAttention 增量路径只存当前 token 的 k（T=1），导致 BlockState.start_pos 始终为 1，RoPE 位置全部错位。新增 `_accum_kv()` 辅助函数累积 k/v。
+- fix: **CRITICAL #2 MLA + hybrid_linear2d 配置校验通过但实现静默忽略 MLA**——校验集收紧为 `{'attn','attn_linear'}`。
+- fix: **MEDIUM #3 MLA + attn_linear hybrid 增量解码 2.2% 偏差**——`_accum_kv` 检查维度匹配后再累积。
+- fix: **GatedDeltaNet 增量解码输出布局**（多余 transpose）+ **MambaSSM conv_state 首步形状不足**（左补零）。
+- test: 新增 `tests/test_cache_parity.py`（6 passed + 1 xfail）。AxialLinearAttention 2D→1D 退化标 xfail（已知架构取舍）。
+
+## `bc55c3d`（已推送，第十七轮：MLA KV 压缩 + SwiGLU 合并 + 审查修复）
 
 - feat: **MLA 风格 KV 潜空间压缩**——`models/mixers.py` `SlidingWindowCausalSelfAttention` 新增 `use_mla_kv`/`kv_latent_dim` 参数。K/V 拼接后下投影到低维潜空间 `c_kv`（`kv_compress: 2*dim → kv_latent_dim`），cache 只存潜向量；attend 时单次 GEMM 上投影还原 K+V（`kv_decompress: kv_latent_dim → 2*dim`，chunk 拆分）。RoPE 在解压后对 k 应用（位置 0..T_total-1），q 在 project_and_norm 中应用（位置 start_pos），保证旋转信息不被压缩-还原破坏。cache 内存降 `2*dim/kv_latent_dim` 倍。config: `use_mla_kv`/`kv_latent_dim`。灵感：DeepSeek-V3 MLA。
 - feat: **SwiGLU w1/w3 合并优化**——`models/mixers.py` `SwiGLU` 新增 `fuse_swiglu` 参数，将 `w1`/`w3` 合并为单个 `w13` Linear（输出 `2*hidden_dim`），前向时 `chunk(2, dim=-1)` 拆分（view 零拷贝）。减少一次 GEMM 调用，DML 小算子启动税敏感时有益。`convert_legacy_state_dict` 静态方法处理旧 checkpoint 权重转换（`w13.weight = cat([w1.weight, w3.weight], dim=0)`）。`checkpoint.py` `load_model` 自动检测格式不匹配并转换。默认关（向后兼容旧 checkpoint 的 w1/w2/w3 格式）。config: `fuse_swiglu`。
