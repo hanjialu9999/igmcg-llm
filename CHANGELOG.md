@@ -9,7 +9,7 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
-## `（本地，第二十三轮：GPAS 梯度保留激活缩放 + 回审修复测试）`
+## `3a354cb`（已推送，第二十三轮：GPAS 梯度保留激活缩放 + 回审修复测试）
 
 - feat: **GPAS 梯度保留激活缩放（Gradient-Preserving Activation Scaling）**——`models/norms.py` 新增 `GPASNorm` 类，Pre-LN 架构中在 LN 输出后、子层前用可学标量 α∈(0,1) 缩放激活（`out = sigmoid(gpas_raw) · LN(x)`），缓解深层残差通路方差指数增长导致子层贡献被淹没的问题。`TransformerBlock` 的 attn/ssm/hybrid 三种 block_type 的两个子层（ln1/ln2 后）均应用。α 通过 sigmoid 限幅到 (0,1)，init raw=logit(init_alpha)，默认 init_alpha=0.5（raw=0 → sigmoid=0.5 中等缩放）。DML 零额外开销（仅标量乘法 + sigmoid）。与 zero_centered_norm/residual_gate 等正交。config: `gpas`/`gpas_alpha_init`。灵感：arXiv:2506.22049。
 - fix: **intra_hybrid_rope 边界校验增强**——`models/mixers.py` `SlidingWindowCausalSelfAttention.__init__` 新增 `num_heads < 2` 报错和 `nope_heads >= num_heads` 报错（防止 ratio 过大致拆半退化为全 NoPE）。`models/model_config.py` `AttnConfig.__post_init__` 的 `intra_hybrid_ratio` 范围校验仅在 `intra_hybrid_rope=True` 时生效（修复：原 ratio 校验在 disabled 时也触发，需 alibi=True 前置条件才能到达 ratio 检查）。
