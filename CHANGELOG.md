@@ -9,7 +9,7 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
-## `（本地，基于 `562d866`，待推送，第十九轮：KDA 逐通道衰减 + YaRN 长度外推 + 审查修复）
+## `bb239c0`（已推送，第十九轮：KDA 逐通道衰减 + YaRN 长度外推 + 审查修复）
 
 - feat: **KDA 逐通道衰减（Kimi Delta Attention）**——`models/mixers.py` `GatedDeltaNet` 新增 `channel_wise` 参数，α/β 门控从标量（per-head）升级为逐通道向量（per-head per-dim），`alpha_proj`/`beta_proj` 输出维度从 `num_heads` → `num_heads*head_dim`。`_compute_gates` 通道模式返回 `(B,H,T,D)`，`Diag(α_t)·S` 让每个通道独立遗忘率，提升长程检索精度。init W=0（向后兼容，weight=0 时与标量模式行为等价）。config: `gated_delta_channel_wise`。灵感：Kimi K3 KDA（arXiv:2510.26692）。与 MemoryBank per-slot forget 对称。
 - feat: **YaRN 长度外推**——`models/rope.py` `RotaryEmbedding` 新增 `yarn_scale`/`yarn_beta`/`yarn_orig_max_seq_length` 参数。`yarn_scale>1.0` 时通过三段式非均匀频率缩放计算 `inv_freq`：高频维度（短波长）保持外推，低频维度（长波长）插值缩放。辅助函数 `_yarn_find_correction_dim`/`_yarn_find_correction_range`/`_yarn_linear_ramp_mask`。与 Partial RoPE 正交叠加。`SlidingWindowCausalSelfAttention` 同步支持 YaRN 参数（传给 RotaryEmbedding）。config: `yarn_scale`/`yarn_beta`/`yarn_orig_max_seq_length`。灵感：YaRN（arXiv:2309.00071）。
