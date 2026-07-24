@@ -173,9 +173,9 @@ def test_intra_hybrid_mla_incompatible():
 def test_intra_hybrid_ratio_out_of_range():
     """intra_hybrid_ratio 须在 (0,1) 开区间。"""
     with pytest.raises(ValueError, match="开区间"):
-        AttnConfig(intra_hybrid_rope=True, intra_hybrid_ratio=0.0)
+        AttnConfig(intra_hybrid_rope=True, alibi=True, intra_hybrid_ratio=0.0)
     with pytest.raises(ValueError, match="开区间"):
-        AttnConfig(intra_hybrid_rope=True, intra_hybrid_ratio=1.0)
+        AttnConfig(intra_hybrid_rope=True, alibi=True, intra_hybrid_ratio=1.0)
 
 
 # ---------------------------------------------------------------------------

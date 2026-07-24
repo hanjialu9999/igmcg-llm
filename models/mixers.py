@@ -229,7 +229,18 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         # DML 零额外开销（仅 split+cat，比 RoPE 本身的三角函数计算还轻）。
         # 默认关（向后兼容），config 显式开启。NoPE half 须与 alibi=True 组合。
         self.intra_hybrid_rope_enabled = intra_hybrid_rope
-        self.intra_hybrid_nope_heads = max(1, int(num_heads * intra_hybrid_ratio)) if intra_hybrid_rope else 0
+        if intra_hybrid_rope:
+            if num_heads < 2:
+                raise ValueError(
+                    f"intra_hybrid_rope=True 须 num_heads >= 2（当前 num_heads={num_heads}，无法拆半）")
+            self.intra_hybrid_nope_heads = max(1, int(num_heads * intra_hybrid_ratio))
+            if self.intra_hybrid_nope_heads >= num_heads:
+                raise ValueError(
+                    f"intra_hybrid_ratio={intra_hybrid_ratio} 致 nope_heads="
+                    f"{self.intra_hybrid_nope_heads} >= num_heads={num_heads}，无法拆半"
+                    f"（请减小 ratio 或增加 num_heads）")
+        else:
+            self.intra_hybrid_nope_heads = 0
         # 运行时增强开关（按开关粒度，用于“交替/分段增强”训练）：默认全开
         self._rt: Dict[str, bool] = {"qk_norm": True, "attn_temp": True}
         self._cached_T = -1
