@@ -106,6 +106,10 @@ def apply_qk_norm_and_temp(q: torch.Tensor, k: torch.Tensor,
         k = qk_norm(k)
     if log_temp is not None and rt.get("attn_temp", True):
         scale = torch.exp(-0.5 * log_temp)
+        # 第二十一轮：per-head 温度——log_temp (num_heads,) 时 scale 需 view (1,H,1,1) 广播
+        # (1,) 全局标量时保持标量广播（向后兼容）
+        if scale.dim() == 1 and scale.numel() > 1:
+            scale = scale.view(1, -1, 1, 1)
         q = q * scale
         k = k * scale
     return q, k
@@ -126,7 +130,9 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
                  use_mla_kv: bool = False, kv_latent_dim: Optional[int] = None,
                  use_rope: bool = True,
                  yarn_scale: float = 1.0, yarn_beta: float = 0.1, yarn_orig_max_seq_length: int = 0,
-                 dim_wise_rope: bool = False):
+                 dim_wise_rope: bool = False,
+                 head_temp: bool = False,
+                 value_relative_coding: bool = False):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
@@ -203,8 +209,17 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
             self.qk_norm = RMSNorm(self.head_dim)
         # ⑤ 可学习注意力温度：softmax(score / T)，T=exp(log_temp) 恒正（默认开）
         self.temp_enabled = attn_temp
+        # 第二十一轮：per-head 可学注意力温度——log_temp 从 (1,) 升级为 (num_heads,)
+        # 灵感：NoPE 长度外推（arXiv:2404.12224）——NoPE 层注意力熵分散致外推失败，
+        # per-head 温度让每个头独立控制 softmax 聚焦度。init 0 → 温度=1（向后兼容）。
+        # value_relative_coding：v += tanh(λ)·v_{t-1}，轻量相对位置信号（init λ=0 → 不编码）
+        self.head_temp_enabled = head_temp and attn_temp
         if attn_temp:
-            self.log_temp = nn.Parameter(torch.zeros(1))
+            self.log_temp = nn.Parameter(torch.zeros(num_heads if head_temp else 1))
+        self.value_relative_coding_enabled = value_relative_coding
+        if value_relative_coding:
+            # tanh 限制 λ∈(-1,1)，init 0 → v 不变；cache 存原始 v 保证 train/infer parity
+            self.value_rel_lambda = nn.Parameter(torch.zeros(1))
         # 运行时增强开关（按开关粒度，用于“交替/分段增强”训练）：默认全开
         self._rt: Dict[str, bool] = {"qk_norm": True, "attn_temp": True}
         self._cached_T = -1
@@ -221,6 +236,10 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         self._causal_cache: Optional[torch.Tensor] = None
         # _sync_window 推理期跳过标志（首次同步后置 True，避免每步 DML CPU 同步税）
         self._window_synced: bool = False
+        # ALiBi 距离矩阵缓存（第二十一轮性能优化）：训练期 start_pos=0 固定、T/Tkv 确定性，
+        # dist=|qpos-kpos| 每步重算 arange×2+abs 有 DML 启动税。缓存按 (Tq,Tkv,start_pos,device)。
+        # pe_gate_enabled 时 pe_strength 每步变（log_pe_gate 是 Parameter），但 dist 不变仍可缓存。
+        self._alibi_dist_cache: Dict[Tuple[int, int, int, str], torch.Tensor] = {}
 
     def _sync_window(self):
         """阶段6：从可学习 log_window 重算实际窗口尺寸（每步前向同步，训练时随参数变化）。
@@ -287,9 +306,15 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         """
         if not self.alibi:
             return None
-        qpos = torch.arange(start_pos, start_pos + Tq, device=device).unsqueeze(1)
-        kpos = torch.arange(0, Tkv, device=device).unsqueeze(0)
-        dist = (qpos - kpos).abs()
+        # 距离矩阵 dist=|qpos-kpos| 仅依赖 (Tq,Tkv,start_pos,device)，确定性，可缓存
+        # （第二十一轮性能优化：避免每步 arange×2+abs 的 DML 启动税，~100-200μs/层）
+        cache_key = (Tq, Tkv, start_pos, str(device))
+        dist = self._alibi_dist_cache.get(cache_key)
+        if dist is None:
+            qpos = torch.arange(start_pos, start_pos + Tq, device=device).unsqueeze(1)
+            kpos = torch.arange(0, Tkv, device=device).unsqueeze(0)
+            dist = (qpos - kpos).abs()
+            self._alibi_dist_cache[cache_key] = dist
         # slopes: (H,) -> (1,H,1,1)，乘以距离 -> (1,H,Tq,Tkv)
         # alibi_slopes 是 buffer，model.to(device) 时已移动到目标设备，无需再 .to(device)
         bias = -self.alibi_slopes.view(1, self.num_heads, 1, 1) * dist.unsqueeze(0).unsqueeze(0)
@@ -418,6 +443,17 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
             k = self.rope.apply_to_single(k, start_pos=0, max_len=self.max_seq_length) if self.use_rope else k
             # MLA 已处理 cache 拼接，后续 cache 分支不再拼接 past_kv
             past_kv = None
+        # 第二十一轮：value-side 相对编码——v += tanh(λ)·v_{t-1}（轻量相对位置信号）
+        # 全量前向：shift(v) 取 v_{t-1}（首 token v_prev=0）；MLA 路径 v 含全部历史同样 shift
+        # 非 MLA 增量解码：v 仅当前 token，从 past_kv 取 v_{t-1}（cache 存编码后 v）
+        # init λ=0 → tanh=0 → v 不变（向后兼容）；灵感：ViPE value-side relative coding
+        if self.value_relative_coding_enabled:
+            _lam = torch.tanh(self.value_rel_lambda).view(1, 1, 1, 1)
+            if v.size(2) == 1 and use_cache and past_kv is not None and past_kv[1] is not None:
+                v = v + _lam * past_kv[1][:, :, -1:, :]
+            elif v.size(2) > 1:
+                v_prev = F.pad(v[:, :, :-1, :], (0, 0, 0, 1))
+                v = v + _lam * v_prev
         # 阶段3 可学习检索：统一经 MemoryBank.inject_memory 注入记忆 K/V + 检索偏置，
         # 取代 cache/全量两条路径各自重复的"记忆拼接 + 稀疏门控 + 全上下文检索"逻辑（B 项收敛）。
         mem_cols = 0
@@ -723,7 +759,8 @@ class GatedDeltaNet(LinearMixerBase):
                  shared_qkv: Optional[nn.Linear] = None, shared_proj: Optional[nn.Linear] = None,
                  channel_wise: bool = False,
                  yarn_scale: float = 1.0, yarn_beta: float = 0.1, yarn_orig_max_seq_length: int = 0,
-                 dim_wise_rope: bool = False):
+                 dim_wise_rope: bool = False,
+                 rwkv7: bool = False):
         super().__init__(dim, num_heads, qk_norm, attn_temp, max_seq_length, feature,
                          head_dim, rope_learnable, rope_dim_fraction,
                          shared_qkv, shared_proj,
@@ -744,6 +781,18 @@ class GatedDeltaNet(LinearMixerBase):
         nn.init.constant_(self.alpha_proj.bias, alpha_init)
         nn.init.zeros_(self.beta_proj.weight)
         nn.init.constant_(self.beta_proj.bias, beta_init)
+        # 第二十一轮：RWKV-7 广义 Delta Rule——rank-1 状态扰动项 z_t·b_t⊗(b_t^T·S)
+        # 灵感：RWKV-7 "Goose" (arXiv:2503.14456)——状态门 z_t 控制扰动强度，b_t 为扰动方向。
+        # 递推：S_t = α·S + β·(v-S·k)⊗k + z_t·b_t⊗(b_t^T·S)，rank-1 更新让状态沿 b_t 方向调整。
+        # init z bias=-3 → sigmoid≈0.05（弱扰动起步）；b_proj 用通用 N(0,0.02) 初始化
+        # （不可归零，否则 b=0→bTS=0→rank-1=0→梯度=0 数学死锁，b_proj 永不更新）。
+        # 谱半径由 z_gate≈0.05 控制（rank-1 系数 = z_gate·|b|²，init 时 b 小且 z_gate 小）。
+        self.rwkv7_enabled = rwkv7
+        if rwkv7:
+            self.z_proj = nn.Linear(dim, num_heads, bias=True)  # per-head 标量状态门
+            self.b_proj = nn.Linear(dim, num_heads * self.head_dim, bias=False)  # 扰动方向
+            nn.init.zeros_(self.z_proj.weight)
+            nn.init.constant_(self.z_proj.bias, -3.0)
 
     def _compute_gates(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """计算 per-head per-token 门控 α/β。
@@ -764,6 +813,19 @@ class GatedDeltaNet(LinearMixerBase):
             beta = beta.unsqueeze(-1)
         return alpha, beta
 
+    def _compute_rwkv7_gates(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """计算 RWKV-7 状态门 z_t 和扰动方向 b_t。
+
+        z_t: (B,H,T) per-head 标量门控，sigmoid 限制 ∈(0,1)
+        b_t: (B,H,T,D) 扰动方向（不归一化，谱半径由 z_gate 控制）
+        """
+        # z: (B,T,H) → (B,H,T)
+        z = torch.sigmoid(self.z_proj(x).transpose(1, 2))
+        # b: (B,T,H*D) → (B,H,T,D)
+        B, T, _ = x.shape
+        b = self.b_proj(x).reshape(B, T, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+        return z, b
+
     def forward(self, x: torch.Tensor, past_kv=None, use_cache: bool = False, start_pos: int = 0,
                 memory_kv=None):
         q, k, v = self.project_and_norm(x, start_pos)
@@ -773,6 +835,11 @@ class GatedDeltaNet(LinearMixerBase):
         # delta rule 数值稳定要求：k L2 归一化，使 (I - β·k·k^T) 谱半径 < 1 防爆炸
         kf = kf / (kf.norm(dim=-1, keepdim=True) + 1e-6)
         alpha, beta = self._compute_gates(x)  # 各 (B,H,T,1)
+        # 第二十一轮：RWKV-7 rank-1 状态扰动项
+        # z_gate (B,H,T) 状态门，b_dir (B,H,T,D) 扰动方向
+        rwkv7 = self.rwkv7_enabled
+        if rwkv7:
+            z_gate, b_dir = self._compute_rwkv7_gates(x)
 
         if use_cache and past_kv is not None and len(past_kv) >= 4 and past_kv[2] is not None:
             # 增量解码：T=1，单步 delta 更新
@@ -786,6 +853,12 @@ class GatedDeltaNet(LinearMixerBase):
             Sk = torch.einsum('bhd,bhde->bhe', kf_t, S)  # (B,H,D)
             # delta 更新：S = α·S + β·(v - S·k)⊗k
             S = alpha_t * S + beta_t * (v_t - Sk).unsqueeze(-1) * kf_t.unsqueeze(-2)
+            if rwkv7:
+                # rank-1 扰动：S += z_t·b_t⊗(b_t^T·S)
+                zt = z_gate[:, :, 0]  # (B,H)
+                bt = b_dir[:, :, 0, :]  # (B,H,D)
+                bTS = torch.einsum('bhd,bhde->bhe', bt, S)  # (B,H,D)
+                S = S + zt.unsqueeze(-1).unsqueeze(-1) * torch.einsum('bhd,bhe->bhde', bt, bTS)
             z = alpha_t.squeeze(-1) * z + beta_t.squeeze(-1) * kf_t
             num = torch.einsum('bhd,bhde->bhe', qf[:, :, 0, :], S)  # (B,H,D)
             den = torch.einsum('bhd,bhd->bh', qf[:, :, 0, :], z).unsqueeze(-1).clamp_min(1e-6)
@@ -803,6 +876,12 @@ class GatedDeltaNet(LinearMixerBase):
             beta_t = beta[:, :, t, :].unsqueeze(-1)
             Sk = torch.einsum('bhd,bhde->bhe', kf_t, S)
             S = alpha_t * S + beta_t * (v_t - Sk).unsqueeze(-1) * kf_t.unsqueeze(-2)
+            if rwkv7:
+                # rank-1 扰动：S += z_t·b_t⊗(b_t^T·S)
+                zt = z_gate[:, :, t]  # (B,H)
+                bt = b_dir[:, :, t, :]  # (B,H,D)
+                bTS = torch.einsum('bhd,bhde->bhe', bt, S)  # (B,H,D)
+                S = S + zt.unsqueeze(-1).unsqueeze(-1) * torch.einsum('bhd,bhe->bhde', bt, bTS)
             z = alpha_t.squeeze(-1) * z + beta_t.squeeze(-1) * kf_t
             num = torch.einsum('bhd,bhde->bhe', qf[:, :, t, :], S)
             den = torch.einsum('bhd,bhd->bh', qf[:, :, t, :], z).unsqueeze(-1).clamp_min(1e-6)

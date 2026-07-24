@@ -169,6 +169,7 @@ class TransformerBlock(nn.Module):
         if mixer == 'gated_delta':
             # 第十五轮：Gated DeltaNet——delta rule + α/β 门控，长程检索更精确
             # 第十九轮：KDA 逐通道衰减（channel_wise=True 时 α/β 从标量升级为 per-channel 向量）
+            # 第二十一轮：RWKV-7 广义 Delta Rule（rwkv7=True 时新增 rank-1 状态扰动项）
             attn = GatedDeltaNet(dim, num_heads, max_seq_length=max_seq_length,
                                  qk_norm=attn_kwargs.get('qk_norm', True),
                                  attn_temp=attn_kwargs.get('attn_temp', True),
@@ -181,7 +182,8 @@ class TransformerBlock(nn.Module):
                                  yarn_scale=attn_kwargs.get('yarn_scale', 1.0),
                                  yarn_beta=attn_kwargs.get('yarn_beta', 0.1),
                                  yarn_orig_max_seq_length=attn_kwargs.get('yarn_orig_max_seq_length', 0),
-                                 dim_wise_rope=attn_kwargs.get('dim_wise_rope', False))
+                                 dim_wise_rope=attn_kwargs.get('dim_wise_rope', False),
+                                 rwkv7=attn_kwargs.get('rwkv7', False))
             return attn, None, None
         if mixer == 'linear2d':
             # 2D 轴向线性注意力：O(T·√T)，适合序列长度为完全平方数或接近的场景
@@ -202,7 +204,7 @@ class TransformerBlock(nn.Module):
             attn_only = {k: v for k, v in attn_kwargs.items()
                          if k not in ('linear_attn_feature', 'linear_attn_head_dim',
                                       'delta_alpha_init', 'delta_beta_init',
-                                      'gated_delta_channel_wise')}
+                                      'gated_delta_channel_wise', 'rwkv7')}
             attn = SlidingWindowCausalSelfAttention(dim, num_heads, max_seq_length=max_seq_length,
                                                      shared_qkv=shared_qkv, shared_proj=shared_proj,
                                                      **attn_only)
@@ -221,7 +223,7 @@ class TransformerBlock(nn.Module):
         attn_only = {k: v for k, v in attn_kwargs.items()
                      if k not in ('linear_attn_feature', 'linear_attn_head_dim',
                                   'delta_alpha_init', 'delta_beta_init',
-                                  'gated_delta_channel_wise')}
+                                  'gated_delta_channel_wise', 'rwkv7')}
         attn = SlidingWindowCausalSelfAttention(dim, num_heads, max_seq_length=max_seq_length,
                                                  shared_qkv=shared_qkv, shared_proj=shared_proj,
                                                  **attn_only)
@@ -572,7 +574,10 @@ class TransformerModel(nn.Module):
                    yarn_orig_max_seq_length: int = 0,
                    gated_delta_channel_wise: bool = False,
                    aligned_training: bool = False,
-                   dim_wise_rope: bool = False):
+                   dim_wise_rope: bool = False,
+                   head_temp: bool = False,
+                   value_relative_coding: bool = False,
+                   rwkv7: bool = False):
         super(TransformerModel, self).__init__()
 
         self.vocab_size = vocab_size
@@ -654,7 +659,10 @@ class TransformerModel(nn.Module):
                            yarn_scale=yarn_scale, yarn_beta=yarn_beta,
                            yarn_orig_max_seq_length=yarn_orig_max_seq_length,
                            gated_delta_channel_wise=gated_delta_channel_wise,
-                           dim_wise_rope=dim_wise_rope)
+                           dim_wise_rope=dim_wise_rope,
+                           head_temp=head_temp,
+                           value_relative_coding=value_relative_coding,
+                           rwkv7=rwkv7)
         # 第十八轮：iRoPE 交错 NoPE 层——nope_layers 中的层关闭 RoPE，强制 alibi 提供位置信号
         self.nope_layers_set = set(nope_layers or [])
         # 防护：nope_layers 索引越界校验（审查 Finding 3 LOW）
@@ -883,6 +891,9 @@ class TransformerModel(nn.Module):
             gated_delta_channel_wise=cfg.attn.gated_delta_channel_wise,
             aligned_training=cfg.aligned_training,
             dim_wise_rope=cfg.dim_wise_rope,
+            head_temp=cfg.attn.head_temp,
+            value_relative_coding=cfg.attn.value_relative_coding,
+            rwkv7=cfg.attn.rwkv7,
         )
 
     def set_enhancements_active(self, spec):
@@ -1087,6 +1098,12 @@ class TransformerModel(nn.Module):
             if getattr(attn, 'output_gate_enabled', False) and hasattr(attn, 'output_gate'):
                 nn.init.zeros_(attn.output_gate.weight)
                 nn.init.zeros_(attn.output_gate.bias)
+            # 第二十一轮：RWKV-7 z_proj 专用初始化重置
+            # z_proj: weight=0, bias=-3（sigmoid≈0.05 弱扰动起步）
+            # b_proj 不归零：b=0→bTS=0→rank-1=0→梯度=0 数学死锁，用通用 N(0,0.02) 即可
+            if getattr(attn, 'rwkv7_enabled', False):
+                nn.init.zeros_(attn.z_proj.weight)
+                nn.init.constant_(attn.z_proj.bias, -3.0)
 
     def tie_weights(self):
         """重新绑定 output_head 和 embedding 的权重（在 .to(device) 后调用以确保共享生效）。"""
@@ -1191,7 +1208,19 @@ class TransformerModel(nn.Module):
         else:
             x0 = None
         # 性能优化：input_highway_proj(x0) 预计算一次（x0 在循环中不变），避免每层重复 Linear
-        x0_proj = self.input_highway_proj(x0) if x0 is not None else None
+        # 生成期后续步：x0=mean-pool(x0_cached) 不变，x0_proj 也不变，复用缓存避免每步 GEMM（~50-100μs）
+        x0_proj = None
+        if x0 is not None:
+            if (use_cache and past_key_values is not None
+                    and any(pk is not None for pk in past_key_values)):
+                cached_proj = getattr(self, '_cached_x0_proj', None)
+                if cached_proj is not None and cached_proj.shape[0] == x.shape[0]:
+                    x0_proj = cached_proj
+                else:
+                    x0_proj = self.input_highway_proj(x0)
+                    self._cached_x0_proj = x0_proj.detach()
+            else:
+                x0_proj = self.input_highway_proj(x0)
         # 第十四轮：层间对比绑定——训练期累积相邻层余弦相似度损失
         # 第二十轮：DALA 升级——aligned_training=True 时对齐目标从 x_{i-1} 改为
         # α_i*x_{i-1} + (1-α_i)*x0（浅层对齐 x0 保原始信号，深层对齐前层促平滑演化）

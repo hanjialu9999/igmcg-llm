@@ -201,15 +201,34 @@ def test_dim_wise_rope_mask_logic():
         "mask=1 时 sin 应不变"
 
 
-def test_dim_wise_rope_incremental_decode():
-    """dim_wise_rope 在增量解码中正确工作。"""
+def test_dim_wise_rope_incremental_decode_parity():
+    """dim_wise_rope 增量解码与全量前向末位 logits 数值一致（cache parity）。
+
+    审查发现原测试第二次前向未传 past_key_values，未真正验证增量解码续步。
+    此处改为逐 token 续步并比对末位 logits（阈值 1e-4，与 test_cache_parity 一致）。
+    """
     m = _small(dim_wise_rope=True, num_layers=2)
     m.eval()
-    x = torch.randint(0, 200, (1, 6))
-    # 全量前向
+    torch.manual_seed(42)
+    x = torch.randint(0, 200, (1, 8))
     with torch.no_grad():
-        out_full, past = m(x, use_cache=True)
-    # 增量解码
-    with torch.no_grad():
-        out_inc, _ = m(x[:, :1], use_cache=True)
-    assert out_inc.shape == (1, 1, 200), "增量解码输出形状错误"
+        full = m(x, use_cache=False)
+        out, past = m(x[:, :1], past_key_values=None, use_cache=True)
+        for t in range(1, 8):
+            out, past = m(x[:, t:t + 1], past_key_values=past, use_cache=True)
+    diff = (full[:, -1, :] - out[:, -1, :]).abs().max().item()
+    assert diff < 1e-4, f"dim_wise_rope cache parity max_diff={diff:.2e} 超过 1e-4"
+
+
+def test_dala_with_layer_contrastive():
+    """aligned_training + layer_contrastive 同启：DALA 覆盖 layer_contrastive 的对齐目标。
+
+    审查发现两者同启无专项测试。代码逻辑：aligned_training=True 时 _dala_x0 非 None，
+    走 geodesic 插值；仅 layer_contrastive 时 _dala_x0=None 走纯前邻对齐。
+    """
+    m = _small(aligned_training=True, layer_contrastive=True)
+    m.train()
+    x = torch.randint(0, 200, (2, 8))
+    m(x)
+    assert m._contrastive_loss is not None, "同启时应产生 _contrastive_loss"
+    assert m._contrastive_loss.item() > 0, "DALA loss 应 > 0"
