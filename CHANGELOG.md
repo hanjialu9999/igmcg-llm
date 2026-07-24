@@ -9,6 +9,14 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
+## `（待提交，第二十一轮：NoPE 长度外推增强 + RWKV-7 广义 Delta Rule）`
+
+- feat: **per-head 可学注意力温度（head_temp）**——`models/mixers.py` `SlidingWindowCausalSelfAttention` 新增 `head_temp` 参数，`log_temp` 从全局标量 `(1,)` 升级为 per-head 向量 `(num_heads,)`。`apply_qk_norm_and_temp` 支持 per-head 温度广播（`scale.view(1,H,1,1)`）。init 0 → 温度=1（向后兼容）。config: `head_temp`。灵感：NoPE 长度外推（arXiv:2404.12224）——NoPE 层注意力熵分散致外推失败，per-head 温度让每个头独立控制 softmax 聚焦度。
+- feat: **value-side 相对编码（value_relative_coding）**——`models/mixers.py` `SlidingWindowCausalSelfAttention` 新增 `value_relative_coding` 参数。`v += tanh(λ)·v_{t-1}`，注入轻量相对位置信号。全量路径用 `F.pad` 右移 v；增量路径用 `past_kv[1][:, :, -1:, :]`。init λ=0 → v 不变（向后兼容）。config: `value_relative_coding`。灵感：NoPE 长度外推增强。
+- feat: **RWKV-7 广义 Delta Rule（rwkv7）**——`models/mixers.py` `GatedDeltaNet` 新增 `rwkv7` 参数。在 delta rule 递推中新增 rank-1 状态扰动项：`S_t = α·S + β·(v-S·k)⊗k + z_t·b_t⊗(b_t^T·S)`。`z_proj`（per-head 标量状态门，init bias=-3 → sigmoid≈0.05 弱扰动）+ `b_proj`（扰动方向，通用 N(0,0.02) 初始化）。全量训练和增量解码路径均实现。config: `rwkv7`。灵感：RWKV-7 "Goose"（arXiv:2503.14456）。
+- fix: **b_proj 初始化梯度死锁**——b_proj.weight=0 → b=0 → bTS=0 → rank-1=0 → 梯度=0（数学死锁，b_proj 永不更新）。修复：b_proj 用通用 N(0,0.02) 初始化（不归零），谱半径由 z_gate≈0.05 控制。
+- test: **新增 tests/test_round21.py（19 项）**——head_temp 参数维度/init/梯度/向后兼容；value_relative_coding 参数/init/梯度/向后兼容；NoPE 增强+nope_layers 组合/cache parity；rwkv7 参数创建/专用初始化/向后兼容/梯度/cache parity/弱扰动验证/训练变化/channel_wise 组合/YaRN 组合。pytest **420 passed / 1 skipped / 1 xfailed**（+19）。
+
 ## `（待推送，第二十轮：DALA 层间对齐 + 维度级 RoPE + 子代理审查）`
 
 - feat: **DALA 深度感知层间对齐（Depth-Aware Layer Alignment）**——`models/transformer.py` `TransformerModel` 新增 `aligned_training` 参数。升级 `layer_contrastive` 的"对齐到前邻"为"对齐到 geodesic 路径插值"：`target_i = α_i * x_{i-1} + (1-α_i) * x0`，`α_i = i/(N-1)`。浅层对齐 x0（保原始信号），深层对齐前层（促语义平滑演化）。与 `input_highway` 对称设计。config: `aligned_training`。灵感：Tracing Representation Progression（arXiv:2406.14479）+ DPE geodesic path。

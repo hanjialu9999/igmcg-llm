@@ -50,6 +50,7 @@ def _build(**kw):
       "use_mla_kv": True, "kv_latent_dim": 16}),
     ("gated_delta", {"mixer": "gated_delta"}),
     ("linear", {"mixer": "linear"}),
+    ("dim_wise_rope", {"dim_wise_rope": True}),
 ])
 def test_cache_parity(name, kw):
     """增量解码与全量前向末位 logits 一致（max_diff < 1e-4）。"""

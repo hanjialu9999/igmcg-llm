@@ -52,6 +52,10 @@ class AttnConfig:
     kv_latent_dim: Optional[int] = None  # MLA 潜空间维度（None=默认 dim，压缩 2x；更小值压缩更多）
     # 第十九轮新特性
     gated_delta_channel_wise: bool = False  # KDA 逐通道衰减（alpha/beta 从标量升级为 per-channel 向量）
+    # 第二十一轮新特性
+    head_temp: bool = False            # per-head 可学注意力温度（升级全局标量 log_temp 为 per-head 向量，NoPE 层长度外推增强）
+    value_relative_coding: bool = False  # value-side 相对编码（v+=tanh(λ)·v_{t-1}，轻量相对位置信号，NoPE 层外推增强）
+    rwkv7: bool = False                # RWKV-7 广义 Delta Rule（GatedDeltaNet 新增 rank-1 状态扰动项）
 
     def __post_init__(self):
         _VALID = {'attn', 'linear', 'linear2d', 'attn_linear', 'hybrid_linear2d', 'diff', 'gated_delta'}
@@ -214,6 +218,9 @@ class ModelConfig:
             delta_beta_init=mc.get('delta_beta_init', 2.0),
             use_mla_kv=mc.get('use_mla_kv', False),
             kv_latent_dim=mc.get('kv_latent_dim', None),
+            head_temp=bool(mc.get('head_temp', False)),
+            value_relative_coding=bool(mc.get('value_relative_coding', False)),
+            rwkv7=bool(mc.get('rwkv7', False)),
         )
         memory = MemoryConfig(
             size=mc.get('memory_size', 0),
