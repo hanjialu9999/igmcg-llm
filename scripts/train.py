@@ -430,17 +430,32 @@ def main(config_path='configs/pretrain.yaml', resume=False):
     # 优化器工厂：支持 DML 友好的 SGD（避免 AdamW 的 CPU lerp 回退税）
     # 配置键：training.optimizer ∈ {adamw(默认), sgd, adam}；sgd 另读 training.momentum(默认0.9)
     opt_name = str(config['training'].get('optimizer', 'adamw')).lower()
-    # DML 兼容：AdamW/Adam 的 exp_avg.lerp_(grad, 1-beta1) 触发 aten::lerp.Scalar_out
-    # 不支持 DML，每步回退 CPU + DML↔CPU 数据搬运（严重性能杀手）。
-    # 数学等价替换：lerp_(end, w) = (1-w)*self + w*end → mul_(1-w).add_(end*w)
-    # 注意：不能用 add_(end, alpha=w)——DML 的 add_ alpha 参数有 bug（曾导致 val_loss 16→正常 7.5）
-    # 模型 forward 无 lerp_ 调用（已 grep 确认），全局 patch 仅影响优化器，安全。
+    # DML 兼容：AdamW/Adam 内部用 torch._foreach_lerp_ 更新 exp_avg，
+    # aten::lerp.Scalar_out 不支持 DML，每步回退 CPU + DML↔CPU 数据搬运（严重性能杀手，
+    # 实测每步 ~206ms 额外开销，占总训练时间 ~23%）。
+    # 数学等价替换：foreach_lerp_(self_list, end_list, w) =
+    #   for each i: self_list[i] = (1-w)*self_list[i] + w*end_list[i]
+    #   → foreach_mul_(self_list, 1-w) + foreach_add_(self_list, [g*w for g in end_list])
+    # 注意：
+    #   1) 必须同时 patch torch._foreach_lerp_（AdamW 实际调用）和 torch.Tensor.lerp_
+    #      （单张量 fallback 路径），缺一不可。
+    #   2) 不能用 add_(end, alpha=w)——DML 的 add_ alpha 参数有 bug（曾致 val_loss 16→7.5）。
+    #   3) torch._foreach_mul_ / torch._foreach_add_ 在 DML 上原生支持（已验证）。
+    #   4) 模型 forward 无 lerp_ 调用（已 grep 确认），全局 patch 仅影响优化器，安全。
     if device.type == 'privateuseone' and opt_name in ('adamw', 'adam'):
+        def _dml_foreach_lerp(self_list, end_list, weight):
+            # foreach 版：批量 mul_ + add_，避免 Python 循环开销
+            torch._foreach_mul_(self_list, 1 - weight)
+            torch._foreach_add_(self_list, [g * weight for g in end_list])
+            return self_list
+        _orig_foreach_lerp = torch._foreach_lerp_
+        torch._foreach_lerp_ = _dml_foreach_lerp
+        # 同时 patch 单张量版（部分代码路径可能用单张量 lerp_）
         _orig_lerp = torch.Tensor.lerp_
         def _dml_lerp(self, end, weight):
             return self.mul_(1 - weight).add_(end * weight)
         torch.Tensor.lerp_ = _dml_lerp
-        print(f"[DML] 已 monkey-patch lerp_ → mul_+add_（避免 AdamW/Adam CPU 回退税）")
+        print(f"[DML] 已 monkey-patch _foreach_lerp_ + lerp_ → mul_+add_（避免 AdamW/Adam CPU 回退税）")
     if opt_name == 'sgd':
         # SGD 学习率量级远大于 AdamW，未显式配置时给一个合理的字符级 LM 默认值
         sgd_lr = float(config['training'].get('sgd_learning_rate', config['training']['learning_rate']))
