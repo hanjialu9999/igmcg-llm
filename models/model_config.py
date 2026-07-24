@@ -59,6 +59,9 @@ class AttnConfig:
     # 第二十二轮新特性
     intra_hybrid_rope: bool = False    # 层内 head 拆半 RoPE/NoPE（前半 head 用 RoPE，后半用 NoPE 靠 ALiBi 获位置）
     intra_hybrid_ratio: float = 0.5    # NoPE head 占比（0.5=一半一半；0.0=全 RoPE 退化为现状）
+    # 第二十三轮新特性
+    gpas: bool = False                 # GPAS 梯度保留激活缩放（LN 输出后用可学标量 α 缩放，缓解 Pre-LN 跨层方差增长）
+    gpas_alpha_init: float = 0.5       # GPAS α 初始值（0.5=中等缩放；1.0≈行为不变）
 
     def __post_init__(self):
         _VALID = {'attn', 'linear', 'linear2d', 'attn_linear', 'hybrid_linear2d', 'diff', 'gated_delta'}
@@ -72,15 +75,26 @@ class AttnConfig:
             raise ValueError(
                 f"use_mla_kv=True 仅支持 mixer in {{'attn','attn_linear'}}，"
                 f"当前 mixer='{self.mixer}' 不支持 MLA KV 压缩")
-        # 第二十二轮：intra_hybrid_rope 与 MLA 不兼容（MLA 路径 k 的 RoPE 在 attend 内部解压后应用，
-        # head 拆半需同时改 project_and_norm 和 attend 两处，复杂度高且 MLA 已压缩 KV，head 拆半收益有限）
-        if self.intra_hybrid_rope and self.use_mla_kv:
-            raise ValueError(
-                "intra_hybrid_rope=True 与 use_mla_kv=True 不兼容"
-                "（MLA 路径 k 的 RoPE 在 attend 内部应用，head 拆半需两处改动）")
-        if not 0.0 < self.intra_hybrid_ratio < 1.0:
-            raise ValueError(
-                f"intra_hybrid_ratio 须在 (0,1) 开区间，当前 {self.intra_hybrid_ratio}")
+        # 第二十二轮：intra_hybrid_rope 配置校验
+        if self.intra_hybrid_rope:
+            # MLA 路径 k 的 RoPE 在 attend 内部解压后应用，head 拆半需同时改 project_and_norm 和 attend 两处
+            if self.use_mla_kv:
+                raise ValueError(
+                    "intra_hybrid_rope=True 与 use_mla_kv=True 不兼容"
+                    "（MLA 路径 k 的 RoPE 在 attend 内部应用，head 拆半需两处改动）")
+            # NoPE half 靠 ALiBi 获位置信号，alibi=False 时 NoPE head 无位置编码
+            if not self.alibi:
+                raise ValueError(
+                    "intra_hybrid_rope=True 须与 alibi=True 组合"
+                    "（NoPE half 靠 ALiBi 获位置信号，否则无位置编码）")
+            # intra_hybrid_rope 仅支持标准 attn 系 mixer（linear/diff/gated_delta 分支不传递此参数）
+            if self.mixer not in {'attn', 'attn_linear'}:
+                raise ValueError(
+                    f"intra_hybrid_rope=True 仅支持 mixer in {{'attn','attn_linear'}}，"
+                    f"当前 mixer='{self.mixer}' 不支持层内 head 拆半")
+            if not 0.0 < self.intra_hybrid_ratio < 1.0:
+                raise ValueError(
+                    f"intra_hybrid_ratio 须在 (0,1) 开区间，当前 {self.intra_hybrid_ratio}")
 
 
 @dataclass
@@ -235,6 +249,8 @@ class ModelConfig:
             rwkv7=bool(mc.get('rwkv7', False)),
             intra_hybrid_rope=bool(mc.get('intra_hybrid_rope', False)),
             intra_hybrid_ratio=float(mc.get('intra_hybrid_ratio', 0.5)),
+            gpas=bool(mc.get('gpas', False)),
+            gpas_alpha_init=float(mc.get('gpas_alpha_init', 0.5)),
         )
         memory = MemoryConfig(
             size=mc.get('memory_size', 0),

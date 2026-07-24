@@ -9,7 +9,14 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
-## `（待提交，第二十二轮：层内 head 拆半 RoPE/NoPE + 子代理审查）`
+## `（本地，第二十三轮：GPAS 梯度保留激活缩放 + 回审修复测试）`
+
+- feat: **GPAS 梯度保留激活缩放（Gradient-Preserving Activation Scaling）**——`models/norms.py` 新增 `GPASNorm` 类，Pre-LN 架构中在 LN 输出后、子层前用可学标量 α∈(0,1) 缩放激活（`out = sigmoid(gpas_raw) · LN(x)`），缓解深层残差通路方差指数增长导致子层贡献被淹没的问题。`TransformerBlock` 的 attn/ssm/hybrid 三种 block_type 的两个子层（ln1/ln2 后）均应用。α 通过 sigmoid 限幅到 (0,1)，init raw=logit(init_alpha)，默认 init_alpha=0.5（raw=0 → sigmoid=0.5 中等缩放）。DML 零额外开销（仅标量乘法 + sigmoid）。与 zero_centered_norm/residual_gate 等正交。config: `gpas`/`gpas_alpha_init`。灵感：arXiv:2506.22049。
+- fix: **intra_hybrid_rope 边界校验增强**——`models/mixers.py` `SlidingWindowCausalSelfAttention.__init__` 新增 `num_heads < 2` 报错和 `nope_heads >= num_heads` 报错（防止 ratio 过大致拆半退化为全 NoPE）。`models/model_config.py` `AttnConfig.__post_init__` 的 `intra_hybrid_ratio` 范围校验仅在 `intra_hybrid_rope=True` 时生效（修复：原 ratio 校验在 disabled 时也触发，需 alibi=True 前置条件才能到达 ratio 检查）。
+- test: **新增 tests/test_round23.py（25 项）**——GPASNorm 参数创建/初始化/前向/梯度/向后兼容/输出差异/cache parity/与各 block_type 组合/与 zero_centered_norm 组合/alpha_init 不同值/state_dict 键/配置校验修复/cache parity 扩展（长序列 32 步/多层 4 层/混合层 attn+hybrid+attn）。**test_round21.py 补 3 项回审修复测试**——value_relative_coding λ≠0 时 train/infer parity（暴露原 shift vs 递推差异）/ input_highway x0_proj 跨 generate() 不残留 / ALiBi 距离缓存在增量解码期间有界（防 OOM）。pytest **464 passed / 1 skipped / 1 xfailed**（+28）。
+- smoke: **config_smoke_gpas.yaml 训练验证**——GPAS+zero_centered_norm+Partial RoPE，5.70M 参数 225 步 Train 6.64 / Val 6.12 / ~7104 tok/s。
+
+## `430616b`（已推送，第二十二轮：层内 head 拆半 RoPE/NoPE + 子代理审查）
 
 - feat: **层内 head 拆半 RoPE/NoPE（intra_hybrid_rope）**——`models/mixers.py` `SlidingWindowCausalSelfAttention.project_and_norm` 新增 head 拆半逻辑：同一层内前半 head 应用 RoPE（位置精确匹配），后半 head 跳过 RoPE（NoPE，靠 ALiBi 获位置信号，内容语义+长度外推）。`intra_hybrid_ratio` 控制 NoPE head 占比（默认 0.5 半半）。DML 零额外开销（仅 split+cat，比 RoPE 三角函数计算还轻）。与 `nope_layers`（层间交错）正交：nope_layers 整层关 RoPE，intra_hybrid 层内拆半。init 关 → 全 RoPE（向后兼容）。config: `intra_hybrid_rope`/`intra_hybrid_ratio`。灵感：LLaMA 4 iRoPE 层间交错的层内版 + HARoPE head-wise PE。子代理考察结论：CLSA 共享路由索引不值得实施（需 YOCO 架构、DML top-k 不稳、无长上下文场景），head 拆半为 P1 优先级。
 - review: **4 子代理并行审查第二十一轮代码**——bug/性能/cache 协议/架构创新研究。审查结论：第二十一轮 NoPE 增强 + RWKV-7 全部正确（子代理 1 的 3 个 ⚠️ finding 经代码核验全部误报：value_relative_coding 全量用 v_parts 递推与增量一致、attn_only 两处都排除 rwkv7、MLA 解压在 vrc 之前）。架构创新考察：想法 ④ CLSA 不实施，想法 ⑦ head 拆半实施。

@@ -271,3 +271,84 @@ def test_rwkv7_with_yarn():
     x = torch.randint(0, 200, (2, 8))
     out = m(x)
     assert out.shape == (2, 8, 200)
+
+
+# ---------------------------------------------------------------------------
+# 回审修复测试：train/infer parity + 缓存泄漏 + 跨序列缓存残留
+# ---------------------------------------------------------------------------
+
+def test_value_relative_coding_parity_nonzero_lambda():
+    """value_relative_coding 在 λ≠0 时 train/infer 一致。
+
+    回审修复：原实现全量前向用 shift(原 v)（非递推），增量解码用 cache 中的
+    encoded v（递推），导致 λ≠0 时 train/infer parity 崩溃（diff~2e-2）。
+    修复：全量前向改用递推 v_encoded[t] = v[t] + λ·v_encoded[t-1]。
+    注意：原 test_nope_enhance_cache_parity 用默认 λ=0 隐藏了此 bug。
+    """
+    torch.manual_seed(42)
+    m = _small(value_relative_coding=True, alibi=True, num_layers=2)
+    m.eval()
+    # 设置非零 λ 以暴露递推 vs shift 的 parity 差异
+    with torch.no_grad():
+        m.blocks[0].attn.value_rel_lambda.fill_(0.5)
+        m.blocks[1].attn.value_rel_lambda.fill_(0.5)
+    x = torch.randint(0, 200, (1, 8))
+    with torch.no_grad():
+        full = m(x, use_cache=False)
+        out, past = m(x[:, :1], past_key_values=None, use_cache=True)
+        for t in range(1, 8):
+            out, past = m(x[:, t:t + 1], past_key_values=past, use_cache=True)
+    diff = (full[:, -1, :] - out[:, -1, :]).abs().max().item()
+    assert diff < 1e-4, f"λ=0.5 cache parity max_diff={diff:.2e} 超过 1e-4"
+
+
+def test_x0_proj_not_stale_between_generate_calls():
+    """input_highway x0_proj 在不同 generate() 调用间不残留。
+
+    回审修复：_cached_x0_proj 仅在增量解码后续步缓存，新序列首步必须清除。
+    原实现仅在 memory_enabled 时清除（在 if self.memory_enabled 块内），
+    导致 memory 关闭 + input_highway 开启时 x0_proj 跨序列残留。
+    """
+    torch.manual_seed(42)
+    m = _small(input_highway=True, num_layers=2)
+    m.eval()
+    # 模拟训练后非零 proj 权重
+    with torch.no_grad():
+        m.input_highway_proj.weight.normal_(0, 0.1)
+    # 第一次 generate（prompt A）
+    x_a = torch.randint(0, 200, (1, 4))
+    with torch.no_grad():
+        out_a, past_a = m(x_a, use_cache=True)
+        m(x_a[:, -1:], past_key_values=past_a, use_cache=True)
+        proj_a = m._cached_x0_proj.clone()
+    # 第二次 generate（prompt B，同 batch_size）
+    x_b = torch.randint(0, 200, (1, 4))
+    with torch.no_grad():
+        out_b, past_b = m(x_b, use_cache=True)
+        m(x_b[:, -1:], past_key_values=past_b, use_cache=True)
+        proj_b = m._cached_x0_proj.clone()
+    # 不同 prompt 应产生不同 x0_proj
+    assert not torch.allclose(proj_a, proj_b), \
+        "x0_proj 跨 generate() 残留——不同 prompt 应产生不同 x0_proj"
+
+
+def test_alibi_dist_cache_bounded():
+    """ALiBi 距离缓存在增量解码期间不无限增长。
+
+    回审修复：增量解码每步 start_pos/Tkv 唯一，缓存键永不复用。
+    原实现无大小限制，长生成（如 8192 tokens）导致 O(T²) 内存泄漏。
+    """
+    torch.manual_seed(42)
+    m = _small(alibi=True, num_layers=2, max_seq_length=64)
+    m.eval()
+    x = torch.randint(0, 200, (1, 4))
+    with torch.no_grad():
+        out, past = m(x, use_cache=True)
+        for _ in range(30):
+            tok = torch.randint(0, 200, (1, 1))
+            out, past = m(tok, past_key_values=past, use_cache=True)
+    for i, blk in enumerate(m.blocks):
+        cache_size = len(blk.attn._alibi_dist_cache)
+        assert cache_size <= 8, \
+            f"layer {i} alibi_dist_cache 有 {cache_size} 条，应 ≤8（防 OOM）"
+

@@ -11,7 +11,7 @@ from typing import Optional, List, Tuple, Any, Dict, Callable
 from models.constants import MASK_FILL_VALUE, ROPE_BASE
 
 
-from models.norms import RMSNorm
+from models.norms import RMSNorm, GPASNorm
 from models.rope import RotaryEmbedding
 from models.memory import MemoryBank
 from models.mixers import (SlidingWindowCausalSelfAttention, LinearAttention,
@@ -50,7 +50,9 @@ class TransformerBlock(nn.Module):
                  shared_lns: Optional[Tuple[RMSNorm, RMSNorm]] = None,
                  ssm_as_memory: bool = False,
                  zero_centered_norm: bool = False,
-                 fuse_swiglu: bool = False):
+                 fuse_swiglu: bool = False,
+                 gpas: bool = False,
+                 gpas_alpha_init: float = 0.5):
         super().__init__()
         self.block_type = block_type
         self.drop = nn.Dropout(dropout)
@@ -108,6 +110,13 @@ class TransformerBlock(nn.Module):
             else:
                 self.ssm = MambaSSM(dim, **ssm_kwargs)
         self.ln2 = shared_lns[1] if shared_lns is not None else RMSNorm(dim, zero_centered=zero_centered_norm)
+        # 第二十三轮：GPAS 梯度保留激活缩放——在 LN 输出后、子层前用可学标量 α 缩放激活，
+        # 缓解 Pre-LN 跨层方差增长（深层残差通路淹没子层贡献）。init α=0.5（中等缩放）。
+        # 默认关（gpas=False），config 显式开启。灵感：arXiv:2506.22049。
+        self.gpas_enabled = gpas
+        if gpas:
+            self.gpas1 = GPASNorm(gpas_alpha_init)
+            self.gpas2 = GPASNorm(gpas_alpha_init)
         self.ffn = shared_ffn if shared_ffn is not None else SwiGLU(dim, hidden_dim, fuse_swiglu=fuse_swiglu)
         # ②/⑥ 每层可学习残差门控：x = x + gate * f(x)（init 1.0，默认行为不变）
         # 第十三轮：highway_gate 与静态 residual_gate 互斥——highway_gate=True 时不创建
@@ -318,16 +327,20 @@ class TransformerBlock(nn.Module):
             # 阶段7 token mixer（attn / linear / attn_linear），统一经 _run_attn_mixer 运行，
             # 两者共享同一 ln1(x) 避免重复 RMSNorm。
             xn = self.ln1(x)
+            if self.gpas_enabled: xn = self.gpas1(xn)
             h, present = self._run_attn_mixer(xn, attn_past_kv, use_cache, start_pos, mem_kv, ckpt)
             h_eff = apply_direct(sk, h)
             x = x + self.drop(apply_direct(gate1, h_eff))
         elif self.block_type == 'ssm':
+            xn = self.ln1(x)
+            if self.gpas_enabled: xn = self.gpas1(xn)
             h, ssm_present_state, ssm_present_conv_state = self._run_ssm(
-                self.ln1(x), ssm_past_state, ssm_past_conv_state, use_cache, ckpt)
+                xn, ssm_past_state, ssm_past_conv_state, use_cache, ckpt)
             h_eff = apply_direct(sk, h)
             x = x + self.drop(apply_direct(gate1, h_eff))
         elif self.block_type == 'hybrid':
             xn = self.ln1(x)
+            if self.gpas_enabled: xn = self.gpas1(xn)
             if self.ssm_as_memory_enabled:
                 # 第十一轮：SSM 作隐式记忆——先算 SSM，把 ssm_h mean-pool 投影为
                 # 单个记忆槽注入 mem_kv，让注意力能"查到"SSM 的序列理解。
@@ -368,10 +381,12 @@ class TransformerBlock(nn.Module):
         if memory is not None:
             memory.write(x)
         # FFN 子层：重算力部分（SwiGLU）放入检查点，轻量 ln2 与门控在区外
+        xn2 = self.ln2(x)
+        if self.gpas_enabled: xn2 = self.gpas2(xn2)
         if ckpt:
-            f = checkpoint(self.ffn, self.ln2(x), use_reentrant=False)
+            f = checkpoint(self.ffn, xn2, use_reentrant=False)
         else:
-            f = self.ffn(self.ln2(x))
+            f = self.ffn(xn2)
         x = x + self.drop(apply_direct(gate2, f))
         # Combine attn KV cache and SSM state
         if use_cache:
@@ -579,7 +594,9 @@ class TransformerModel(nn.Module):
                    value_relative_coding: bool = False,
                    rwkv7: bool = False,
                    intra_hybrid_rope: bool = False,
-                   intra_hybrid_ratio: float = 0.5):
+                   intra_hybrid_ratio: float = 0.5,
+                   gpas: bool = False,
+                   gpas_alpha_init: float = 0.5):
         super(TransformerModel, self).__init__()
 
         self.vocab_size = vocab_size
@@ -718,7 +735,9 @@ class TransformerModel(nn.Module):
                              shared_ffn=_shared_ffn, shared_lns=_shared_lns,
                              ssm_as_memory=ssm_as_memory,
                              zero_centered_norm=zero_centered_norm,
-                             fuse_swiglu=fuse_swiglu)
+                             fuse_swiglu=fuse_swiglu,
+                             gpas=gpas,
+                             gpas_alpha_init=gpas_alpha_init)
             for i, bt in enumerate(self.layer_plan)
         ])
         # 第十四轮：ALiBi 跨层共享——所有注意力层共用第一层的 alibi_slopes buffer
@@ -900,6 +919,8 @@ class TransformerModel(nn.Module):
             rwkv7=cfg.attn.rwkv7,
             intra_hybrid_rope=cfg.attn.intra_hybrid_rope,
             intra_hybrid_ratio=cfg.attn.intra_hybrid_ratio,
+            gpas=cfg.attn.gpas,
+            gpas_alpha_init=cfg.attn.gpas_alpha_init,
         )
 
     def set_enhancements_active(self, spec):
