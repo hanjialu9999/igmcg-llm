@@ -154,6 +154,9 @@ class ModelConfig:
     yarn_scale: float = 1.0              # YaRN 长度外推倍数（1.0=不外推，向后兼容；>1.0 启用非均匀频率缩放）
     yarn_beta: float = 0.1               # YaRN attentive factor 范围参数（0.1=默认，控制外推区注意力衰减强度）
     yarn_orig_max_seq_length: int = 0    # YaRN 原始训练长度（0=用 max_seq_length，YaRN 三段式缩放的基准长度）
+    # 第二十轮新特性
+    aligned_training: bool = False       # 深度感知层间对齐（DALA：浅层对齐 x0，深层对齐前层，与 input_highway 对称）
+    dim_wise_rope: bool = False          # 维度级 RoPE 动态分配（逐维度对选择旋转/不旋转，升级 Partial RoPE 的前缀切分）
 
     # n-gram
     ngram_fusion: bool = False
@@ -264,6 +267,8 @@ class ModelConfig:
             yarn_scale=float(mc.get('yarn_scale', 1.0)),
             yarn_beta=float(mc.get('yarn_beta', 0.1)),
             yarn_orig_max_seq_length=int(mc.get('yarn_orig_max_seq_length', 0)),
+            aligned_training=bool(mc.get('aligned_training', False)),
+            dim_wise_rope=bool(mc.get('dim_wise_rope', False)),
             ngram_fusion=mc.get('ngram_fusion', False),
             ngram_gate_scale=float(mc.get('ngram_gate_scale', 1.0)),
             igmcg=bool(mc.get('igmcg', False)),

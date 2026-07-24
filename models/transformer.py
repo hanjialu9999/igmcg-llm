@@ -163,7 +163,8 @@ class TransformerBlock(nn.Module):
                                    attn_temp=attn_kwargs.get('attn_temp', True),
                                    feature=attn_kwargs.get('linear_attn_feature', 'relu'),
                                    rope_dim_fraction=attn_kwargs.get('rope_dim_fraction', 1.0),
-                                   shared_qkv=shared_qkv, shared_proj=shared_proj)
+                                   shared_qkv=shared_qkv, shared_proj=shared_proj,
+                                   dim_wise_rope=attn_kwargs.get('dim_wise_rope', False))
             return attn, None, None
         if mixer == 'gated_delta':
             # 第十五轮：Gated DeltaNet——delta rule + α/β 门控，长程检索更精确
@@ -179,7 +180,8 @@ class TransformerBlock(nn.Module):
                                  channel_wise=attn_kwargs.get('gated_delta_channel_wise', False),
                                  yarn_scale=attn_kwargs.get('yarn_scale', 1.0),
                                  yarn_beta=attn_kwargs.get('yarn_beta', 0.1),
-                                 yarn_orig_max_seq_length=attn_kwargs.get('yarn_orig_max_seq_length', 0))
+                                 yarn_orig_max_seq_length=attn_kwargs.get('yarn_orig_max_seq_length', 0),
+                                 dim_wise_rope=attn_kwargs.get('dim_wise_rope', False))
             return attn, None, None
         if mixer == 'linear2d':
             # 2D 轴向线性注意力：O(T·√T)，适合序列长度为完全平方数或接近的场景
@@ -211,7 +213,8 @@ class TransformerBlock(nn.Module):
                                           head_dim=attn_kwargs.get('linear_attn_head_dim', None),
                                           rope_learnable=attn_kwargs.get('rope_learnable', False),
                                           rope_dim_fraction=attn_kwargs.get('rope_dim_fraction', 1.0),
-                                          shared_qkv=shared_qkv, shared_proj=shared_proj)
+                                          shared_qkv=shared_qkv, shared_proj=shared_proj,
+                                          dim_wise_rope=attn_kwargs.get('dim_wise_rope', False))
             mixer_gate = nn.Parameter(torch.ones(1))
             return attn, linear_attn, mixer_gate
         # 默认：标准滑动窗口因果注意力
@@ -567,7 +570,9 @@ class TransformerModel(nn.Module):
                    shared_alibi: bool = False,
                    yarn_scale: float = 1.0, yarn_beta: float = 0.1,
                    yarn_orig_max_seq_length: int = 0,
-                   gated_delta_channel_wise: bool = False):
+                   gated_delta_channel_wise: bool = False,
+                   aligned_training: bool = False,
+                   dim_wise_rope: bool = False):
         super(TransformerModel, self).__init__()
 
         self.vocab_size = vocab_size
@@ -648,7 +653,8 @@ class TransformerModel(nn.Module):
                            kv_latent_dim=kv_latent_dim,
                            yarn_scale=yarn_scale, yarn_beta=yarn_beta,
                            yarn_orig_max_seq_length=yarn_orig_max_seq_length,
-                           gated_delta_channel_wise=gated_delta_channel_wise)
+                           gated_delta_channel_wise=gated_delta_channel_wise,
+                           dim_wise_rope=dim_wise_rope)
         # 第十八轮：iRoPE 交错 NoPE 层——nope_layers 中的层关闭 RoPE，强制 alibi 提供位置信号
         self.nope_layers_set = set(nope_layers or [])
         # 防护：nope_layers 索引越界校验（审查 Finding 3 LOW）
@@ -772,6 +778,12 @@ class TransformerModel(nn.Module):
         # 损失存入 self._contrastive_loss（训练循环可加到主 loss）；eval 时不计算
         self.layer_contrastive_enabled = layer_contrastive and num_layers > 1
         self._contrastive_loss = None
+        # 第二十轮：DALA（Depth-Aware Layer Alignment）——层间对齐升级
+        # 浅层对齐到 x0（embedding 输出，保原始信号），深层对齐到前层（语义演化平滑）
+        # 对齐目标 = α_i * x_{i-1} + (1-α_i) * x0，α_i = i/(N-1)
+        # 与 input_highway 对称：highway 注入 x0 到每层前向，DALA 让浅层 loss 对齐到 x0
+        # 与 layer_contrastive 兼容：aligned_training=True 时替换 layer_contrastive 的对齐目标
+        self.aligned_training_enabled = aligned_training and num_layers > 1
         # 第十四轮：ALiBi 跨层共享——所有注意力层共用同一组 alibi_slopes（减参+一致位置建模）
         # 在 block 创建后统一绑定（见下方 blocks 构建完毕后的 shared_alibi 处理）
         self.shared_alibi_enabled = shared_alibi and (alibi or bool(self.nope_layers_set))
@@ -869,6 +881,8 @@ class TransformerModel(nn.Module):
             yarn_beta=cfg.yarn_beta,
             yarn_orig_max_seq_length=cfg.yarn_orig_max_seq_length,
             gated_delta_channel_wise=cfg.attn.gated_delta_channel_wise,
+            aligned_training=cfg.aligned_training,
+            dim_wise_rope=cfg.dim_wise_rope,
         )
 
     def set_enhancements_active(self, spec):
@@ -1179,12 +1193,17 @@ class TransformerModel(nn.Module):
         # 性能优化：input_highway_proj(x0) 预计算一次（x0 在循环中不变），避免每层重复 Linear
         x0_proj = self.input_highway_proj(x0) if x0 is not None else None
         # 第十四轮：层间对比绑定——训练期累积相邻层余弦相似度损失
-        if self.training and self.layer_contrastive_enabled:
+        # 第二十轮：DALA 升级——aligned_training=True 时对齐目标从 x_{i-1} 改为
+        # α_i*x_{i-1} + (1-α_i)*x0（浅层对齐 x0 保原始信号，深层对齐前层促平滑演化）
+        _dala_active = self.training and (self.layer_contrastive_enabled or self.aligned_training_enabled)
+        if _dala_active:
             self._contrastive_loss = x.new_zeros(())
             _prev_layer_out = x.detach()
+            _dala_x0 = x.detach() if self.aligned_training_enabled else None  # embedding 输出
         else:
             self._contrastive_loss = None
             _prev_layer_out = None
+            _dala_x0 = None
         for i, block in enumerate(self.blocks):
             if (not self.training) and getattr(self, '_pruned_layers', None) and i in self._pruned_layers:
                 presents.append(block_states[i])
@@ -1227,9 +1246,18 @@ class TransformerModel(nn.Module):
                                use_cache, start_pos, ssm_past_state, ssm_past_conv_state, memory)
             presents.append(BlockState.from_tuple(present))
             # 第十四轮：层间对比绑定——累积相邻层 (1 - cos_sim) 损失
-            # detach _prev_layer_out 使梯度只回流到当前层（推当前层向上一层靠拢，不反过来）
+            # 第二十轮：DALA 升级——aligned_training 时对齐目标为 geodesic 路径插值
+            # target_i = α_i * x_{i-1} + (1-α_i) * x0，α_i = i/(N-1)
+            # 浅层（i 小）→ α_i 小 → 目标偏向 x0（保原始信号）
+            # 深层（i 大）→ α_i 大 → 目标偏向 x_{i-1}（促语义平滑演化）
+            # detach _prev_layer_out / _dala_x0 使梯度只回流到当前层
             if _prev_layer_out is not None:
-                cos_sim = F.cosine_similarity(x, _prev_layer_out, dim=-1).mean()
+                if _dala_x0 is not None:
+                    _alpha_i = i / max(len(self.blocks) - 1, 1)
+                    _target = _alpha_i * _prev_layer_out + (1.0 - _alpha_i) * _dala_x0
+                else:
+                    _target = _prev_layer_out
+                cos_sim = F.cosine_similarity(x, _target, dim=-1).mean()
                 self._contrastive_loss = self._contrastive_loss + (1.0 - cos_sim)
                 _prev_layer_out = x.detach()
             if self.cross_layer_routing:
