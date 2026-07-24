@@ -7,6 +7,28 @@ import torch.nn as nn
 from models.constants import ROPE_BASE
 
 
+# 第十九轮：YaRN 长度外推辅助函数（YaRN 论文 arXiv:2309.00071）
+def _yarn_find_correction_dim(num_rotations: int, dim: int, base: float, max_position_embeddings: int) -> float:
+    """计算给定旋转数对应的修正维度。"""
+    return (dim * math.log(max_position_embeddings / (num_rotations * 2 * math.pi))) / (2 * math.log(base))
+
+
+def _yarn_find_correction_range(low_rot: int, high_rot: int, dim: int, base: float,
+                                 max_position_embeddings: int) -> Tuple[int, int]:
+    """计算修正范围 [low, high]。"""
+    low = math.floor(_yarn_find_correction_dim(low_rot, dim, base, max_position_embeddings))
+    high = math.ceil(_yarn_find_correction_dim(high_rot, dim, base, max_position_embeddings))
+    return max(low, 0), min(high, dim - 1)
+
+
+def _yarn_linear_ramp_mask(min_val: float, max_val: float, dim: int) -> torch.Tensor:
+    """线性斜坡掩码：min_val 处为 0，max_val 处为 1，中间线性插值。"""
+    if min_val == max_val:
+        max_val += 0.001
+    linear_func = (torch.arange(dim, dtype=torch.float32) - min_val) / (max_val - min_val)
+    return torch.clamp(linear_func, 0, 1)
+
+
 class RotaryEmbedding(nn.Module):
     """旋转位置编码 RoPE：对 Q/K 按位置旋转，天然支持长度外推。
     
@@ -19,7 +41,9 @@ class RotaryEmbedding(nn.Module):
     _use_shared_cache = False
 
     def __init__(self, dim: int, base: float = ROPE_BASE, learnable: bool = False,
-                 dim_fraction: float = 1.0):
+                 dim_fraction: float = 1.0,
+                 yarn_scale: float = 1.0, yarn_beta: float = 0.1,
+                 yarn_orig_max_seq_length: int = 0):
         super().__init__()
         # 第十五轮：Partial RoPE——仅前 dim*fraction 维度加 RoPE，后段 NoPE（纯内容维度）。
         # 灵感：Qwen3-Next（前 25%）+ MLA Decoupled RoPE。长度外推更稳，高频维度不承载位置信息。
@@ -28,7 +52,16 @@ class RotaryEmbedding(nn.Module):
         self.dim_fraction = float(dim_fraction)
         self.rot_dim = max(2, int(dim * self.dim_fraction) // 2 * 2)  # 向下取偶，最少 2
         self.no_pe_dim = dim - self.rot_dim  # 不旋转的维度数（可为 0）
-        inv_freq = 1.0 / (base ** (torch.arange(0, self.rot_dim, 2).float() / self.rot_dim))
+        # 第十九轮：YaRN 长度外推——非均匀频率缩放，免训练外推到更长序列
+        # 灵感：YaRN (arXiv:2309.00071) + Randomized YaRN (ICLR 2026)
+        # yarn_scale=1.0 时不缩放（向后兼容）；>1.0 时高频维度不缩放（外推）、低频维度缩放（插值）
+        self.yarn_scale = float(yarn_scale)
+        self.yarn_beta = float(yarn_beta)
+        self.yarn_orig_max_seq_length = int(yarn_orig_max_seq_length)
+        if self.yarn_scale > 1.0:
+            inv_freq = self._compute_yarn_inv_freq(base)
+        else:
+            inv_freq = 1.0 / (base ** (torch.arange(0, self.rot_dim, 2).float() / self.rot_dim))
         self.register_buffer('inv_freq', inv_freq, persistent=False)
         self.learnable = learnable
         # 阶段5：可学习 RoPE 频率缩放——让模型调整各频率尺度，更好适应长度/尺度。
@@ -45,6 +78,29 @@ class RotaryEmbedding(nn.Module):
         cls._use_shared_cache = enabled
         if not enabled:
             cls._shared_cache.clear()
+
+    def _compute_yarn_inv_freq(self, base: float) -> torch.Tensor:
+        """YaRN 三段式非均匀频率缩放（第十九轮）。
+
+        高频维度（短波长，index 小）：保持外推（不缩放），保留近距离位置精度。
+        低频维度（长波长，index 大）：插值缩放（1/scale），支持更长序列。
+        中间维度：线性过渡。
+
+        与 Partial RoPE 正交：YaRN 缩放 rot_dim 维的频率，NoPE 维度不受影响。
+        与可学习 RoPE 正交：YaRN 修改 inv_freq buffer 基底，rope_log_scale 在此之上微调。
+        """
+        orig_len = self.yarn_orig_max_seq_length or 2048
+        dim = self.rot_dim
+        # 计算修正范围：高频边界（low_rot=32）和低频边界（high_rot=1）
+        low, high = _yarn_find_correction_range(32, 1, dim, base, orig_len)
+        # 外推频率（不缩放）和插值频率（缩放 1/scale）
+        freq_indices = torch.arange(0, dim, 2).float()
+        inv_freq_extrapolation = 1.0 / (base ** (freq_indices / dim))
+        inv_freq_interpolation = 1.0 / (self.yarn_scale * base ** (freq_indices / dim))
+        # 掩码：高频维度 mask≈1（用外推），低频维度 mask≈0（用插值）
+        mask = 1.0 - _yarn_linear_ramp_mask(low, high, dim // 2)
+        inv_freq = inv_freq_interpolation * (1 - mask) + inv_freq_extrapolation * mask
+        return inv_freq
 
     def _get_cos_sin(self, start_pos: int, seq_len: int, device: torch.device, dtype: torch.dtype, max_len: int = 2048) -> Tuple[torch.Tensor, torch.Tensor]:
         """按 (device, dtype, head_dim) 缓存整张位置表后按需切片。

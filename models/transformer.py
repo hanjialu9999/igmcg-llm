@@ -167,6 +167,7 @@ class TransformerBlock(nn.Module):
             return attn, None, None
         if mixer == 'gated_delta':
             # 第十五轮：Gated DeltaNet——delta rule + α/β 门控，长程检索更精确
+            # 第十九轮：KDA 逐通道衰减（channel_wise=True 时 α/β 从标量升级为 per-channel 向量）
             attn = GatedDeltaNet(dim, num_heads, max_seq_length=max_seq_length,
                                  qk_norm=attn_kwargs.get('qk_norm', True),
                                  attn_temp=attn_kwargs.get('attn_temp', True),
@@ -174,7 +175,11 @@ class TransformerBlock(nn.Module):
                                  rope_dim_fraction=attn_kwargs.get('rope_dim_fraction', 1.0),
                                  alpha_init=attn_kwargs.get('delta_alpha_init', -2.0),
                                  beta_init=attn_kwargs.get('delta_beta_init', 2.0),
-                                 shared_qkv=shared_qkv, shared_proj=shared_proj)
+                                 shared_qkv=shared_qkv, shared_proj=shared_proj,
+                                 channel_wise=attn_kwargs.get('gated_delta_channel_wise', False),
+                                 yarn_scale=attn_kwargs.get('yarn_scale', 1.0),
+                                 yarn_beta=attn_kwargs.get('yarn_beta', 0.1),
+                                 yarn_orig_max_seq_length=attn_kwargs.get('yarn_orig_max_seq_length', 0))
             return attn, None, None
         if mixer == 'linear2d':
             # 2D 轴向线性注意力：O(T·√T)，适合序列长度为完全平方数或接近的场景
@@ -194,7 +199,8 @@ class TransformerBlock(nn.Module):
         if mixer == 'attn_linear':
             attn_only = {k: v for k, v in attn_kwargs.items()
                          if k not in ('linear_attn_feature', 'linear_attn_head_dim',
-                                      'delta_alpha_init', 'delta_beta_init')}
+                                      'delta_alpha_init', 'delta_beta_init',
+                                      'gated_delta_channel_wise')}
             attn = SlidingWindowCausalSelfAttention(dim, num_heads, max_seq_length=max_seq_length,
                                                      shared_qkv=shared_qkv, shared_proj=shared_proj,
                                                      **attn_only)
@@ -211,7 +217,8 @@ class TransformerBlock(nn.Module):
         # 默认：标准滑动窗口因果注意力
         attn_only = {k: v for k, v in attn_kwargs.items()
                      if k not in ('linear_attn_feature', 'linear_attn_head_dim',
-                                  'delta_alpha_init', 'delta_beta_init')}
+                                  'delta_alpha_init', 'delta_beta_init',
+                                  'gated_delta_channel_wise')}
         attn = SlidingWindowCausalSelfAttention(dim, num_heads, max_seq_length=max_seq_length,
                                                  shared_qkv=shared_qkv, shared_proj=shared_proj,
                                                  **attn_only)
@@ -557,7 +564,10 @@ class TransformerModel(nn.Module):
                    highway_gate: bool = False,
                    input_highway: bool = False,
                    layer_contrastive: bool = False,
-                   shared_alibi: bool = False):
+                   shared_alibi: bool = False,
+                   yarn_scale: float = 1.0, yarn_beta: float = 0.1,
+                   yarn_orig_max_seq_length: int = 0,
+                   gated_delta_channel_wise: bool = False):
         super(TransformerModel, self).__init__()
 
         self.vocab_size = vocab_size
@@ -635,9 +645,18 @@ class TransformerModel(nn.Module):
                            delta_alpha_init=delta_alpha_init,
                            delta_beta_init=delta_beta_init,
                            use_mla_kv=use_mla_kv,
-                           kv_latent_dim=kv_latent_dim)
+                           kv_latent_dim=kv_latent_dim,
+                           yarn_scale=yarn_scale, yarn_beta=yarn_beta,
+                           yarn_orig_max_seq_length=yarn_orig_max_seq_length,
+                           gated_delta_channel_wise=gated_delta_channel_wise)
         # 第十八轮：iRoPE 交错 NoPE 层——nope_layers 中的层关闭 RoPE，强制 alibi 提供位置信号
         self.nope_layers_set = set(nope_layers or [])
+        # 防护：nope_layers 索引越界校验（审查 Finding 3 LOW）
+        if self.nope_layers_set:
+            _n_layers = len(self.layer_plan)
+            _invalid = {i for i in self.nope_layers_set if i < 0 or i >= _n_layers}
+            if _invalid:
+                raise ValueError(f"nope_layers 索引越界: {sorted(_invalid)}，有效范围 [0, {_n_layers})")
         # 第十五轮：保存 GatedDeltaNet 专用初始化参数，供 _apply_specialized_inits 重置
         # （_init_weights 通用 N(0,0.02) 会覆盖 alpha_proj/beta_proj 的 zero weight + 专用 bias）
         self._delta_alpha_init = float(delta_alpha_init)
@@ -755,7 +774,7 @@ class TransformerModel(nn.Module):
         self._contrastive_loss = None
         # 第十四轮：ALiBi 跨层共享——所有注意力层共用同一组 alibi_slopes（减参+一致位置建模）
         # 在 block 创建后统一绑定（见下方 blocks 构建完毕后的 shared_alibi 处理）
-        self.shared_alibi_enabled = shared_alibi and alibi
+        self.shared_alibi_enabled = shared_alibi and (alibi or bool(self.nope_layers_set))
         # 权重初始化（_init_weights 遍历所有 Linear 用 N(0,0.02)，再对 SSM 调 proper_init 覆盖）
         self._init_weights()
         # 专用初始化必须在 _init_weights 之后重新应用（否则被通用 N(0,0.02)/zeros 覆盖）：
@@ -846,6 +865,10 @@ class TransformerModel(nn.Module):
             input_highway=cfg.input_highway,
             layer_contrastive=cfg.layer_contrastive,
             shared_alibi=cfg.shared_alibi,
+            yarn_scale=cfg.yarn_scale,
+            yarn_beta=cfg.yarn_beta,
+            yarn_orig_max_seq_length=cfg.yarn_orig_max_seq_length,
+            gated_delta_channel_wise=cfg.attn.gated_delta_channel_wise,
         )
 
     def set_enhancements_active(self, spec):
