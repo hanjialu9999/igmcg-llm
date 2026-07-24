@@ -50,6 +50,8 @@ class AttnConfig:
     # 第十七轮新特性
     use_mla_kv: bool = False         # MLA 风格 KV 潜空间压缩（cache 只存潜向量，长序列内存降 2*dim/kv_latent_dim 倍）
     kv_latent_dim: Optional[int] = None  # MLA 潜空间维度（None=默认 dim，压缩 2x；更小值压缩更多）
+    # 第十九轮新特性
+    gated_delta_channel_wise: bool = False  # KDA 逐通道衰减（alpha/beta 从标量升级为 per-channel 向量）
 
     def __post_init__(self):
         _VALID = {'attn', 'linear', 'linear2d', 'attn_linear', 'hybrid_linear2d', 'diff', 'gated_delta'}
@@ -148,6 +150,10 @@ class ModelConfig:
     fuse_swiglu: bool = False          # SwiGLU w1/w3 合并为 w13（减少 GEMM 调用，默认关向后兼容）
     # 第十八轮新特性
     nope_layers: List[int] = field(default_factory=list)  # iRoPE 交错 NoPE 层索引（这些层关闭 RoPE，位置信号由 ALiBi 提供）
+    # 第十九轮新特性
+    yarn_scale: float = 1.0              # YaRN 长度外推倍数（1.0=不外推，向后兼容；>1.0 启用非均匀频率缩放）
+    yarn_beta: float = 0.1               # YaRN attentive factor 范围参数（0.1=默认，控制外推区注意力衰减强度）
+    yarn_orig_max_seq_length: int = 0    # YaRN 原始训练长度（0=用 max_seq_length，YaRN 三段式缩放的基准长度）
 
     # n-gram
     ngram_fusion: bool = False
@@ -255,6 +261,9 @@ class ModelConfig:
             shared_alibi=bool(mc.get('shared_alibi', False)),
             fuse_swiglu=bool(mc.get('fuse_swiglu', False)),
             nope_layers=list(mc.get('nope_layers', [])),
+            yarn_scale=float(mc.get('yarn_scale', 1.0)),
+            yarn_beta=float(mc.get('yarn_beta', 0.1)),
+            yarn_orig_max_seq_length=int(mc.get('yarn_orig_max_seq_length', 0)),
             ngram_fusion=mc.get('ngram_fusion', False),
             ngram_gate_scale=float(mc.get('ngram_gate_scale', 1.0)),
             igmcg=bool(mc.get('igmcg', False)),

@@ -9,7 +9,17 @@
 - 提交信息风格：中文主题行 + 空行 + 要点式正文。
 - 状态标记：`已推送` = 已 `git push` 到 `origin/main`；`本地` = 仅本地提交待推送。
 
-## `e5d87d5`（第十八轮：iRoPE 交错 NoPE + Gated Attention + GEMM 合并优化）
+## `（本地，基于 `562d866`，待推送，第十九轮：KDA 逐通道衰减 + YaRN 长度外推 + 审查修复）
+
+- feat: **KDA 逐通道衰减（Kimi Delta Attention）**——`models/mixers.py` `GatedDeltaNet` 新增 `channel_wise` 参数，α/β 门控从标量（per-head）升级为逐通道向量（per-head per-dim），`alpha_proj`/`beta_proj` 输出维度从 `num_heads` → `num_heads*head_dim`。`_compute_gates` 通道模式返回 `(B,H,T,D)`，`Diag(α_t)·S` 让每个通道独立遗忘率，提升长程检索精度。init W=0（向后兼容，weight=0 时与标量模式行为等价）。config: `gated_delta_channel_wise`。灵感：Kimi K3 KDA（arXiv:2510.26692）。与 MemoryBank per-slot forget 对称。
+- feat: **YaRN 长度外推**——`models/rope.py` `RotaryEmbedding` 新增 `yarn_scale`/`yarn_beta`/`yarn_orig_max_seq_length` 参数。`yarn_scale>1.0` 时通过三段式非均匀频率缩放计算 `inv_freq`：高频维度（短波长）保持外推，低频维度（长波长）插值缩放。辅助函数 `_yarn_find_correction_dim`/`_yarn_find_correction_range`/`_yarn_linear_ramp_mask`。与 Partial RoPE 正交叠加。`SlidingWindowCausalSelfAttention` 同步支持 YaRN 参数（传给 RotaryEmbedding）。config: `yarn_scale`/`yarn_beta`/`yarn_orig_max_seq_length`。灵感：YaRN（arXiv:2309.00071）。
+- fix: **MLA + nope_layers 场景 k 的 RoPE 应用不一致（CRITICAL，审查发现）**——NoPE 层（`use_rope=False`）的 k 在 MLA 路径 `attend` 中仍被 RoPE 旋转（q 无 RoPE/k 有 RoPE 导致点积语义错误）。修复：`models/mixers.py` MLA 路径 k 的 RoPE 应用添加 `if self.use_rope` 条件判断。
+- fix: **shared_alibi_enabled 标志未考虑 nope_layers_set（MEDIUM，审查发现）**——`shared_alibi=True + alibi=False + nope_layers=[1]` 时 `shared_alibi_enabled` 为 False，设备迁移后 alibi_slopes 共享关系丢失。修复：`models/transformer.py` `shared_alibi_enabled = shared_alibi and (alibi or bool(self.nope_layers_set))`。
+- fix: **nope_layers 索引越界无校验（LOW，审查发现）**——`nope_layers` 包含超出 `num_layers` 的索引时未报错。修复：`models/transformer.py` 添加越界校验，`_invalid = {i for i in self.nope_layers_set if i < 0 or i >= _n_layers}; if _invalid: raise ValueError(...)`。
+- fix: **SlidingWindowCausalSelfAttention 不接受 yarn_scale 参数（构建阻断）**——`RotaryEmbedding` 初始化引用了 `yarn_scale` 等变量但 `__init__` 签名未声明，导致 NameError。修复：签名添加 `yarn_scale`/`yarn_beta`/`yarn_orig_max_seq_length` 参数。
+- test: **新增 tests/test_round19.py（20 项）**——KDA 通道/标量参数维度/门控形状/前向/输出差异/梯度/cache parity/专用初始化保持；YaRN 向后兼容/inv_freq 缩放/前向输出/Partial RoPE 正交/模型集成/梯度；MLA+NoPE k 不旋转/shared_alibi 标志/nope_layers 越界校验；KDA+YaRN 组合。pytest **384 passed / 1 skipped / 1 xfailed**（+20）。
+
+## `e5d87d5`（已推送，第十八轮：iRoPE 交错 NoPE + Gated Attention + GEMM 合并优化）
 
 - feat: **iRoPE 交错 NoPE 层**——`nope_layers` 配置指定层关闭 RoPE，位置信号由 ALiBi 提供（NoPE 层强制 `alibi=True`）。`SlidingWindowCausalSelfAttention` 新增 `use_rope` 参数，`project_and_norm` 中 `use_rope=False` 时跳过 RoPE 应用。灵感：LLaMA 4 iRoPE（3:1 交错 RoPE/NoPE）。NoPE 层理论上能学到任意长度外推。默认空列表（向后兼容）。config: `nope_layers=[1,5,...]`。
 - feat: **Gated Attention（output_gate 门源升级 out→query）**——`models/mixers.py` `SlidingWindowCausalSelfAttention.forward` 中 output_gate 的门源从注意力输出 `out` 升级为 `query`（`(B,H,T,D) → (B,T,dim)` 后投影）。论文关键：门必须由 query 产生才触发 query-dependent 稀疏 + value 通路非线性，BOS 注意力下沉 46.7%→4.8%。ckpt 路径（`_run_attn_mixer`）同步更新。init W=0/b=0 → sigmoid=0.5 半通起步（向后兼容）。灵感：NeurIPS 2025 Best Paper。

@@ -124,7 +124,8 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
                  pe_gate: bool = False, rope_dim_fraction: float = 1.0,
                  output_gate: bool = False,
                  use_mla_kv: bool = False, kv_latent_dim: Optional[int] = None,
-                 use_rope: bool = True):
+                 use_rope: bool = True,
+                 yarn_scale: float = 1.0, yarn_beta: float = 0.1, yarn_orig_max_seq_length: int = 0):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
@@ -143,7 +144,9 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         # 层间共享：传入 shared_qkv/shared_proj 时复用外部投影，不在本层创建新参数
         self.qkv = shared_qkv if shared_qkv is not None else nn.Linear(dim, 3 * dim, bias=False)
         self.proj = shared_proj if shared_proj is not None else nn.Linear(dim, dim, bias=False)
-        self.rope = RotaryEmbedding(self.head_dim, learnable=rope_learnable, dim_fraction=rope_dim_fraction)
+        self.rope = RotaryEmbedding(self.head_dim, learnable=rope_learnable, dim_fraction=rope_dim_fraction,
+                                    yarn_scale=yarn_scale, yarn_beta=yarn_beta,
+                                    yarn_orig_max_seq_length=yarn_orig_max_seq_length)
         if self.rel_bias:
             # T5 风格相对位置偏置表：(heads, 2T-1)
             self.rel_bias_table = nn.Parameter(torch.zeros(num_heads, 2 * max_seq_length - 1))
@@ -409,7 +412,8 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
             k = k_flat.reshape(B_c, T_total, _nh, _hd).permute(0, 2, 1, 3)
             v = v_flat.reshape(B_c, T_total, _nh, _hd).permute(0, 2, 1, 3)
             # 还原后应用 RoPE（位置 0..T_total-1，与非 MLA 路径的"每 token 在对应位置旋转"等价）
-            k = self.rope.apply_to_single(k, start_pos=0, max_len=self.max_seq_length)
+            # 第十八轮审查修复：NoPE 层（use_rope=False）k 不可旋转，否则 q 无 RoPE/k 有 RoPE 破坏语义
+            k = self.rope.apply_to_single(k, start_pos=0, max_len=self.max_seq_length) if self.use_rope else k
             # MLA 已处理 cache 拼接，后续 cache 分支不再拼接 past_kv
             past_kv = None
         # 阶段3 可学习检索：统一经 MemoryBank.inject_memory 注入记忆 K/V + 检索偏置，
@@ -598,7 +602,8 @@ class LinearMixerBase(nn.Module, EnhancementsMixin):
     def __init__(self, dim: int, num_heads: int, qk_norm: bool = True, attn_temp: bool = True,
                  max_seq_length: int = 64, feature: str = 'relu', head_dim: Optional[int] = None,
                  rope_learnable: bool = False, rope_dim_fraction: float = 1.0,
-                 shared_qkv: Optional[nn.Linear] = None, shared_proj: Optional[nn.Linear] = None):
+                 shared_qkv: Optional[nn.Linear] = None, shared_proj: Optional[nn.Linear] = None,
+                 yarn_scale: float = 1.0, yarn_beta: float = 0.1, yarn_orig_max_seq_length: int = 0):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = head_dim or (dim // num_heads)
@@ -606,7 +611,9 @@ class LinearMixerBase(nn.Module, EnhancementsMixin):
         self.feature = feature
         self.qkv = shared_qkv if shared_qkv is not None else nn.Linear(dim, 3 * self.num_heads * self.head_dim, bias=False)
         self.proj = shared_proj if shared_proj is not None else nn.Linear(self.num_heads * self.head_dim, dim, bias=False)
-        self.rope = RotaryEmbedding(self.head_dim, learnable=rope_learnable, dim_fraction=rope_dim_fraction)
+        self.rope = RotaryEmbedding(self.head_dim, learnable=rope_learnable, dim_fraction=rope_dim_fraction,
+                                    yarn_scale=yarn_scale, yarn_beta=yarn_beta,
+                                    yarn_orig_max_seq_length=yarn_orig_max_seq_length)
         self.qk_norm_enabled = qk_norm
         if qk_norm:
             self.qk_norm = RMSNorm(self.head_dim)
@@ -709,24 +716,46 @@ class GatedDeltaNet(LinearMixerBase):
                  max_seq_length: int = 64, feature: str = 'relu', head_dim: Optional[int] = None,
                  rope_learnable: bool = False, rope_dim_fraction: float = 1.0,
                  alpha_init: float = -2.0, beta_init: float = 2.0,
-                 shared_qkv: Optional[nn.Linear] = None, shared_proj: Optional[nn.Linear] = None):
+                 shared_qkv: Optional[nn.Linear] = None, shared_proj: Optional[nn.Linear] = None,
+                 channel_wise: bool = False,
+                 yarn_scale: float = 1.0, yarn_beta: float = 0.1, yarn_orig_max_seq_length: int = 0):
         super().__init__(dim, num_heads, qk_norm, attn_temp, max_seq_length, feature,
                          head_dim, rope_learnable, rope_dim_fraction,
-                         shared_qkv, shared_proj)
+                         shared_qkv, shared_proj,
+                         yarn_scale, yarn_beta, yarn_orig_max_seq_length)
+        # 第十九轮 KDA（Kimi Delta Attention）：逐通道衰减 α/β（per-channel 向量而非标量）
+        # 灵感：Kimi K3 KDA（arXiv:2510.26692）—— Diag(α_t)·S 让每个通道独立遗忘率，
+        # 模型自决"哪些通道保留长程信息、哪些快速更新"。与 MemoryBank per-slot forget 对称。
+        # channel_wise=False（默认）：标量 α/β (B,H,T,1)，向后兼容
+        # channel_wise=True：向量 α/β (B,H,T,D)，逐通道衰减
+        self.channel_wise = channel_wise
+        _gate_out = num_heads * (self.head_dim if channel_wise else 1)
         # 门控投影：per-head per-token 的 α/β，输入 x 经线性 + sigmoid
         # init W=0 使门控仅由 bias 决定（α_init/beta_init），训练中 W 学习 x-dependent 调制
-        self.alpha_proj = nn.Linear(dim, num_heads, bias=True)
-        self.beta_proj = nn.Linear(dim, num_heads, bias=True)
+        self.alpha_proj = nn.Linear(dim, _gate_out, bias=True)
+        self.beta_proj = nn.Linear(dim, _gate_out, bias=True)
         nn.init.zeros_(self.alpha_proj.weight)
         nn.init.constant_(self.alpha_proj.bias, alpha_init)
         nn.init.zeros_(self.beta_proj.weight)
         nn.init.constant_(self.beta_proj.bias, beta_init)
 
     def _compute_gates(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """计算 per-head per-token 门控 α/β。返回 (B,H,T,1)。"""
-        # x: (B,T,C) → proj → (B,T,H) → transpose → (B,H,T) → unsqueeze → (B,H,T,1)
-        alpha = torch.sigmoid(self.alpha_proj(x).transpose(1, 2)).unsqueeze(-1)
-        beta = torch.sigmoid(self.beta_proj(x).transpose(1, 2)).unsqueeze(-1)
+        """计算 per-head per-token 门控 α/β。
+
+        标量模式：返回 (B,H,T,1)；通道模式：返回 (B,H,T,D)。
+        """
+        # x: (B,T,C) → proj → (B,T,H) 或 (B,T,H*D) → transpose → (B,H,T) 或 (B,H*D,T)
+        alpha = torch.sigmoid(self.alpha_proj(x).transpose(1, 2))
+        beta = torch.sigmoid(self.beta_proj(x).transpose(1, 2))
+        if self.channel_wise:
+            # (B, H*D, T) → (B, H, D, T) → (B, H, T, D)
+            B, _, T = alpha.shape
+            alpha = alpha.reshape(B, self.num_heads, self.head_dim, T).permute(0, 1, 3, 2)
+            beta = beta.reshape(B, self.num_heads, self.head_dim, T).permute(0, 1, 3, 2)
+        else:
+            # (B, H, T) → (B, H, T, 1)
+            alpha = alpha.unsqueeze(-1)
+            beta = beta.unsqueeze(-1)
         return alpha, beta
 
     def forward(self, x: torch.Tensor, past_kv=None, use_cache: bool = False, start_pos: int = 0,
