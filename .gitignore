@@ -56,6 +56,7 @@ _vocab_dump.txt
 _50mb_*.log
 run_train_selv2.ps1
 scripts/data/_scan_enc.py
+logs_*_output.txt
 
 # 增强 vs 基线 对比实验产物（全量 merged.txt 受控对比）
 # 对比结果文本 + 训练日志入库（可对比）；权重较大（~107MB/份）且不入库，可由 config + data 复现
