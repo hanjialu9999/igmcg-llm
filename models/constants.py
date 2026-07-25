@@ -19,9 +19,10 @@ MASK_FILL_VALUE: float = -1e9   # 因果/窗口掩码填充（被 SDPA 视为 -i
 ROPE_BASE: float = 10000.0      # RoPE 默认基频
 
 # —— 生成默认超参（CLI 缺省与回退默认对齐；2.0 由 scripts/tuning 实验得出，见 docs/TUNING_GUIDE.md）——
+# 注意：top_p 未在 sample_next_token 实现，故不暴露默认键（防死键）。
+# 若后续实现 top-p 截断采样，再在此添加 'top_p': 0.9。
 DEFAULT_GENERATION: dict = {
     'temperature': 1.0,
     'top_k': 50,
-    'top_p': 0.9,
     'repetition_penalty': 2.0,
 }
