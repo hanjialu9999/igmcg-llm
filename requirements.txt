@@ -1,6 +1,8 @@
-# 注意：torch-directml 要求 torch>=2.0,<2.2（DML 实际运行版本上限），
-# 写 <2.5 会让 pip 装到不兼容版本（DML 设备推理崩溃），故上界锁 <2.2。
-torch>=2.0,<2.2
+# 注意：本文件用于非 DML 环境（CPU / CUDA）。
+# 若使用 AMD/Intel 核显 + DirectML，请改用 requirements-amd.txt
+# （torch-directml 会自行拉取兼容的 torch；.amd_venv 实测为 torch 2.4.1）。
+# 本项目主测试环境为 torch 2.4.1，故上界放宽到 <2.5。
+torch>=2.0,<2.5
 pyyaml==6.0
 numpy==1.24.3
 tqdm>=4.65.0
@@ -8,7 +10,7 @@ tqdm>=4.65.0
 # ===== 可选：AMD / Intel 核显加速（Windows）=====
 # 安装 torch-directml 后，程序会自动通过 DirectML 使用核显/独显；
 # 无需任何代码改动（device 设为 "auto" 即可），但需注意：
-# 注意：torch-directml 需要较旧的 Python(3.10/3.11) 与 torch(>=2.0,<2.2) 版本
+# torch-directml 需要 Python 3.10 / 3.11（不支持更新的 Python 版本）
 #   pip install torch-directml
 
 # ===== 可选：数据准备脚本依赖（scripts/data/*）=====

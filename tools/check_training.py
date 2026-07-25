@@ -31,7 +31,7 @@ print("="*70)
 if latest_epoch == 0:
     print("\n⏳ 训练进行中... (正在加载数据或运行初始epoch)")
     print("\n提示：可以运行以下命令监控训练：")
-    print("  python monitor_training.py")
+    print("  python tools/monitor/monitor_live.py")
 else:
     progress = (latest_epoch / 50) * 100
     print(f"\n✅ 当前进度: Epoch {latest_epoch}/50 ({progress:.1f}%)")
@@ -47,10 +47,10 @@ else:
     
     if latest_epoch < 10:
         print(f"  • 等待更多epoch（当前training中...）")
-        print(f"  • 或运行 monitor_training.py 实时监控")
+        print(f"  • 或运行 tools/monitor/monitor_live.py 实时监控")
     else:
-        print(f"  • 使用最新模型测试: python quick_demo.py")
+        print(f"  • 使用最新模型测试: python tools/quick_demo.py")
         print(f"  • 或继续等待完整50个epoch")
-        print(f"  • 运行 monitor_training.py 监控剩余进度")
+        print(f"  • 运行 tools/monitor/monitor_live.py 监控剩余进度")
 
 print("\n" + "="*70 + "\n")

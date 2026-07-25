@@ -61,9 +61,8 @@ data:
 ## 监控训练
 
 ```bash
-python tools/monitor/monitor_training.py
+python tools/monitor/monitor_live.py            # 实时（动态刷新）监控
 python tools/monitor/monitor_gpu_training.py   # GPU 显存 / 利用率
-python tools/monitor/monitor_live.py
 ```
 
 ## 检查点与恢复

@@ -11,7 +11,7 @@
 - **IGMCG 反碎片化**：生成多个温度候选，按综合分选优，抑制“碎片式”输出。
 - **跨设备**：自动选择 `cuda` / `dml`(AMD) / `cpu`；DML 推理现已可用，训练侧 bf16 在 CPU/CUDA 上开启混合精度。
 - **低功耗选项**：CPU 可用 `--cpu-threads` 限线程、`--quantize` 启 int8 动态量化。
-- **增强架构机制**（默认关闭、向后兼容旧权重）：可学习遗忘 `MemoryBank`（memory_forget）、可学 RoPE 频率 + ALiBi（rope_learnable / alibi）、全上下文检索（memory_retrieval_full / memory_retrieval_topk）、可学滑动窗口（learn_window / window_base）、选择性跳过层（layer_skip）、线性注意力 mixer（mixer=attn|linear|hybrid|gated_delta）、计算复杂度奖励（training.complexity_lambda）、统一记忆预算（memory_budget）、线性注意力修正（linear_correction）、位置编码门控（pe_gate）、跨层稀疏路由（cross_layer_routing）、QAT 量化感知训练（qat_bits, LSQ-STE）、SSM 作为隐式记忆（ssm_as_memory）、跨层协作（cross_ssm_transfer / progressive_residual / layer_film / highway_gate / input_highway / layer_contrastive / shared_alibi）、Partial RoPE（rope_dim_fraction）、Output Gating（output_gate）、Zero-Centered RMSNorm（zero_centered_norm）。详见各 `configs/*.yaml` 注释。
+- **增强架构机制**（默认关闭、向后兼容旧权重）：可学习遗忘 `MemoryBank`（memory_forget）、可学 RoPE 频率 + ALiBi（rope_learnable / alibi）、全上下文检索（memory_retrieval_full / memory_retrieval_topk）、可学滑动窗口（learn_window）、选择性跳过层（layer_skip）、线性注意力 mixer（mixer=attn|linear|hybrid|gated_delta）、计算复杂度奖励（training.complexity_lambda）、统一记忆预算（memory_budget）、线性注意力修正（linear_correction）、位置编码门控（pe_gate）、跨层稀疏路由（cross_layer_routing）、QAT 量化感知训练（qat_bits, LSQ-STE）、SSM 作为隐式记忆（ssm_as_memory）、跨层协作（cross_ssm_transfer / progressive_residual / layer_film / highway_gate / input_highway / layer_contrastive / shared_alibi）、Partial RoPE（rope_dim_fraction）、Output Gating（output_gate）、Zero-Centered RMSNorm（zero_centered_norm）。详见各 `configs/*.yaml` 注释。
 
 ## 目录结构
 
