@@ -173,3 +173,185 @@ def test_ngram_coherence_empty_and_short():
     assert _ngram_coherence(None, [], 'cpu') == 0.0
     # 单 token 序列
     assert _ngram_coherence(None, [1], 'cpu') == 0.0
+
+
+# ─── B2: MLA + VRC 增量解码快速分支 ─────────────────────────────────────────
+
+def test_mla_vrc_cache_parity_nonzero_lambda():
+    """B2 回归：MLA + VRC 在 λ≠0 时 train/infer cache parity。
+
+    修复前：MLA 增量解码每步解压全部历史 token（v.size(2)=T_total>1），
+    落入 elif v.size(2)>1 分支做 prefix scan；但全量前向也做 prefix scan，
+    理论上应一致——然而 MLA present=(c_kv_full, None) 不缓存编码 V，
+    每步重算 prefix scan 致 O(N² log N)，且浮点舍入累积可能 >1e-4。
+
+    修复后：present=(c_kv_full, v_encoded)，增量步只编码新 token（O(1)），
+    与全量 prefix scan 数学等价（atol=1e-4）。
+    """
+    torch.manual_seed(42)
+    m = _small(use_mla_kv=True, kv_latent_dim=32,
+               value_relative_coding=True, alibi=True, num_layers=2)
+    m.eval()
+    # 设置非零 λ 以暴露递推路径差异
+    with torch.no_grad():
+        m.blocks[0].attn.value_rel_lambda.fill_(0.5)
+        m.blocks[1].attn.value_rel_lambda.fill_(0.5)
+    x = torch.randint(0, 200, (1, 8))
+    with torch.no_grad():
+        full = m(x, use_cache=False)
+        out, past = m(x[:, :1], past_key_values=None, use_cache=True)
+        for t in range(1, 8):
+            out, past = m(x[:, t:t + 1], past_key_values=past, use_cache=True)
+    diff = (full[:, -1, :] - out[:, -1, :]).abs().max().item()
+    assert diff < 1e-4, f"MLA+VRC λ=0.5 cache parity max_diff={diff:.2e} 超过 1e-4"
+
+
+def test_mla_vrc_present_stores_encoded_v():
+    """B2 回归：MLA+VRC 时 present[1] 应存编码后 V（非 None），供下一步快速分支复用。
+
+    修复前：MLA present=(c_kv_full, None)，VRC 快速分支条件 past_kv[1] is not None 永不命中。
+    修复后：MLA+VRC present=(c_kv_full, v_encoded)，快速分支命中。
+
+    past 结构：past[layer] = (attn_kv, ssm_hidden, ssm_conv)
+    attn_kv = (c_kv_full, v_encoded) for MLA+VRC
+    """
+    m = _small(use_mla_kv=True, kv_latent_dim=32,
+               value_relative_coding=True, alibi=True, num_layers=2)
+    m.eval()
+    x = torch.randint(0, 200, (1, 4))
+    with torch.no_grad():
+        # 第一步（prefill 2 token）
+        out, past = m(x[:, :2], past_key_values=None, use_cache=True)
+    # past[0] = (attn_kv, ssm_hidden, ssm_conv)；attn_kv = (c_kv_full, v_encoded)
+    attn_kv = past[0][0]
+    assert attn_kv[1] is not None, \
+        "MLA+VRC attn_kv[1] 应存编码 V（非 None），供快速分支复用"
+    # v_encoded 形状应为 (B, H, T, hd) = (1, 4, 2, 16)
+    assert attn_kv[1].shape == (1, 4, 2, 16), \
+        f"v_encoded 形状错误：{attn_kv[1].shape}，期望 (1, 4, 2, 16)"
+
+
+def test_mla_without_vrc_present_none():
+    """B2 兼容性：MLA 无 VRC 时 attn_kv[1] 仍为 None（向后兼容，省内存）。"""
+    m = _small(use_mla_kv=True, kv_latent_dim=32, alibi=True, num_layers=2)
+    m.eval()
+    x = torch.randint(0, 200, (1, 4))
+    with torch.no_grad():
+        out, past = m(x[:, :2], past_key_values=None, use_cache=True)
+    attn_kv = past[0][0]
+    assert attn_kv[1] is None, \
+        "MLA 无 VRC 时 attn_kv[1] 应为 None（向后兼容），实际非 None"
+
+
+def test_mla_vrc_fast_path_matches_prefix_scan():
+    """B2 数值等价：MLA+VRC 增量快速分支（O(1) per step）与全量 prefix scan 数值一致。
+
+    构造 8 token 序列，分别用：
+    - 全量前向（prefix scan over T=8）
+    - 增量解码（快速分支：第 1 步 prefix scan T=1，第 2..8 步 O(1) 快速分支）
+    比较末位 logits。
+    """
+    torch.manual_seed(123)
+    m = _small(use_mla_kv=True, kv_latent_dim=32,
+               value_relative_coding=True, alibi=True, num_layers=1)
+    m.eval()
+    with torch.no_grad():
+        m.blocks[0].attn.value_rel_lambda.fill_(0.3)
+    x = torch.randint(0, 200, (1, 8))
+    with torch.no_grad():
+        full = m(x, use_cache=False)
+        out, past = m(x[:, :1], past_key_values=None, use_cache=True)
+        for t in range(1, 8):
+            out, past = m(x[:, t:t + 1], past_key_values=past, use_cache=True)
+    diff = (full[:, -1, :] - out[:, -1, :]).abs().max().item()
+    assert diff < 1e-4, \
+        f"MLA+VRC 快速分支 vs prefix scan max_diff={diff:.2e} 超过 1e-4"
+
+
+# ─── 批次3-6: 新特性组合测试（R21-R25 交互验证）─────────────────────────────
+
+def test_r21_r25_all_features_forward():
+    """批次3-6: R21-R25 全特性组合 forward 不崩溃 + 输出有限。
+
+    验证以下特性同时开启时无冲突：
+    - R21: head_temp / value_relative_coding / rwkv7
+    - R22: intra_hybrid_rope
+    - R23: gpas
+    - R25: alibi_learnable
+    - R17: use_mla_kv（与 VRC 交互经 B2 修复）
+    - R15: output_gate / zero_centered_norm（经 ModelConfig）
+    """
+    m = _small(
+        num_layers=3,
+        mixer='gated_delta',
+        alibi=True, alibi_learnable=True,
+        head_temp=True, value_relative_coding=True,
+        rwkv7=True, gated_delta_channel_wise=True,
+        intra_hybrid_rope=True,
+        gpas=True, zero_centered_norm=True,
+        output_gate=True,
+        use_mla_kv=True, kv_latent_dim=32,
+        dim_wise_rope=True, rope_dim_fraction=0.5,
+    )
+    m.eval()
+    x = torch.randint(0, 200, (2, 8))
+    with torch.no_grad():
+        out = m(x)
+    assert out.shape == (2, 8, 200), f"输出形状错误: {out.shape}"
+    assert torch.isfinite(out).all(), "全特性组合输出含 nan/inf"
+
+
+def test_alibi_learnable_with_shared_alibi_and_pe_gate():
+    """批次3-6: alibi_learnable + shared_alibi + pe_gate 三特性组合。
+
+    验证位置编码三特性正交兼容：
+    - alibi_learnable: 斜率可学（Parameter）
+    - shared_alibi: 所有层共享同一 Parameter 对象
+    - pe_gate: per-head 位置信号强度门控
+    """
+    m = _small(
+        num_layers=3,
+        alibi=True, alibi_learnable=True,
+        shared_alibi=True, pe_gate=True,
+    )
+    m.eval()
+    # shared_alibi: 所有层 attn.alibi_slopes 应是同一对象
+    slopes0 = m.blocks[0].attn.alibi_slopes
+    slopes1 = m.blocks[1].attn.alibi_slopes
+    assert slopes0 is slopes1, "shared_alibi 时 alibi_slopes 应共享同一 Parameter 对象"
+    # alibi_learnable: 应是 Parameter（requires_grad=True）
+    assert isinstance(slopes0, torch.nn.Parameter), "alibi_learnable 时 alibi_slopes 应为 Parameter"
+    # pe_gate: log_pe_gate 应存在
+    assert hasattr(m.blocks[0].attn, 'log_pe_gate'), "pe_gate 时 log_pe_gate 应存在"
+    # forward 不崩溃
+    x = torch.randint(0, 200, (1, 6))
+    with torch.no_grad():
+        out = m(x)
+    assert out.shape == (1, 6, 200)
+    assert torch.isfinite(out).all()
+
+
+def test_mla_vrc_output_gate_combo():
+    """批次3-6: MLA + VRC + output_gate 三特性组合 + cache parity。
+
+    这三个特性都修改 attend 路径，验证组合后 train/infer 一致。
+    """
+    torch.manual_seed(77)
+    m = _small(
+        num_layers=2,
+        use_mla_kv=True, kv_latent_dim=32,
+        value_relative_coding=True, alibi=True,
+        output_gate=True,
+    )
+    m.eval()
+    with torch.no_grad():
+        m.blocks[0].attn.value_rel_lambda.fill_(0.4)
+        m.blocks[1].attn.value_rel_lambda.fill_(0.4)
+    x = torch.randint(0, 200, (1, 8))
+    with torch.no_grad():
+        full = m(x, use_cache=False)
+        out, past = m(x[:, :1], past_key_values=None, use_cache=True)
+        for t in range(1, 8):
+            out, past = m(x[:, t:t + 1], past_key_values=past, use_cache=True)
+    diff = (full[:, -1, :] - out[:, -1, :]).abs().max().item()
+    assert diff < 1e-4, f"MLA+VRC+output_gate cache parity diff={diff:.2e}"

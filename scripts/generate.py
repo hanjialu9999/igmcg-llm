@@ -240,7 +240,10 @@ def _generate_candidates_batch(model, ids, temps, max_length, top_k, rep_penalty
 
 
 def _fluency_batch(model, seqs, device, pad_id):
-    """批量计算每条候选序列的平均 token 对数概率（流畅度）。"""
+    """批量计算每条候选序列的平均 token 对数概率（流畅度）。
+
+    性能（批次3-3）：原逐序列 .item() 产生 N 次 DML→CPU 同步税（~200μs/次），
+    改用 torch.stack + .tolist() 单次同步（N=4 候选时省 3 次同步 ~600μs）。"""
     N = len(seqs)
     if N == 0:
         return []
@@ -249,13 +252,13 @@ def _fluency_batch(model, seqs, device, pad_id):
     for n, s in enumerate(seqs):
         if s:
             batch[n, :len(s)] = torch.tensor(s, dtype=torch.long, device=device)
-    out = []
+    means = []
     with torch.no_grad():
         with AMP_CTX:
             logits = model.forward(batch)
         for n, s in enumerate(seqs):
             if len(s) < 2:
-                out.append(0.0)
+                means.append(torch.tensor(0.0, device=device))
                 continue
             # 注意：融合开启时 forward 返回 fused = log_softmax(z)+prior（prior 在 log_softmax 之后
             # 相加，故并非已归一化的对数概率，而是被逐行常数偏移的"对数概率空间"量）。此处必须再做一次
@@ -263,8 +266,9 @@ def _fluency_batch(model, seqs, device, pad_id):
             # 删除会令流畅度被逐行常数偏移、候选排序失真（已证伪"双重归一化"假设）。
             lp = F.log_softmax(logits[n, :len(s) - 1].float(), dim=-1)
             tgt = torch.tensor(s[1:], dtype=torch.long, device=device).unsqueeze(1)
-            out.append(lp.gather(1, tgt).mean().item())
-    return out
+            means.append(lp.gather(1, tgt).mean())
+    # 单次同步：stack 所有标量均值，一次 .tolist() 取回全部
+    return torch.stack(means).tolist()
 
 
 def _ngram_coherence(ngram_fn, ids, device):

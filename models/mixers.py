@@ -335,8 +335,11 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         # Parameter 时梯度通过 .view() (非 in-place) 正确回流到斜率本身。
         bias = -self.alibi_slopes.view(1, self.num_heads, 1, 1) * dist.unsqueeze(0).unsqueeze(0)
         if mem_cols > 0:
-            bias = bias.clone()
-            bias[..., :mem_cols] = 0
+            # 批次3-2 优化：原 bias.clone()+in-place 赋值（DML scatter 风险 + 额外分配），
+            # 改用乘法掩码（autograd 安全、DML 原生、零额外分配 beyond 1D mask）。
+            # mask=[0,...,0,1,...,1]（前 mem_cols 列为 0，其余为 1），沿最后一维广播。
+            mask = (torch.arange(bias.size(-1), device=bias.device) >= mem_cols).to(bias.dtype)
+            bias = bias * mask
         if self.pe_gate_enabled:
             # per-head 位置编码强度门控：1.0+tanh(log_pe_gate)，init 1.0（不变）
             # log_pe_gate 是 Parameter 已在设备上，无需 .to(bias.device)
@@ -448,12 +451,16 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         # 所有掩码/缓存构建都用它，避免 q.device 被剥索引导致 _bias_cache 每步重建
         dev = self.qkv.weight.device
         # 第十七轮 MLA：还原 K/V 并应用 RoPE（在 memory 注入前，因 inject_memory 期望完整 K/V）
+        _mla_vrc_cache: Optional[torch.Tensor] = None  # B2: MLA+VRC 缓存编码 V
         if self.mla_kv_enabled:
             # c_kv: (B, T_current, kv_latent_dim)
             if use_cache and past_kv is not None:
                 # 增量解码：拼接 past 潜向量 + 当前潜向量
                 c_kv_past = past_kv[0]  # (B, T_past, kv_latent_dim)
                 c_kv_full = torch.cat([c_kv_past, c_kv], dim=1)  # (B, T_total, kv_latent_dim)
+                # B2: 保留缓存编码 V 供 VRC 快速分支复用（MLA+VRC 时 present[1] 存编码 V，
+                # 否则为 None）。须在 past_kv=None 之前取出，因 MLA 已处理拼接。
+                _mla_vrc_cache = past_kv[1]
             else:
                 # 全量路径：直接用当前潜向量
                 c_kv_full = c_kv
@@ -476,7 +483,20 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         # init λ=0 → tanh=0 → v 不变（向后兼容）；灵感：ViPE value-side relative coding
         if self.value_relative_coding_enabled:
             _lam = torch.tanh(self.value_rel_lambda).view(1, 1, 1, 1)
-            if v.size(2) == 1 and use_cache and past_kv is not None and past_kv[1] is not None:
+            if _mla_vrc_cache is not None:
+                # B2 修复：MLA+VRC 增量解码快速分支。
+                # 问题：MLA 每步解压全部历史 token（v.size(2)=T_total>1），原落入 elif v.size(2)>1
+                # 分支做 prefix scan → O(T log T) 每步、O(N² log N) 总体（N=已解码 token 数）。
+                # 修复：present[1] 缓存编码后 V，增量步只编码新 token：v_new_enc=v_new+λ·cached_last，
+                # 拼接缓存编码 V → O(1) 每步。数学等价：v_encoded[t]=v[t]+λ·v_encoded[t-1]，
+                # 增量与全量 prefix scan 结果一致（cache parity 测试 atol=1e-4 已验证）。
+                # 内存 tradeoff：MLA+VRC 时 present[1] 存完整编码 V (B,H,T,hd)=(B,T,dim)，
+                # K 仍走潜空间压缩（MLA 内存优势保留在 K 侧），V 不压缩（VRC 递推需历史编码 V）。
+                cached_v_enc = _mla_vrc_cache  # (B, H, T_past, hd)
+                v_new = v[:, :, -1:, :]    # (B, H, 1, hd) 当前 token 的解压 V
+                v_new_enc = v_new + _lam * cached_v_enc[:, :, -1:, :]
+                v = torch.cat([cached_v_enc, v_new_enc], dim=2)  # (B, H, T_total, hd)
+            elif v.size(2) == 1 and use_cache and past_kv is not None and past_kv[1] is not None:
                 v = v + _lam * past_kv[1][:, :, -1:, :]
             elif v.size(2) > 1:
                 # 递推滤波：v_encoded[t] = v[t] + λ * v_encoded[t-1]
@@ -525,7 +545,12 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
             #   用 (c_kv_full, None) 双元素保持与 (k, v) 格式一致，hybrid 块合并 present[0]/present[1] 时
             #   MLA 路径 past_kv[0]=c_kv_full, past_kv[1]=None（attend 内部检测 mla_kv_enabled 用 [0]）。
             #   修复 bug：原存 (c_kv, None) 只含当前 token，导致下一步 past 只有 1 token 而非全部历史。
-            present = (c_kv_full, None) if self.mla_kv_enabled else (k, v)
+            # B2 修复：MLA+VRC 时 present[1] 存编码后 V（替代 None），供下一步快速分支复用，
+            #   避免 O(T log T) prefix scan 重算。MLA 无 VRC 时仍为 None（原行为，省内存）。
+            if self.mla_kv_enabled:
+                present = (c_kv_full, v) if self.value_relative_coding_enabled else (c_kv_full, None)
+            else:
+                present = (k, v)
             Tkv = k.size(2)
             # 与全量路径共用基础因果/窗口掩码（额外1），保证 memory+window>0 时
             # 训练/推理一致性（否则推理期记忆按位置被部分遮蔽、静默质量退化）。
