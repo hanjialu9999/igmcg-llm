@@ -1128,8 +1128,11 @@ class DifferentialAttention(nn.Module, EnhancementsMixin):
             self.log_temp = nn.Parameter(torch.zeros(1))
         # 可学习差分权重 λ（初始化为 0.5，介于完全差分和完全平均之间）
         self.diff_lambda = nn.Parameter(torch.tensor(0.5))
-        # 因果掩码缓冲区
-        self.register_buffer('_causal_mask', torch.triu(torch.ones(1, 1, max_seq_length, max_seq_length, dtype=torch.bool), diagonal=1))
+        # 因果掩码缓冲区（persistent=False：不进 state_dict，避免 train/infer
+        # max_seq_length 不一致时 load_state_dict 报 shape mismatch）
+        self.register_buffer('_causal_mask', torch.triu(torch.ones(
+            1, 1, max_seq_length, max_seq_length, dtype=torch.bool), diagonal=1),
+            persistent=False)
         self._cached_T = None
         # 增强调度运行时开关（与 SlidingWindowCausalSelfAttention 一致）
         self._rt = {"qk_norm": True, "attn_temp": True}
@@ -1156,8 +1159,11 @@ class DifferentialAttention(nn.Module, EnhancementsMixin):
             scale = torch.exp(-0.5 * self.log_temp)
             q1, q2 = q1 * scale, q2 * scale
             k1, k2 = k1 * scale, k2 * scale
-        # 因果掩码
-        causal = self._causal_mask[:, :, :T, :T]  # (1, 1, T, T)
+        # 因果掩码（T > max_seq_length 时动态扩展，避免切片静默缩小）
+        if T > self._causal_mask.size(-1):
+            causal = torch.triu(torch.ones(1, 1, T, T, dtype=torch.bool, device=x.device), diagonal=1)
+        else:
+            causal = self._causal_mask[:, :, :T, :T]  # (1, 1, T, T)
         if use_cache and past_kv is not None:
             # past_kv 由 TransformerBlock 传入，结构为 attn_kv=(k1,k2,v) 或完整元组
             # cache 统一 (B,H,T,D) 布局（与其他 mixer 一致，BlockState.start_pos 取 size(2)）

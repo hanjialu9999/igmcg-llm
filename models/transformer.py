@@ -1392,7 +1392,12 @@ class TransformerModel(nn.Module):
         ngram_vec = ngram_vec.clamp(-30.0, 0.0)
         z = self.output_head(x)
         # 爆炸防护 2：温度 clamp 到 [0.01, 10]——过小 z/_t 爆炸到 ±inf，过大退化为均匀。
-        _t = torch.as_tensor(max(0.01, min(10.0, float(temperature))), dtype=z.dtype, device=z.device).view(-1, 1, 1)
+        # 支持标量与 (N,) 张量温度（IGMCG 批量候选路径传 (N,) 张量）。
+        if isinstance(temperature, torch.Tensor) and temperature.numel() > 1:
+            _t = temperature.clamp(0.01, 10.0).view(-1, 1, 1).to(dtype=z.dtype, device=z.device)
+        else:
+            _t = torch.as_tensor(max(0.01, min(10.0, float(temperature))),
+                                 dtype=z.dtype, device=z.device).view(-1, 1, 1)
         logp = F.log_softmax(z / _t, dim=-1)
         g_strength = torch.sigmoid(self.ngram_gate(x))
         # 爆炸防护 3：ngram_gate_scale clamp 到 [0, 10]——用户可经 set_ngram_gate_scale

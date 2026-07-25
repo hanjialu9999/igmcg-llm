@@ -269,15 +269,18 @@ def _fluency_batch(model, seqs, device, pad_id):
 
 def _ngram_coherence(ngram_fn, ids, device):
     """平均 n-gram 模型对序列的预测 log-prob：越高=相邻 token 越相连(越连贯)，
-    越低=越碎片化。无 ngram_fn 时返回 0（不参与评分）。这是抑制"碎片化"的关键信号。"""
+    越低=越碎片化。无 ngram_fn 时返回 0（不参与评分）。这是抑制"碎片化"的关键信号。
+
+    性能：批量化收集每位置的标量 log-prob，最后仅一次 .item() 同步
+    （DML 上每次 .item() 同步税 ~100-200μs，原逐 token .item() 在 60 token
+    序列上产生 60 次同步；批量化后仅 1 次）。数值与逐 token 累加完全等价。"""
     if ngram_fn is None or len(ids) < 2:
         return 0.0
-    tot, n = 0.0, 0
+    lps = []
     for i in range(1, len(ids)):
-        lp = ngram_fn(ids[:i], device)
-        tot += lp[ids[i]].item()
-        n += 1
-    return tot / max(1, n)
+        lp = ngram_fn(ids[:i], device)  # (V,)
+        lps.append(lp[ids[i]])  # 标量张量，暂不同步
+    return torch.stack(lps).mean().item()
 
 
 def generate_igmcg(model, vocab, prompt, intuition=None, num_candidates=4,

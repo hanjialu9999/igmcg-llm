@@ -169,7 +169,15 @@ def test_lerp_replacement_various_weights():
 
 
 def test_adamw_step_with_patched_lerp():
-    """验证 monkey-patch lerp_ 后 AdamW 仍能正常更新参数。"""
+    """验证 monkey-patch lerp_ 后 AdamW 仍能正常更新参数。
+
+    NOTE: 此测为历史 no-op 测试——仅 patch ``torch.Tensor.lerp_``，但 AdamW
+    在参数足够多时走 ``torch._foreach_lerp_``（批量版），单张量 patch 不一定
+    生效，故此测在 CPU 上无论 patch 是否被调用都通过（false-positive）。
+    正确覆盖见 ``tests/test_round25_followup.py::
+    test_foreach_lerp_patch_actually_intercepts_adamw``（用标志位证明
+    ``_foreach_lerp_`` 被 AdamW 实际调用）。保留此测用于历史追溯，但请勿
+    据此判断 DML lerp_ 修复已被验证。"""
     # 创建简单模型
     model = torch.nn.Linear(4, 2)
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
