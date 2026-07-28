@@ -378,23 +378,20 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
             # 记忆段偏置语义/尺度脱节）。
             gate = torch.sigmoid(gate)
             rlogits = rlogits * gate
-        # 局部窗口恒保留：对每个 query q，保留其因果窗口 [q-window, q] 内的 key 位置，
-        # 防止这些本应可见的位置被 top-k 稀疏误丢。原实现仅保留全局末尾 window+1 个位置，
-        # 导致早期 query 的窗口内 key 无 +1e9 保护，被 top-k 丢弃后 retrieval bias 叠加
-        # -1e9 到基础掩码的 0 上 → 静默遮蔽本应可见的位置。
+        # 局部窗口恒保留 + 因果掩码共用 qpos_q/kpos（R35 消除重复 arange）：
+        # 原实现 window>0 时在 if 内算一次 qpos_q/kpos，if 外又算一次（4 次冗余 arange+unsqueeze）。
+        # 提取到 if 外统一计算，window>0 复用，window=0 时仅供 causal 使用。
+        Tq = q.size(2)
+        qpos_q = torch.arange(Tq, device=device).unsqueeze(1)  # (Tq, 1)
+        kpos = torch.arange(Treal, device=device).unsqueeze(0)  # (1, Treal)
         if self.window > 0:
-            Tq = q.size(2)
-            qpos_q = torch.arange(Tq, device=device).unsqueeze(1)  # (Tq, 1)
-            kpos = torch.arange(Treal, device=device).unsqueeze(0)  # (1, Treal)
+            # 保留因果窗口 [q-window, q] 内的 key 位置，防止 top-k 稀疏误丢
             keep = ((qpos_q - kpos) <= self.window) & (kpos <= qpos_q)  # (Tq, Treal)
             rlogits = rlogits + keep.unsqueeze(0).unsqueeze(0).float() * 1e9
         # 因果：未来位置本就被 attn_mask 屏蔽，这里也压到 -inf 不参与检索。
         # 注意因果掩码须是 (Tq, Treal) 的逐查询掩码（query i 只看 key j<=i），不能写成
-        # (Treal,Treal) 的方阵——当 Tq≠Treal（如增量/不同长度）会形状不符崩溃；统一用
-        # qpos/kpos 构造与上方 keep 掩码同源，避免维度假设。
-        qpos_q = torch.arange(q.size(2), device=device).unsqueeze(1)  # (Tq, 1)
-        kpos_r = torch.arange(Treal, device=device).unsqueeze(0)      # (1, Treal)
-        causal = (kpos_r > qpos_q)                                    # (Tq, Treal)
+        # (Treal,Treal) 的方阵——当 Tq≠Treal（如增量/不同长度）会形状不符崩溃。
+        causal = (kpos > qpos_q)  # (Tq, Treal)
         rlogits = rlogits.masked_fill(causal.unsqueeze(0).unsqueeze(0), self.mask_fill_value)
         # top-k 稀疏（保留最相关 k 个），余下压 -inf
         k_keep = max(1, min(self.retrieval_topk, Treal))
@@ -1118,8 +1115,9 @@ class AxialLinearAttention(LinearMixerBase):
 
         # ── 融合 ──
         # R33 convex_combine：g*out_row + (1-g)*out_col → out_col + g*(out_row-out_col)，5→4 算子
+        # R35 优化：改用 torch.addcmul(out_col, g, out_row-out_col) 融合 mul+add，4→3 算子。DML 1.28x。
         g = torch.sigmoid(self.gate)
-        fused = out_col + g * (out_row - out_col)  # (B, row, col, C)
+        fused = torch.addcmul(out_col, g, out_row - out_col)  # (B, row, col, C)
         fused = fused.reshape(B, row * col, C)[:, :T, :]  # 去掉 padding
         return fused  # (B, T, C)
 

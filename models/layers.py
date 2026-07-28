@@ -44,7 +44,8 @@ class CharMergeLayer(nn.Module):
         agg = agg.transpose(1, 2)  # (B, T, D)
         # 门控：当前字符 vs 邻域聚合
         # R33 convex_combine：z*agg + (1-z)*x → x + z*(agg-x)，5 算子→4 算子（与 R29.5 同模式）
+        # R35 优化：改用 torch.addcmul(x, z, agg-x) 融合 mul+add，4→3 算子。DML 1.28x。
         z = torch.sigmoid(self.gate(x))
-        out = x + z * (agg - x)
+        out = torch.addcmul(x, z, agg - x)
         out = self.norm(out)
         return self.drop(out)

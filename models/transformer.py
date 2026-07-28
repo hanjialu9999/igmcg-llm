@@ -320,9 +320,11 @@ class TransformerBlock(nn.Module):
             if self.block_type != 'hybrid' and hasattr(self, 'highway_gates'):
                 # 合并路径（R32）：单 GEMM 输出 2 维，chunk 拆分
                 # 数学等价：cat([sub1_highway(x), ffn_highway(x)], dim=-1) == highway_gates(x)
-                gates = self.highway_gates(x)  # (B, T, 2)
-                gate1 = torch.sigmoid(gates[..., 0:1])  # (B, T, 1)
-                gate2 = torch.sigmoid(gates[..., 1:2])  # (B, T, 1)
+                # R35 优化：sigmoid 逐元素，先 sigmoid 整体再切片 == 先切片再 sigmoid，
+                # 省 1 次 sigmoid 算子（DML ~50μs dispatch tax）
+                gates = torch.sigmoid(self.highway_gates(x))  # (B, T, 2)
+                gate1 = gates[..., 0:1]  # (B, T, 1)
+                gate2 = gates[..., 1:2]  # (B, T, 1)
             else:
                 # hybrid 块只有 ffn_highway（第一子层用 hybrid_attn_gate/hybrid_ssm_gate）
                 gate1 = None
