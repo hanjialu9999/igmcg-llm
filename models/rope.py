@@ -119,7 +119,8 @@ class RotaryEmbedding(nn.Module):
         # 掩码：高频维度 mask≈1（用外推），低频维度 mask≈0（用插值）
         mask = 1.0 - _yarn_linear_ramp_mask(low, high, dim // 2)
         # R33 convex_combine：interp*(1-mask) + extrap*mask → interp + mask*(extrap-interp)，5→4 算子
-        inv_freq = inv_freq_interpolation + mask * (inv_freq_extrapolation - inv_freq_interpolation)
+        # R35 续：改用 torch.lerp fused kernel，4→1 算子。
+        inv_freq = torch.lerp(inv_freq_interpolation, inv_freq_extrapolation, mask)
         return inv_freq
 
     def _get_cos_sin(self, start_pos: int, seq_len: int, device: torch.device, dtype: torch.dtype, max_len: int = 2048) -> Tuple[torch.Tensor, torch.Tensor]:

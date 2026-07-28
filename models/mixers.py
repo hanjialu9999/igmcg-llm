@@ -955,14 +955,17 @@ class GatedDeltaNet(LinearMixerBase):
             # S·k_t：当前 key 与旧状态的关联
             Sk = torch.einsum('bhd,bhde->bhe', kf_t, S)  # (B,H,D)
             # delta 更新：S = α·S + β·(v - S·k)⊗k
-            S = alpha_S * S + beta_S * (v_t - Sk).unsqueeze(-1) * kf_t.unsqueeze(-2)
+            # R35 续：addcmul 融合 mul+add，5→4 算子/迭代（alpha_S*S 仍需独立 mul）。
+            S = torch.addcmul(alpha_S * S, beta_S, (v_t - Sk).unsqueeze(-1) * kf_t.unsqueeze(-2))
             if rwkv7:
                 # rank-1 扰动：S += z_t·b_t⊗(b_t^T·S)
                 zt = z_gate[:, :, 0]  # (B,H)
                 bt = b_dir[:, :, 0, :]  # (B,H,D)
                 bTS = torch.einsum('bhd,bhde->bhe', bt, S)  # (B,H,D)
-                S = S + zt.unsqueeze(-1).unsqueeze(-1) * torch.einsum('bhd,bhe->bhde', bt, bTS)
-            z = alpha_t * z + beta_t * kf_t
+                # R35 续：addcmul 融合 mul+add，3→2 算子/迭代。
+                S = torch.addcmul(S, zt.unsqueeze(-1).unsqueeze(-1), torch.einsum('bhd,bhe->bhde', bt, bTS))
+            # R35 续：addcmul 融合 mul+add，3→2 算子/迭代。
+            z = torch.addcmul(alpha_t * z, beta_t, kf_t)
             num = torch.einsum('bhd,bhde->bhe', qf[:, :, 0, :], S)  # (B,H,D)
             den = torch.einsum('bhd,bhd->bh', qf[:, :, 0, :], z).unsqueeze(-1).clamp_min(1e-6)
             out = (num / den).reshape(B, 1, H * D)
@@ -982,14 +985,18 @@ class GatedDeltaNet(LinearMixerBase):
             alpha_S = alpha_t.unsqueeze(-1)  # (B,H,1,1) 与 S (B,H,D,D) 广播
             beta_S = beta_t.unsqueeze(-1)
             Sk = torch.einsum('bhd,bhde->bhe', kf_t, S)
-            S = alpha_S * S + beta_S * (v_t - Sk).unsqueeze(-1) * kf_t.unsqueeze(-2)
+            # delta 更新：S = α·S + β·(v - S·k)⊗k
+            # R35 续：addcmul 融合 mul+add，5→4 算子/迭代（alpha_S*S 仍需独立 mul）。
+            S = torch.addcmul(alpha_S * S, beta_S, (v_t - Sk).unsqueeze(-1) * kf_t.unsqueeze(-2))
             if rwkv7:
                 # rank-1 扰动：S += z_t·b_t⊗(b_t^T·S)
                 zt = z_gate[:, :, t]  # (B,H)
                 bt = b_dir[:, :, t, :]  # (B,H,D)
                 bTS = torch.einsum('bhd,bhde->bhe', bt, S)  # (B,H,D)
-                S = S + zt.unsqueeze(-1).unsqueeze(-1) * torch.einsum('bhd,bhe->bhde', bt, bTS)
-            z = alpha_t * z + beta_t * kf_t
+                # R35 续：addcmul 融合 mul+add，3→2 算子/迭代。
+                S = torch.addcmul(S, zt.unsqueeze(-1).unsqueeze(-1), torch.einsum('bhd,bhe->bhde', bt, bTS))
+            # R35 续：addcmul 融合 mul+add，3→2 算子/迭代。
+            z = torch.addcmul(alpha_t * z, beta_t, kf_t)
             num = torch.einsum('bhd,bhde->bhe', qf[:, :, t, :], S)
             den = torch.einsum('bhd,bhd->bh', qf[:, :, t, :], z).unsqueeze(-1).clamp_min(1e-6)
             outs.append(num / den)
@@ -1116,8 +1123,9 @@ class AxialLinearAttention(LinearMixerBase):
         # ── 融合 ──
         # R33 convex_combine：g*out_row + (1-g)*out_col → out_col + g*(out_row-out_col)，5→4 算子
         # R35 优化：改用 torch.addcmul(out_col, g, out_row-out_col) 融合 mul+add，4→3 算子。DML 1.28x。
+        # R35 续：改用 torch.lerp(out_col, out_row, g) fused kernel，3→1 算子。DML 更优。
         g = torch.sigmoid(self.gate)
-        fused = torch.addcmul(out_col, g, out_row - out_col)  # (B, row, col, C)
+        fused = torch.lerp(out_col, out_row, g)  # (B, row, col, C)
         fused = fused.reshape(B, row * col, C)[:, :T, :]  # 去掉 padding
         return fused  # (B, T, C)
 
@@ -1319,8 +1327,10 @@ class DifferentialAttention(nn.Module, EnhancementsMixin):
         attn1 = torch.softmax(scores1, dim=-1)
         attn2 = torch.softmax(scores2, dim=-1)
         # 差分注意力
+        # R35 续：addcmul(value=-1) 融合 mul+sub，attn1 - lam*attn2 2 算子→1 算子。
+        # 数学等价：addcmul(a, b, c, value=-1) = a + (-1)*b*c = a - b*c。
         lam = torch.sigmoid(self.diff_lambda)
-        attn_diff = attn1 - lam * attn2  # (B, H, T, Tkv)
+        attn_diff = torch.addcmul(attn1, lam, attn2, value=-1)  # (B, H, T, Tkv)
         out = torch.matmul(attn_diff, vt)  # (B, H, T, D)
         out = out.transpose(1, 2).reshape(B, T, C)
         out = self.proj(out)

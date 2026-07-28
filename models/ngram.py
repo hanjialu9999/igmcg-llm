@@ -159,8 +159,10 @@ class NGramModel:
                 # 性能优化（第三十轮）：原式 `w*p + (1-w)*uni[idx]` 6 算子，改
                 # `uni[idx] + w*(p-uni[idx])` 5 算子（结合律，与 R29.5 convex_combine
                 # 同模式），省 1 算子/循环。数学等价：w*p+(1-w)*u = u + w*(p-u)。
+                # 性能优化（第三十五轮续）：改用 torch.lerp（fused kernel，支持标量 weight），
+                # 5 算子→1 算子/循环。lerp(start, end, weight) = start + weight*(end-start)。
                 u_idx = uni[idx]
-                base[k - 1, idx] = u_idx + w * (p - u_idx)
+                base[k - 1, idx] = torch.lerp(u_idx, p, w)
         # 逐阶归一化后取 log（每阶独立归一，与逐阶 vec/vec.sum() 完全等价）
         base = torch.log(base / base.sum(dim=-1, keepdim=True) + 1e-10)  # (K-1, V)
         out = torch.empty(V, K, device=device)

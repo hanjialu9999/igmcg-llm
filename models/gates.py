@@ -94,9 +94,11 @@ def convex_combine_scalar(param: nn.Parameter, h1: torch.Tensor, h2: torch.Tenso
 
     性能优化（第三十五轮）：改用 torch.addcmul(h2, g, h1-h2) 融合 mul+add，
     3 算子→2 算子（sigmoid+sub+addcmul），省 1 算子/调用。DML 实测 1.28x 提速。
+    性能优化（第三十五轮续）：改用 torch.lerp(h2, h1, g) fused kernel，
+    2 算子→1 算子（sigmoid+lerp），省 1 算子/调用。lerp(start, end, w) = start + w*(end-start)。
     """
     g = torch.sigmoid(param)
-    return torch.addcmul(h2, g, h1 - h2)
+    return torch.lerp(h2, h1, g)
 
 
 def convex_combine_linear(linear: nn.Linear, x: torch.Tensor,
@@ -120,6 +122,7 @@ def apply_correction(param: nn.Parameter, h: torch.Tensor, lh: torch.Tensor) -> 
     用于: correction_gate
 
     性能优化（第三十五轮）：改用 torch.addcmul(h, cg, lh-h) 融合 mul+add，省 1 算子。DML 1.28x。
+    性能优化（第三十五轮续）：改用 torch.lerp(h, lh, cg) fused kernel，2→1 算子。DML 更优。
     """
     cg = torch.sigmoid(param)
-    return torch.addcmul(h, cg, lh - h)
+    return torch.lerp(h, lh, cg)
