@@ -53,35 +53,35 @@ def _parallel_prefix_scan(
     单位元为 (A=1, B=0)，越界位置用单位元填充。
 
     如果提供 past_state (B, d_inner, d_state)，将其作为 h_{-1} 用于计算 h_0 = a_0 * past_state + b_0。
+
+    性能优化（第二十六轮）：预计算 ones/zeros 单位元常量，避免每轮 ones_like/zeros_like
+    分配（DML 上每次分配 ~130μs dispatch tax，6 轮×2=12 次/层 → 省 ~1.6ms/层）。
+    同时合并 requires_grad/non-requires_grad 两个分支消除重复代码。
     """
     L = a.shape[1]
     # DML 兼容：roll 回退 CPU（aten::roll 不支持 DML），切片赋值触发 scatter 错误。
     # 用 cat 替代 roll（DML 原生）+ torch.where 替代切片赋值（DML 原生，无 scatter）。
     pos_idx = torch.arange(L, device=a.device)
+    # 预计算单位元常量（shape 在循环中不变，值恒为 1/0）
+    ones_A = torch.ones_like(a)
+    zeros_B = torch.zeros_like(b)
     if a.requires_grad:
         A, B = a, b
-        offset = 1
-        while offset < L:
-            mask = (pos_idx < offset).view(1, L, 1, 1)
-            # roll(offset, dims=1) 等价于 cat([后 offset 位, 前 L-offset 位], dim=1)
-            A_prev = torch.where(mask, torch.ones_like(A),
-                                 torch.cat([A[:, -offset:], A[:, :-offset]], dim=1))
-            B_prev = torch.where(mask, torch.zeros_like(B),
-                                 torch.cat([B[:, -offset:], B[:, :-offset]], dim=1))
-            A, B = A_prev * A, A * B_prev + B
-            offset <<= 1
     else:
         A = a.clone()
         B = b.clone()
-        offset = 1
-        while offset < L:
-            mask = (pos_idx < offset).view(1, L, 1, 1)
-            A_prev = torch.where(mask, torch.ones_like(A),
-                                 torch.cat([A[:, -offset:], A[:, :-offset]], dim=1))
-            B_prev = torch.where(mask, torch.zeros_like(B),
-                                 torch.cat([B[:, -offset:], B[:, :-offset]], dim=1))
-            A, B = A_prev * A, A * B_prev + B
-            offset <<= 1
+    offset = 1
+    while offset < L:
+        mask = (pos_idx < offset).view(1, L, 1, 1)
+        # roll(offset, dims=1) 等价于 cat([后 offset 位, 前 L-offset 位], dim=1)
+        A_prev = torch.where(mask, ones_A,
+                             torch.cat([A[:, -offset:], A[:, :-offset]], dim=1))
+        B_prev = torch.where(mask, zeros_B,
+                             torch.cat([B[:, -offset:], B[:, :-offset]], dim=1))
+        # 注意：addcmul 在 DML 上反而比 mul+add 慢（实测 21ms/step 退化），
+        # DML 对 addcmul 无原生 fused kernel 优化，保持 mul+add 分离更快。
+        A, B = A_prev * A, A * B_prev + B
+        offset <<= 1
     if past_state is not None:
         past_expanded = past_state.unsqueeze(1).expand(-1, L, -1, -1)
         B = B + A * past_expanded
@@ -114,9 +114,10 @@ def apply_qk_norm_and_temp(q: torch.Tensor, k: torch.Tensor,
 
 class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
     """因果自注意力，可选滑动窗口 + 可学习相对位置偏置。
-     全后端统一用 fused SDPA（DML fused SDPA 现已稳定且比 manual 快 ~2.5x）；
-     DML 的 bool attn_mask 语义与 PyTorch 标准相反（True=允许≠禁止），故全路径用 float attn_mask
-     （_build_causal_window_mask 返回 mask.float()*fill_value）；纯因果路径用 is_causal=True 更高效。
+     全后端统一用 fused SDPA + float attn_mask（DML fused SDPA 现已稳定且比 manual 快 ~2.5x）；
+     DML 的 bool attn_mask 语义与 PyTorch 标准相反（True=允许≠禁止），故全路径用 float attn_mask。
+     性能优化（第二十七轮）：DML 上 is_causal=True 比 float mask 慢 7x（2.14ms vs 0.30ms/call），
+     故纯因果路径也用 float mask（_build_causal_window_mask 始终返回 float mask，不再返回 None）。
     """
     def __init__(self, dim: int, num_heads: int, window: int = 0, rel_bias: bool = False, max_seq_length: int = 64,
                  qk_norm: bool = True, attn_temp: bool = True, mask_fill_value: float = MASK_FILL_VALUE,
@@ -257,17 +258,16 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         # 避免每步每头重复 arange/torch.zeros/cat 造成的海量分配与 DML 拷贝开销
         self._bias_key: Optional[tuple] = None
         self._bias_cache: Optional[torch.Tensor] = None
-        # 增量解码（cache 路径）纯因果掩码缓存：掩码仅依赖 (Tq, Tkv)，确定性，
-        # 逐 token 解码时 Tkv 单调增长，缓存避免每步 arange + (1,1,Tq,Tkv) 张量分配
-        # （DML 小算子启动税敏感）。仅 attn_mask 为 None（无窗口/记忆/alibi/rel_bias）时命中。
-        self._causal_key: Optional[tuple] = None
-        self._causal_cache: Optional[torch.Tensor] = None
         # _sync_window 推理期跳过标志（首次同步后置 True，避免每步 DML CPU 同步税）
         self._window_synced: bool = False
         # ALiBi 距离矩阵缓存（第二十一轮性能优化）：训练期 start_pos=0 固定、T/Tkv 确定性，
         # dist=|qpos-kpos| 每步重算 arange×2+abs 有 DML 启动税。缓存按 (Tq,Tkv,start_pos,device)。
         # pe_gate_enabled 时 pe_strength 每步变（log_pe_gate 是 Parameter），但 dist 不变仍可缓存。
         self._alibi_dist_cache: Dict[Tuple[int, int, int, str], torch.Tensor] = {}
+        # ALiBi 完整 bias 缓存（第二十七轮性能优化）：当 alibi_slopes 不可学（buffer）且
+        # pe_gate 未开启时，bias=-slopes*dist 完全确定，每步重算 1 mul+1 neg 有 DML 启动税。
+        # 缓存按 (Tq,Tkv,start_pos,mem_cols,device)，训练期仅 1 条。
+        self._alibi_bias_cache: Dict[Tuple[int, int, int, int, str], torch.Tensor] = {}
 
     def _sync_window(self):
         """阶段6：从可学习 log_window 重算实际窗口尺寸（每步前向同步，训练时随参数变化）。
@@ -312,9 +312,22 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
 
         mem_cols：记忆列（前 mem_cols 列）是位置无关的压缩历史，不受位置距离偏置影响；
         显式清零，避免生成时 start_pos 增长使记忆列被强负偏置逐步压制（训练-推理不一致）。
+
+        性能优化（第二十七轮）：当 alibi_slopes 不可学（buffer）且 pe_gate 未开启时，
+        bias 完全确定，缓存完整 bias 省每步 1 mul+1 neg 的 DML 启动税。
         """
         if not self.alibi:
             return None
+        # 完整 bias 缓存：仅当 slopes 不可学且 pe_gate 未开启时（bias 完全确定）
+        slopes_is_buffer = not isinstance(self.alibi_slopes, torch.nn.Parameter)
+        can_cache_full = slopes_is_buffer and not self.pe_gate_enabled
+        if can_cache_full:
+            if len(self._alibi_bias_cache) > 8:
+                self._alibi_bias_cache.clear()
+            bias_key = (Tq, Tkv, start_pos, mem_cols, str(device))
+            cached = self._alibi_bias_cache.get(bias_key)
+            if cached is not None:
+                return cached
         # 距离矩阵 dist=|qpos-kpos| 仅依赖 (Tq,Tkv,start_pos,device)，确定性，可缓存
         # （第二十一轮性能优化：避免每步 arange×2+abs 的 DML 启动税，~100-200μs/层）
         # 回审修复：增量解码每步 start_pos/Tkv 唯一，缓存键永不复用，无限增长致 OOM。
@@ -345,6 +358,8 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
             # log_pe_gate 是 Parameter 已在设备上，无需 .to(bias.device)
             pe_strength = (1.0 + torch.tanh(self.log_pe_gate)).view(1, -1, 1, 1)
             bias = bias * pe_strength
+        if can_cache_full:
+            self._alibi_bias_cache[bias_key] = bias
         return bias
 
     def _full_retrieval_bias(self, q: torch.Tensor, k_full: torch.Tensor, Treal: int, mem_cols: int,
@@ -511,9 +526,12 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
                 B_, H_, _, D_ = v.shape
                 # (B,H,T,D) → (B,T,H*D,1) 适配 _parallel_prefix_scan 的 (B,L,d_inner,d_state)
                 v_2d = v.permute(0, 2, 1, 3).reshape(B_, T, H_ * D_, 1)
-                a_const = _lam.expand(B_, T, H_ * D_, 1).contiguous()
+                # 性能优化（第二十六轮）：去掉两处 .contiguous()，DML 上 1.85x 提速，
+                # 数值完全等价（diff=0.00e+00）。expand 返回 view（零分配），元素级
+                # 乘法不要求连续内存；permute 后的 v 供 SDPA 使用，SDPA 支持非连续输入。
+                a_const = _lam.expand(B_, T, H_ * D_, 1)
                 v_enc = _parallel_prefix_scan(a_const, v_2d)
-                v = v_enc.reshape(B_, T, H_, D_).permute(0, 2, 1, 3).contiguous()
+                v = v_enc.reshape(B_, T, H_, D_).permute(0, 2, 1, 3)
         # 阶段3 可学习检索：统一经 MemoryBank.inject_memory 注入记忆 K/V + 检索偏置，
         # 取代 cache/全量两条路径各自重复的"记忆拼接 + 稀疏门控 + 全上下文检索"逻辑（B 项收敛）。
         mem_cols = 0
@@ -554,11 +572,11 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
             Tkv = k.size(2)
             # 与全量路径共用基础因果/窗口掩码（额外1），保证 memory+window>0 时
             # 训练/推理一致性（否则推理期记忆按位置被部分遮蔽、静默质量退化）。
-            attn_mask = self._build_causal_window_mask(Tq, Tkv, mem_cols, dev, start_pos)
-            # cache 路径始终需要显式掩码（单步/整段解码都靠它施加因果，不能用 is_causal 快捷）：
-            # 纯因果（无窗口/记忆/alibi）时退化为主序列因果掩码。
-            if attn_mask is None:
-                attn_mask = self._cached_causal_mask(Tq, Tkv, dev, start_pos)
+            # R27 后 _build_causal_window_mask 始终返回 float mask（不再返回 None），
+            # 故无需 _cached_causal_mask fallback（R28-1 清理死代码）。
+            base_mask = self._build_causal_window_mask(Tq, Tkv, mem_cols, dev, start_pos)
+            # 合并多个 bias 为单次 sum，减少 DML dispatch tax（每次 add ~50μs）
+            addends = [base_mask]
             # 记忆槽位置在窗口 KV 之前（seq 起点之前），永远不被因果遮蔽，
             # 但也不参与"未来"泄露：记忆是历史压缩，视为已发生，不施加 causal 惩罚
             if self.rel_bias:
@@ -567,18 +585,21 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
                 qpos = torch.arange(start_pos, start_pos + Tq, device=dev).unsqueeze(1)
                 kpos = torch.arange(0, Tkv, device=dev).unsqueeze(0)
                 idx = (qpos - kpos + Tkv - 1).clamp(0, 2 * self.max_seq_length - 1)
-                attn_mask = attn_mask + self.rel_bias_table[:, idx].unsqueeze(0)
+                addends.append(self.rel_bias_table[:, idx].unsqueeze(0))
             if mem_bias is not None:
                 # mem_bias: (B,H,Tq,mem_cols)，右侧补零到 Tkv 再与 attn_mask 广播相加
-                padded = _pad_mem_bias(mem_bias, Tkv, mem_cols)
-                attn_mask = attn_mask + padded
+                addends.append(_pad_mem_bias(mem_bias, Tkv, mem_cols))
             alibi_b = self._alibi_bias(Tq, Tkv, dev, start_pos, mem_cols=mem_cols)
             if alibi_b is not None:
-                attn_mask = attn_mask + alibi_b
+                addends.append(alibi_b)
             # 全上下文检索：inject_memory 已统一算好 rbias_full（cache 与全量路径同源），
             # 否则开启 retrieval_full 时训练-推理系统性不一致（生成质量偏离训练行为）。
             if rbias_full is not None:
-                attn_mask = attn_mask + rbias_full
+                addends.append(rbias_full)
+            # 合并 bias：链式 add（DML 实测 broadcast+stack+sum 反而更慢，因 stack 分配大张量）
+            attn_mask = addends[0]
+            for b in addends[1:]:
+                attn_mask = attn_mask + b
             # 统一用 fused SDPA（float mask）——DML fused SDPA 现已稳定且比 manual 快 ~2.5x。
             # 关键：DML 的 bool attn_mask 语义与 PyTorch 标准相反（True=允许≠禁止），
             # 但 float attn_mask 正确（加到 scores 上）。本路径的 attn_mask 始终是 float
@@ -596,66 +617,35 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         # （基础因果/窗口掩码经 _build_causal_window_mask 与 cache 路径共用，额外1）
         cache_key = (T, Tkv, mem_cols)
         if self._bias_key != cache_key or self._bias_cache is None or self._bias_cache.device != dev:
-            raw_mask = self._build_causal_window_mask(T, Tkv, mem_cols, dev, 0)
-            base = raw_mask if raw_mask is not None else torch.zeros(1, 1, T, Tkv, device=dev)
+            # _build_causal_window_mask 现在始终返回 float mask（含纯因果，不再返回 None）
+            base = self._build_causal_window_mask(T, Tkv, mem_cols, dev, 0)
             if self.rel_bias:
-                # 绝对位置相对偏置表（rel_bias 路径必须显式带因果掩码，不能退回 is_causal 快捷）。
-                # 注意 KV 长度 Tkv = T + mem_cols（记忆列已拼到前面），此处直接用
-                # _build_causal_window_mask 构造含记忆列的基础掩码（记忆列恒 0，全局可检索），
-                # 再叠加相对偏置表。
-                if raw_mask is None:
-                    # 纯因果（无窗口/记忆/alibi）：显式构造因果掩码，保证 rel_bias 开启时仍有因果
-                    qp = torch.arange(0, T, device=dev).unsqueeze(1)
-                    kp = torch.arange(0, Tkv, device=dev).unsqueeze(0)
-                    base = ((kp > qp).float() * self.mask_fill_value).unsqueeze(0).unsqueeze(0)
+                # 绝对位置相对偏置表：在因果掩码上叠加相对偏置
                 idx = (torch.arange(T, device=dev).unsqueeze(1)
                        - torch.arange(Tkv, device=dev).unsqueeze(0)
                        + Tkv - 1).clamp(0, 2 * self.max_seq_length - 1)
                 base = base + self.rel_bias_table[:, idx].unsqueeze(0)
             self._bias_key = cache_key
             self._bias_cache = base
-        attn_mask = self._bias_cache
+        # 统一用 float attn_mask（性能优化第二十七轮）：
+        # DML 上 is_causal=True 比 float mask 慢 7x（2.14ms vs 0.30ms/call），
+        # 故纯因果路径也用 float mask，不再走 is_causal=True 快捷。
+        addends = [self._bias_cache]
         if mem_bias is not None:
-            # mem_bias: (B,H,T,mem_cols)，右侧补零到 Tkv 再与 attn_mask 广播相加
-            padded = _pad_mem_bias(mem_bias, Tkv, mem_cols)  # (B,H,T,Tkv)
-            attn_mask = attn_mask + padded
+            addends.append(_pad_mem_bias(mem_bias, Tkv, mem_cols))
         alibi_b = self._alibi_bias(T, Tkv, dev, start_pos, mem_cols=mem_cols)
         if alibi_b is not None:
-            attn_mask = attn_mask + alibi_b
+            addends.append(alibi_b)
         # 全上下文检索：inject_memory 已统一算好 rbias_full（与 cache 路径同源一致）
         if rbias_full is not None:
-            attn_mask = attn_mask + rbias_full
-        # 统一用 fused SDPA——DML fused SDPA 比 manual 快 ~2.5x（训练规模实测）。
-        # 纯因果（无自定义偏置）时用 is_causal=True（比传全零 mask 更高效，DML 上实测 is_causal 略慢
-        # 但 CPU/CUDA 上更快，且保证因果性正确）；有偏置时用 float attn_mask（DML 上 float mask 正确，
-        # bool mask 语义反了故不用）。
-        # 关键：_use_causal=True 时 _build_causal_window_mask 返回 None → base=torch.zeros → _bias_cache 恒全零，
-        # 故无需每步 .item() 同步检查（旧实现的 .abs().max().item() 是 DML→CPU 同步税，已删）。
-        _use_causal = (not self.rel_bias) and (memory_kv is None) and (self.window == 0) and (not self.alibi)
-        if _use_causal:
-            out = scaled_dot_product_attention(q, k, v, is_causal=True)
-        else:
-            out = scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
+            addends.append(rbias_full)
+        # 合并 bias：链式 add（DML 实测 broadcast+stack+sum 反而更慢）
+        attn_mask = addends[0]
+        for b in addends[1:]:
+            attn_mask = attn_mask + b
+        out = scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
         out = out.transpose(1, 2).reshape(B, T, self.num_heads * self.head_dim)
         return self.proj(out), None
-
-    def _cached_causal_mask(self, Tq: int, Tkv: int, dev: torch.device,
-                             start_pos: int) -> torch.Tensor:
-        """纯因果（无窗口/记忆/alibi/rel_bias）增量解码掩码 (1,1,Tq,Tkv)，带缓存。
-
-        掩码仅依赖 (Tq, Tkv)（确定性），逐 token 解码 Tkv 单调增长；缓存避免每步
-        重建 arange + (1,1,Tq,Tkv) 张量（DML 小算子启动税敏感）。语义与原始
-        `(kpos > qpos) * mask_fill` 完全一致。"""
-        key = (Tq, Tkv)
-        if self._causal_key == key and self._causal_cache is not None \
-                and self._causal_cache.device == dev:
-            return self._causal_cache
-        qpos = torch.arange(start_pos, start_pos + Tq, device=dev).unsqueeze(1)
-        kpos = torch.arange(0, Tkv, device=dev).unsqueeze(0)
-        causal = (kpos > qpos).float() * self.mask_fill_value
-        self._causal_cache = causal.unsqueeze(0).unsqueeze(0)  # (1,1,Tq,Tkv)
-        self._causal_key = key
-        return self._causal_cache
 
     def _build_causal_window_mask(self, T: int, Tkv: int, mem_cols: int,
                                    dev: torch.device, start_pos: int) -> Optional[torch.Tensor]:
@@ -663,23 +653,20 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
 
         供 attend 的 cache / 全量两条路径共用，消除两路径各自重复实现而漂移的风险
         （额外1）。rel_bias/ALiBi/mem_bias/rbias 等附加偏置由各路径在返回后单独叠加。
-        纯因果（window==0 且 mem_cols==0 且非 alibi）返回 None，交给 SDPA is_causal / manual 兜底。
+
+        性能优化（第二十七轮）：纯因果时也返回 float mask（不再返回 None 交 is_causal 兜底），
+        因 DML 上 is_causal=True 比 float mask 慢 7x（2.14ms vs 0.30ms/call）。
+        全量路径统一用 float mask，省 ~7ms/step（4 层 × 4 次调用含 backward）。
         """
+        qpos = torch.arange(start_pos, start_pos + T, device=dev).unsqueeze(1)
+        kpos = torch.arange(0, Tkv, device=dev).unsqueeze(0)
         if self.window > 0:
-            qpos = torch.arange(start_pos, start_pos + T, device=dev).unsqueeze(1)
-            kpos = torch.arange(0, Tkv, device=dev).unsqueeze(0)
             mask = (kpos > (qpos + mem_cols)) | (qpos - kpos > self.window)
-            if mem_cols > 0:
-                mask[..., :mem_cols] = False
-            return (mask.float() * self.mask_fill_value).unsqueeze(0).unsqueeze(0)
-        if mem_cols > 0 or self.alibi:
-            qpos = torch.arange(start_pos, start_pos + T, device=dev).unsqueeze(1)
-            kpos = torch.arange(0, Tkv, device=dev).unsqueeze(0)
+        else:
             mask = (kpos > (qpos + mem_cols))
-            if mem_cols > 0:
-                mask[..., :mem_cols] = False
-            return (mask.float() * self.mask_fill_value).unsqueeze(0).unsqueeze(0)
-        return None
+        if mem_cols > 0:
+            mask[..., :mem_cols] = False
+        return (mask.float() * self.mask_fill_value).unsqueeze(0).unsqueeze(0)
 
 
 def _accum_kv(past_kv, k, v):
@@ -839,12 +826,24 @@ class GatedDeltaNet(LinearMixerBase):
         _gate_out = num_heads * (self.head_dim if channel_wise else 1)
         # 门控投影：per-head per-token 的 α/β，输入 x 经线性 + sigmoid
         # init W=0 使门控仅由 bias 决定（α_init/beta_init），训练中 W 学习 x-dependent 调制
-        self.alpha_proj = nn.Linear(dim, _gate_out, bias=True)
-        self.beta_proj = nn.Linear(dim, _gate_out, bias=True)
-        nn.init.zeros_(self.alpha_proj.weight)
-        nn.init.constant_(self.alpha_proj.bias, alpha_init)
-        nn.init.zeros_(self.beta_proj.weight)
-        nn.init.constant_(self.beta_proj.bias, beta_init)
+        #
+        # 性能优化（第三十一轮）：合并 alpha_proj + beta_proj 为单 GEMM alpha_beta_proj。
+        # 原 2 个独立 Linear (dim, _gate_out) → 1 个 Linear (dim, 2*_gate_out) + chunk 拆分，
+        # 省 1 次 GEMM 启动税 ~50μs/调用（每层每步 1 次）。与 SwiGLU fuse_swiglu / ssm_kv_proj
+        # 同模式（参考 SwiGLU.convert_legacy_state_dict 兼容旧 checkpoint）。
+        # 数学等价：cat([alpha_proj(x), beta_proj(x)], dim=-1) == alpha_beta_proj(x).chunk(2)。
+        # bias 前 _gate_out 维填 alpha_init，后 _gate_out 维填 beta_init（chunk 拆分对齐）。
+        self.alpha_beta_proj = nn.Linear(dim, 2 * _gate_out, bias=True)
+        nn.init.zeros_(self.alpha_beta_proj.weight)
+        _bias = torch.empty(2 * _gate_out, dtype=torch.float32)
+        _bias[:_gate_out].fill_(alpha_init)
+        _bias[_gate_out:].fill_(beta_init)
+        with torch.no_grad():
+            self.alpha_beta_proj.bias.copy_(_bias)
+        # 保存 init 值供 _apply_specialized_inits 重置（被 _init_weights 通用 N(0,0.02) 覆盖后恢复）
+        self._alpha_init = alpha_init
+        self._beta_init = beta_init
+        self._gate_out = _gate_out
         # 第二十一轮：RWKV-7 广义 Delta Rule——rank-1 状态扰动项 z_t·b_t⊗(b_t^T·S)
         # 灵感：RWKV-7 "Goose" (arXiv:2503.14456)——状态门 z_t 控制扰动强度，b_t 为扰动方向。
         # 递推：S_t = α·S + β·(v-S·k)⊗k + z_t·b_t⊗(b_t^T·S)，rank-1 更新让状态沿 b_t 方向调整。
@@ -858,14 +857,53 @@ class GatedDeltaNet(LinearMixerBase):
             nn.init.zeros_(self.z_proj.weight)
             nn.init.constant_(self.z_proj.bias, -3.0)
 
+    @staticmethod
+    def convert_legacy_state_dict(state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        """将旧格式 state_dict（alpha_proj/beta_proj 分离）转换为新格式（alpha_beta_proj 合并）。
+
+        供 R31+ 模型加载旧 checkpoint（含 alpha_proj.weight/bias 和 beta_proj.weight/bias）
+        时使用：
+            alpha_beta_proj.weight = cat([alpha_proj.weight, beta_proj.weight], dim=0)
+            alpha_beta_proj.bias = cat([alpha_proj.bias, beta_proj.bias], dim=0)
+        与 SwiGLU.convert_legacy_state_dict 同模式。
+        """
+        new_sd: Dict[str, torch.Tensor] = {}
+        # 预扫描：标记所有将被转换的 beta_proj 键，避免残留
+        skip = set()
+        for k in state_dict:
+            parts = k.split('.')
+            if len(parts) >= 2 and parts[-2] == 'alpha_proj' and parts[-1] in ('weight', 'bias'):
+                prefix = '.'.join(parts[:-2])
+                beta_key = f'{prefix}.beta_proj.{parts[-1]}' if prefix else f'beta_proj.{parts[-1]}'
+                if beta_key in state_dict:
+                    skip.add(beta_key)
+        for k, v in state_dict.items():
+            if k in skip:
+                continue
+            parts = k.split('.')
+            if len(parts) >= 2 and parts[-2] == 'alpha_proj' and parts[-1] in ('weight', 'bias'):
+                prefix = '.'.join(parts[:-2])
+                beta_key = f'{prefix}.beta_proj.{parts[-1]}' if prefix else f'beta_proj.{parts[-1]}'
+                ab_key = f'{prefix}.alpha_beta_proj.{parts[-1]}' if prefix else f'alpha_beta_proj.{parts[-1]}'
+                if beta_key in state_dict:
+                    new_sd[ab_key] = torch.cat([v, state_dict[beta_key]], dim=0)
+                    continue
+            new_sd[k] = v
+        return new_sd
+
     def _compute_gates(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """计算 per-head per-token 门控 α/β。
 
         标量模式：返回 (B,H,T,1)；通道模式：返回 (B,H,T,D)。
+
+        性能优化（第三十一轮）：合并 alpha_proj/beta_proj 为单 GEMM alpha_beta_proj，
+        一次 Linear + chunk 拆分替代两次独立 Linear（省 1 GEMM 启动税 ~50μs/调用）。
         """
-        # x: (B,T,C) → proj → (B,T,H) 或 (B,T,H*D) → transpose → (B,H,T) 或 (B,H*D,T)
-        alpha = torch.sigmoid(self.alpha_proj(x).transpose(1, 2))
-        beta = torch.sigmoid(self.beta_proj(x).transpose(1, 2))
+        # x: (B,T,C) → proj → (B,T,2*gate_out) → chunk → (B,T,gate_out) × 2 → transpose
+        ab = self.alpha_beta_proj(x)  # (B,T,2*gate_out)
+        alpha_raw, beta_raw = ab.chunk(2, dim=-1)
+        alpha = torch.sigmoid(alpha_raw.transpose(1, 2))
+        beta = torch.sigmoid(beta_raw.transpose(1, 2))
         if self.channel_wise:
             # (B, H*D, T) → (B, H, D, T) → (B, H, T, D)
             B, _, T = alpha.shape
@@ -911,19 +949,23 @@ class GatedDeltaNet(LinearMixerBase):
             z = past_kv[3]  # (B,H,D)
             kf_t = kf[:, :, 0, :]      # (B,H,D)
             v_t = v[:, :, 0, :]        # (B,H,D)
-            alpha_t = alpha[:, :, 0, :].unsqueeze(-1)  # (B,H,1,1) 与 S (B,H,D,D) 广播
-            beta_t = beta[:, :, 0, :].unsqueeze(-1)
+            # R34 优化：alpha_t/beta_t 保持原形状 (B,H,X)，仅 S 更新需 unsqueeze 广播；
+            # z 更新用原形状无需 squeeze，省 2 次 squeeze/步。
+            alpha_t = alpha[:, :, 0, :]   # (B,H,1) 或 (B,H,D)
+            beta_t = beta[:, :, 0, :]
+            alpha_S = alpha_t.unsqueeze(-1)  # (B,H,1,1) 与 S (B,H,D,D) 广播
+            beta_S = beta_t.unsqueeze(-1)
             # S·k_t：当前 key 与旧状态的关联
             Sk = torch.einsum('bhd,bhde->bhe', kf_t, S)  # (B,H,D)
             # delta 更新：S = α·S + β·(v - S·k)⊗k
-            S = alpha_t * S + beta_t * (v_t - Sk).unsqueeze(-1) * kf_t.unsqueeze(-2)
+            S = alpha_S * S + beta_S * (v_t - Sk).unsqueeze(-1) * kf_t.unsqueeze(-2)
             if rwkv7:
                 # rank-1 扰动：S += z_t·b_t⊗(b_t^T·S)
                 zt = z_gate[:, :, 0]  # (B,H)
                 bt = b_dir[:, :, 0, :]  # (B,H,D)
                 bTS = torch.einsum('bhd,bhde->bhe', bt, S)  # (B,H,D)
                 S = S + zt.unsqueeze(-1).unsqueeze(-1) * torch.einsum('bhd,bhe->bhde', bt, bTS)
-            z = alpha_t.squeeze(-1) * z + beta_t.squeeze(-1) * kf_t
+            z = alpha_t * z + beta_t * kf_t
             num = torch.einsum('bhd,bhde->bhe', qf[:, :, 0, :], S)  # (B,H,D)
             den = torch.einsum('bhd,bhd->bh', qf[:, :, 0, :], z).unsqueeze(-1).clamp_min(1e-6)
             out = (num / den).reshape(B, 1, H * D)
@@ -936,17 +978,21 @@ class GatedDeltaNet(LinearMixerBase):
         for t in range(T):
             kf_t = kf[:, :, t, :]
             v_t = v[:, :, t, :]
-            alpha_t = alpha[:, :, t, :].unsqueeze(-1)   # (B,H,1,1) 与 S (B,H,D,D) 广播
-            beta_t = beta[:, :, t, :].unsqueeze(-1)
+            # R34 优化：alpha_t/beta_t 保持原形状 (B,H,X)，仅 S 更新需 unsqueeze 广播；
+            # z 更新用原形状无需 squeeze，省 2 次 squeeze/迭代 × T 迭代 = 2T 次 squeeze/forward。
+            alpha_t = alpha[:, :, t, :]   # (B,H,1) 或 (B,H,D)
+            beta_t = beta[:, :, t, :]
+            alpha_S = alpha_t.unsqueeze(-1)  # (B,H,1,1) 与 S (B,H,D,D) 广播
+            beta_S = beta_t.unsqueeze(-1)
             Sk = torch.einsum('bhd,bhde->bhe', kf_t, S)
-            S = alpha_t * S + beta_t * (v_t - Sk).unsqueeze(-1) * kf_t.unsqueeze(-2)
+            S = alpha_S * S + beta_S * (v_t - Sk).unsqueeze(-1) * kf_t.unsqueeze(-2)
             if rwkv7:
                 # rank-1 扰动：S += z_t·b_t⊗(b_t^T·S)
                 zt = z_gate[:, :, t]  # (B,H)
                 bt = b_dir[:, :, t, :]  # (B,H,D)
                 bTS = torch.einsum('bhd,bhde->bhe', bt, S)  # (B,H,D)
                 S = S + zt.unsqueeze(-1).unsqueeze(-1) * torch.einsum('bhd,bhe->bhde', bt, bTS)
-            z = alpha_t.squeeze(-1) * z + beta_t.squeeze(-1) * kf_t
+            z = alpha_t * z + beta_t * kf_t
             num = torch.einsum('bhd,bhde->bhe', qf[:, :, t, :], S)
             den = torch.einsum('bhd,bhd->bh', qf[:, :, t, :], z).unsqueeze(-1).clamp_min(1e-6)
             outs.append(num / den)
@@ -1071,8 +1117,9 @@ class AxialLinearAttention(LinearMixerBase):
         out_col = out_col.reshape(B, col, row, C).permute(0, 2, 1, 3)  # → (B, row, col, C)
 
         # ── 融合 ──
+        # R33 convex_combine：g*out_row + (1-g)*out_col → out_col + g*(out_row-out_col)，5→4 算子
         g = torch.sigmoid(self.gate)
-        fused = g * out_row + (1 - g) * out_col  # (B, row, col, C)
+        fused = out_col + g * (out_row - out_col)  # (B, row, col, C)
         fused = fused.reshape(B, row * col, C)[:, :T, :]  # 去掉 padding
         return fused  # (B, T, C)
 
@@ -1141,9 +1188,19 @@ class DifferentialAttention(nn.Module, EnhancementsMixin):
         self.mask_fill_value = float(mask_fill_value)
         # 层间共享：传入 shared_qkv/shared_proj 时复用外部投影
         # 差分注意力需要 2 组独立 Q/K（共享 V），额外创建一组 QKV 投影
-        self.qkv = shared_qkv if shared_qkv is not None else nn.Linear(dim, 3 * dim, bias=False)
-        self.qkv2 = nn.Linear(dim, 2 * dim, bias=False)  # 第二组 Q/K 投影
+        # R32 合并：shared_qkv=None 时合并 qkv(3D)+qkv2(2D) 为 qkv12(5D) 单 GEMM，
+        # 省 1 次 GEMM 启动税 ~50μs/调用（与 R31 GatedDeltaNet alpha_beta_proj 同模式）。
+        # shared_qkv!=None 时保持原结构（qkv 是外部共享 Linear，无法追加输出维度）。
+        self.shared_qkv_enabled = shared_qkv is not None
+        if self.shared_qkv_enabled:
+            self.qkv = shared_qkv
+            self.qkv2 = nn.Linear(dim, 2 * dim, bias=False)  # 第二组 Q/K 投影
+        else:
+            # 合并：qkv12 输出 [Q1, K1, V, Q2, K2] 共 5*dim 维（cat([qkv, qkv2], dim=-1) 等价）
+            self.qkv12 = nn.Linear(dim, 5 * dim, bias=False)
         self.proj = shared_proj if shared_proj is not None else nn.Linear(dim, dim, bias=False)
+        # R34 优化：预计算 1/sqrt(D) 避免每步除法（DML 上乘法比除法快 ~2x）
+        self._inv_sqrt_d = 1.0 / math.sqrt(self.head_dim)
         # QK-Norm + 温度（与 SlidingWindowCausalSelfAttention 一致）
         self.qk_norm_enabled = qk_norm
         if qk_norm:
@@ -1166,13 +1223,20 @@ class DifferentialAttention(nn.Module, EnhancementsMixin):
                 start_pos: int = 0, memory_kv=None):
         B, T, C = x.shape
         H, D = self.num_heads, self.head_dim
-        # 第一组 Q/K/V
-        qkv = self.qkv(x)  # (B, T, 3*C)
-        qkv = qkv.reshape(B, T, 3, H, D)
-        q1, k1, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]  # 各 (B, T, H, D)
-        # 第二组 Q/K（独立投影）
-        qkv2 = self.qkv2(x)  # (B, T, 2*C)
-        q2, k2 = qkv2.reshape(B, T, 2, H, D).unbind(dim=2)
+        # R32 合并：shared_qkv=None 时用 qkv12 单 GEMM（5D 输出 chunk 5），
+        # shared_qkv!=None 时保持原结构（双 GEMM）。
+        if self.shared_qkv_enabled:
+            # 分离路径（shared_qkv 模式，保持原行为）
+            qkv = self.qkv(x)  # (B, T, 3*C)
+            qkv = qkv.reshape(B, T, 3, H, D)
+            q1, k1, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]  # 各 (B, T, H, D)
+            qkv2 = self.qkv2(x)  # (B, T, 2*C)
+            q2, k2 = qkv2.reshape(B, T, 2, H, D).unbind(dim=2)
+        else:
+            # 合并路径（R32）：qkv12 单 GEMM 输出 5*dim，reshape+unbind 拆分
+            # 数学等价：cat([qkv(x), qkv2(x)], dim=-1).reshape(B,T,5,H,D) == qkv12(x).reshape(B,T,5,H,D)
+            qkv12 = self.qkv12(x)  # (B, T, 5*C)
+            q1, k1, v, q2, k2 = qkv12.reshape(B, T, 5, H, D).unbind(dim=2)
         # QK-Norm（受 SEL 运行时开关 _rt['qk_norm'] 控制）
         if self.qk_norm_enabled and self._rt.get('qk_norm', True):
             q1 = self.qk_norm(q1)
@@ -1244,8 +1308,9 @@ class DifferentialAttention(nn.Module, EnhancementsMixin):
         else:
             mem_bias1 = mem_bias2 = None
         # 注意力计算：两组独立 softmax
-        scores1 = torch.matmul(q1t, k1t.transpose(-2, -1)) / math.sqrt(D)
-        scores2 = torch.matmul(q2t, k2t.transpose(-2, -1)) / math.sqrt(D)
+        # R34 优化：/ math.sqrt(D) → * _inv_sqrt_d（预计算倒数，DML 上乘法比除法快 ~2x）
+        scores1 = torch.matmul(q1t, k1t.transpose(-2, -1)) * self._inv_sqrt_d
+        scores2 = torch.matmul(q2t, k2t.transpose(-2, -1)) * self._inv_sqrt_d
         scores1 = scores1.masked_fill(causal, self.mask_fill_value)
         scores2 = scores2.masked_fill(causal, self.mask_fill_value)
         # 记忆段偏置（仅前 mem_cols 列），右侧补零到 Tkv_full 后广播相加
@@ -1273,6 +1338,39 @@ class DifferentialAttention(nn.Module, EnhancementsMixin):
         from models.memory import MemoryBank
         k_aug, v_aug, mem_bias = MemoryBank.inject_memory(q, k, v, mk, mv, meta, mask_fill)
         return k_aug, v_aug, mem_bias
+
+    @staticmethod
+    def convert_legacy_state_dict(state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        """将旧格式（分离 qkv + qkv2）转换为 R32 合并格式（qkv12）。
+
+        合并逻辑：cat([qkv.weight, qkv2.weight], dim=0) → qkv12.weight
+        仅处理非 shared_qkv 路径（shared_qkv 时 qkv 是外部共享 Linear，保持原结构）。
+        与 R31 GatedDeltaNet.convert_legacy_state_dict 同模式。
+        """
+        new_sd: Dict[str, torch.Tensor] = {}
+        skip = set()
+        # 先标记 qkv2.weight 要跳过（仅当同 prefix 下 qkv.weight 也存在时）
+        for k in state_dict:
+            parts = k.split('.')
+            if len(parts) >= 2 and parts[-2] == 'qkv2' and parts[-1] == 'weight':
+                prefix = '.'.join(parts[:-2])
+                qkv_key = f'{prefix}.qkv.weight' if prefix else 'qkv.weight'
+                if qkv_key in state_dict:
+                    skip.add(k)
+        for k, v in state_dict.items():
+            if k in skip:
+                continue
+            parts = k.split('.')
+            if len(parts) >= 2 and parts[-2] == 'qkv' and parts[-1] == 'weight':
+                prefix = '.'.join(parts[:-2])
+                qkv2_key = f'{prefix}.qkv2.weight' if prefix else 'qkv2.weight'
+                qkv12_key = f'{prefix}.qkv12.weight' if prefix else 'qkv12.weight'
+                if qkv2_key in state_dict:
+                    # 合并：cat([qkv.weight, qkv2.weight], dim=0)
+                    new_sd[qkv12_key] = torch.cat([v, state_dict[qkv2_key]], dim=0)
+                    continue
+            new_sd[k] = v
+        return new_sd
 
 
 class MambaSSM(nn.Module):
@@ -1340,11 +1438,17 @@ class MambaSSM(nn.Module):
         Returns:
             dA: (B, L, d_inner, d_state)
             xb: (B, L, d_inner, d_state) 融合 dB * x_conv
+
+        性能优化（R34）：(1) dt.unsqueeze(-1) 复用（dA 和 xb 共用，省 1 unsqueeze）；
+        (2) xb 计算改为 (dt * x_conv) * Bp 而非 dt * Bp * x_conv——先算 (B,L,d_inner)
+        小中间张量再广播到 (B,L,d_inner,d_state)，避免先分配大中间张量再乘 x_conv。
+        数学等价：dt * Bp * x_conv = (dt * x_conv) * Bp（乘法交换/结合律）。
         """
         A = -torch.exp(self.A_log)                   # (d_inner, d_state)
-        dA = torch.exp(dt.unsqueeze(-1) * A)          # (B, L, d_inner, d_state)
-        # 融合 dB * x_conv 为单次运算，避免 (B,L,d_inner,d_state) 中间张量分配
-        xb = (dt.unsqueeze(-1) * Bp.unsqueeze(2)) * x_conv.unsqueeze(-1)
+        dt_unsq = dt.unsqueeze(-1)                    # (B, L, d_inner, 1) — dA/xb 共用
+        dA = torch.exp(dt_unsq * A)                   # (B, L, d_inner, d_state)
+        # 融合 dB * x_conv：(dt * x_conv) 先算 (B,L,d_inner) 小张量，再广播到 (B,L,d_inner,d_state)
+        xb = (dt * x_conv).unsqueeze(-1) * Bp.unsqueeze(2)
         return dA, xb
 
     def forward(self, x: torch.Tensor, past_state: Optional[torch.Tensor] = None, past_conv_state: Optional[torch.Tensor] = None, use_cache: bool = False) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
@@ -1542,6 +1646,8 @@ class MambaSSMWithCAST(MambaSSM):
         A_base = -torch.exp(self.A_log)
         A_delta = self._compute_cast_delta(x_conv)
         A_effective = A_base.unsqueeze(0).unsqueeze(0) + A_delta
-        dA = torch.exp(dt.unsqueeze(-1) * A_effective)
-        xb = (dt.unsqueeze(-1) * Bp.unsqueeze(2)) * x_conv.unsqueeze(-1)
+        # R34 优化：dt.unsqueeze(-1) 复用；xb 先算 (dt*x_conv) 小张量再广播（与基类同模式）
+        dt_unsq = dt.unsqueeze(-1)                     # (B, L, d_inner, 1) — dA/xb 共用
+        dA = torch.exp(dt_unsq * A_effective)
+        xb = (dt * x_conv).unsqueeze(-1) * Bp.unsqueeze(2)
         return dA, xb

@@ -84,22 +84,28 @@ def apply_linear_gate(linear: Optional[nn.Linear], x: torch.Tensor, h: torch.Ten
 # ---- 模式 4: convex_combine（凸组合） ----
 
 def convex_combine_scalar(param: nn.Parameter, h1: torch.Tensor, h2: torch.Tensor) -> torch.Tensor:
-    """g*h1 + (1-g)*h2，g=sigmoid(param)。
+    """h2 + g*(h1 - h2)，g=sigmoid(param)。等价于 g*h1 + (1-g)*h2。
 
     用于: mixer_gate
+
+    性能优化（第二十九轮）：原式 `g*h1 + (1-g)*h2` 5 算子（sigmoid+mul+sub+mul+add），
+    改为 `h2 + g*(h1-h2)` 4 算子（sigmoid+sub+mul+add），省 1 算子/调用。
+    数学等价（结合律），浮点误差通常 <1e-7。
     """
     g = torch.sigmoid(param)
-    return g * h1 + (1.0 - g) * h2
+    return h2 + g * (h1 - h2)
 
 
 def convex_combine_linear(linear: nn.Linear, x: torch.Tensor,
                           h1: torch.Tensor, h2: torch.Tensor) -> torch.Tensor:
-    """g*h1 + (1-g)*h2，g=sigmoid(W·x+b)。
+    """h2 + g*(h1 - h2)，g=sigmoid(W·x+b)。等价于 g*h1 + (1-g)*h2。
 
     用于: hybrid_mix
+
+    性能优化（第二十九轮）：同 convex_combine_scalar，5 算子→4 算子。
     """
     g = torch.sigmoid(linear(x))
-    return g * h1 + (1.0 - g) * h2
+    return h2 + g * (h1 - h2)
 
 
 # ---- 模式 5: correct（线性注意力修正） ----

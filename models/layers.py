@@ -43,7 +43,8 @@ class CharMergeLayer(nn.Module):
         agg = F.conv1d(x_padded, self.conv.weight, None, groups=D)  # (B, D, T)
         agg = agg.transpose(1, 2)  # (B, T, D)
         # 门控：当前字符 vs 邻域聚合
+        # R33 convex_combine：z*agg + (1-z)*x → x + z*(agg-x)，5 算子→4 算子（与 R29.5 同模式）
         z = torch.sigmoid(self.gate(x))
-        out = z * agg + (1 - z) * x
+        out = x + z * (agg - x)
         out = self.norm(out)
         return self.drop(out)

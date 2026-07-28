@@ -50,6 +50,23 @@ def find_latest_checkpoint(checkpoint_dir: str):
     latest = files[-1]
     return _epoch_num(latest), latest
 
+
+def find_step_checkpoint(checkpoint_dir: str):
+    """找最新的 step 级 checkpoint（checkpoint_step*_pct.pt），返回 path 或 None。
+
+    step checkpoint 用于全量训练中断续训：在 25%/50%/80% 进度时保存，
+    比 epoch checkpoint 粒度更细，恢复时从对应 batch 续训而非整个 epoch 重来。
+    """
+    import glob as _glob
+    pattern = os.path.join(checkpoint_dir, 'checkpoint_step*pct.pt')
+    files = _glob.glob(pattern)
+    if not files:
+        return None
+    # 按修改时间取最新
+    files.sort(key=lambda f: os.path.getmtime(f))
+    return files[-1]
+
+
 class AverageMeter:
     def __init__(self):
         self.reset()
@@ -109,12 +126,18 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
                  enhancement_schedule=None, complexity_lambda=0.0,
                  complexity_budget=None,                  curriculum_anneal=None,
                  global_step=0, curriculum_total_steps=1,
-                 igmcg_sel_prob=0.0):
+                 igmcg_sel_prob=0.0,
+                 skip_batches=0, checkpoint_dir=None, checkpoint_percents=(),
+                 checkpoint_meta=None):
     """Train one epoch with warmup, gradient accumulation and mixed precision.
 
     - warmup_steps: 预热步数。若 <1 则按"占整个 epoch 有效步数的比例"解释（如 0.1=前 10% 步预热）。
     - grad_accum_steps: 梯度累积步数；有效 batch = batch_size * grad_accum_steps。
     - lr_schedule: cosine | constant | wsd（见 compute_lr）。
+    - skip_batches: 跳过前 N 个 batch（step checkpoint resume 时续训用）。
+    - checkpoint_dir: step checkpoint 保存目录。
+    - checkpoint_percents: 在指定进度（如 (0.25, 0.5, 0.8)）保存 step checkpoint。
+    - checkpoint_meta: dict 含 scaler 等，传给 step checkpoint 保存。
     """
     model.train()
     loss_sum = 0.0  # 初始 float，首次 += loss.detach() 后自动提升为 GPU 张量，仅打印时 .item() 同步
@@ -161,9 +184,20 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
         accumulated = 0
 
     progress = tqdm(dataloader, desc=f"Epoch {epoch}", total=total_steps,
-                    leave=True) if (HAS_TQDM and show_progress) else None
+                    initial=skip_batches, leave=True) if (HAS_TQDM and show_progress) else None
 
-    for batch_idx, batch in enumerate(progress if progress is not None else dataloader):
+    # 创建 iterator，跳过已训 batch（step checkpoint resume 时续训）
+    dataloader_iter = iter(progress) if progress is not None else iter(dataloader)
+    if skip_batches > 0:
+        print(f"  [Resume] 跳过前 {skip_batches} batch...")
+        for _ in range(skip_batches):
+            next(dataloader_iter, None)
+
+    # 已保存的 step checkpoint 集合（避免重复保存）
+    _saved_checkpoints = set()
+
+    for batch_idx, batch in enumerate(dataloader_iter):
+        actual_idx = skip_batches + batch_idx
         input_ids = batch['input_ids'].to(device, non_blocking=True)
         target_ids = batch['target_ids'].to(device, non_blocking=True)
 
@@ -238,7 +272,7 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
         loss_count += 1
         tokens_total += int(input_ids.numel())
 
-        if (batch_idx + 1) % 10 == 0:
+        if (actual_idx + 1) % 10 == 0 or actual_idx + 1 == total_steps:
             avg = (loss_sum / loss_count).item()  # 仅此处同步 DML→CPU
             elapsed = time.time() - t_start
             tps = tokens_total / elapsed if elapsed > 0 else 0.0
@@ -247,9 +281,34 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
                                      lr=f"{optimizer.param_groups[0]['lr']:.6f}",
                                      tok_s=f"{tps:.0f}")
             else:
-                print(f"Epoch {epoch} | Batch {batch_idx + 1}/{total_steps} | "
+                print(f"Epoch {epoch} | Batch {actual_idx + 1}/{total_steps} | "
                       f"Loss: {avg:.4f} | LR: {optimizer.param_groups[0]['lr']:.6f} | "
                       f"Speed: {tps:.0f} tok/s ({elapsed:.0f}s)")
+
+        # ---- Step 级 checkpoint：在指定进度（25%/50%/80%）保存，支持中断续训 ----
+        # 全量训练动辄数十小时，仅 epoch 末保存风险过高（OOM/断电/Windows 更新会丢整个 epoch）
+        if checkpoint_dir and checkpoint_percents:
+            _progress_frac = (actual_idx + 1) / total_steps
+            for _pct in checkpoint_percents:
+                _threshold = int(_pct * total_steps)
+                if actual_idx + 1 == _threshold and _pct not in _saved_checkpoints:
+                    _saved_checkpoints.add(_pct)
+                    _label = f"step{int(_pct * 100)}pct"
+                    _ckpt_path = os.path.join(checkpoint_dir, f'checkpoint_{_label}.pt')
+                    _save_dict = {
+                        'epoch': epoch,
+                        'batch_idx': actual_idx + 1,
+                        'global_step': global_step + actual_idx + 1,
+                        'model_state_dict': _cpu_offload(model.state_dict()),
+                        'optimizer_state_dict': _cpu_offload(optimizer.state_dict()),
+                        'progress_frac': _progress_frac,
+                    }
+                    if checkpoint_meta:
+                        _scaler_ref = checkpoint_meta.get('scaler')
+                        if _scaler_ref is not None:
+                            _save_dict['scaler_state_dict'] = _scaler_ref.state_dict()
+                    torch.save(_save_dict, _ckpt_path)
+                    print(f"\n  [Checkpoint] {_label} saved ({_progress_frac:.1%}) at {_ckpt_path}")
 
     if progress is not None:
         progress.close()
@@ -491,28 +550,45 @@ def main(config_path='configs/pretrain.yaml', resume=False):
                    if opt_name == 'sgd' else float(config['training']['learning_rate']))
 
     # ---- 续训（resume）：加载最新 checkpoint 恢复训练 ----
+    # 优先找 step checkpoint（更细粒度，支持 epoch 中间续训），没有再找 epoch checkpoint
     start_epoch = 1
     best_loss = float('inf')
     _resume_scaler_state = None
+    resume_skip_batches = 0  # step checkpoint 恢复时跳过的 batch 数
     if resume:
-        resume_epoch, resume_path = find_latest_checkpoint(checkpoint_dir)
-        if resume_path is not None:
-            print(f"\n[Resume] 从 {resume_path} (epoch {resume_epoch}) 续训")
-            ckpt = safe_torch_load(resume_path, map_location='cpu')
+        step_ckpt_path = find_step_checkpoint(checkpoint_dir)
+        if step_ckpt_path is not None:
+            # step checkpoint：从 epoch 中间续训（如 50% 处中断 → 从 50% 继续）
+            print(f"\n[Resume] 从 step checkpoint {step_ckpt_path} 续训")
+            ckpt = safe_torch_load(step_ckpt_path, map_location='cpu')
             model.load_state_dict(ckpt['model_state_dict'])
             optimizer.load_state_dict(ckpt['optimizer_state_dict'])
-            # optimizer.load_state_dict 直接赋值 CPU 张量，需迁移至训练设备，否则首步 optimizer.step 崩溃
             for state in optimizer.state.values():
                 for k, v in state.items():
                     if isinstance(v, torch.Tensor):
                         state[k] = v.to(device)
-            best_loss = ckpt.get('best_loss', float('inf'))
-            start_epoch = resume_epoch + 1
-            # 暂存 scaler state，待 scaler 创建后恢复（resume 块先于 scaler 创建）
+            start_epoch = ckpt['epoch']  # 当前 epoch 还没训完
+            resume_skip_batches = ckpt['batch_idx']
             _resume_scaler_state = ckpt.get('scaler_state_dict', None)
-            print(f"[Resume] best_loss={best_loss:.4f}, 从 epoch {start_epoch} 继续")
+            print(f"[Resume] epoch {start_epoch}, 跳过前 {resume_skip_batches} batch (进度 {ckpt.get('progress_frac', 0):.1%})")
         else:
-            print("[Resume] 未找到 checkpoint，从头开始训练")
+            # 回退到 epoch checkpoint（整个 epoch 已训完，从下一个 epoch 开始）
+            resume_epoch, resume_path = find_latest_checkpoint(checkpoint_dir)
+            if resume_path is not None:
+                print(f"\n[Resume] 从 epoch checkpoint {resume_path} (epoch {resume_epoch}) 续训")
+                ckpt = safe_torch_load(resume_path, map_location='cpu')
+                model.load_state_dict(ckpt['model_state_dict'])
+                optimizer.load_state_dict(ckpt['optimizer_state_dict'])
+                for state in optimizer.state.values():
+                    for k, v in state.items():
+                        if isinstance(v, torch.Tensor):
+                            state[k] = v.to(device)
+                best_loss = ckpt.get('best_loss', float('inf'))
+                start_epoch = resume_epoch + 1
+                _resume_scaler_state = ckpt.get('scaler_state_dict', None)
+                print(f"[Resume] best_loss={best_loss:.4f}, 从 epoch {start_epoch} 继续")
+            else:
+                print("[Resume] 未找到 checkpoint，从头开始训练")
 
     # ---- 精度 / 梯度累积 / 余弦退火 配置 ----
     precision = str(config['training'].get('precision', 'fp32')).lower()
@@ -626,6 +702,11 @@ def main(config_path='configs/pretrain.yaml', resume=False):
             igmcg_sel_prob=float(config['training'].get('igmcg_sel_prob', 0.0)),
             global_step=global_step,
             curriculum_total_steps=total_steps_all,
+            # Step 级 checkpoint：在指定进度保存，支持全量训练中断续训
+            skip_batches=resume_skip_batches if epoch == start_epoch else 0,
+            checkpoint_dir=checkpoint_dir,
+            checkpoint_percents=tuple(config['training'].get('checkpoint_percents', [])),
+            checkpoint_meta={'scaler': scaler},
         )
         global_step += total_batches
 

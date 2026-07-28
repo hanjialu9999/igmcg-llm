@@ -79,6 +79,14 @@ class RotaryEmbedding(nn.Module):
         self.dim_wise_enabled = dim_wise
         if dim_wise:
             self.dim_wise_logit = nn.Parameter(torch.zeros(self.rot_dim // 2))
+        # R28-2 性能优化：预计算 sign 向量用于 RoPE 向量化实现。
+        # sign = cat([-1,...,-1, 1,...,1])（前半 -1 后半 +1），shape (rot_dim,)。
+        # 使 out = x_rot * cos + x_swap * (sin * sign)，省 2 算子/调用。
+        # 仅 dim_wise 关闭时可用（dim_wise 修改 cos/sin 对称性后 sign 不再有效）。
+        if self.rot_dim >= 2:
+            _d = self.rot_dim // 2
+            _sign = torch.cat([-torch.ones(_d), torch.ones(_d)])
+            self.register_buffer('_rope_sign', _sign, persistent=False)
         # 实例级缓存：隔离不同模型/设备/dtype
         self._cache: Dict[Tuple[str, str, int], Tuple[torch.Tensor, torch.Tensor]] = {}
         self._cache_lock = threading.RLock()
@@ -110,7 +118,8 @@ class RotaryEmbedding(nn.Module):
         inv_freq_interpolation = 1.0 / (self.yarn_scale * base ** (freq_indices / dim))
         # 掩码：高频维度 mask≈1（用外推），低频维度 mask≈0（用插值）
         mask = 1.0 - _yarn_linear_ramp_mask(low, high, dim // 2)
-        inv_freq = inv_freq_interpolation * (1 - mask) + inv_freq_extrapolation * mask
+        # R33 convex_combine：interp*(1-mask) + extrap*mask → interp + mask*(extrap-interp)，5→4 算子
+        inv_freq = inv_freq_interpolation + mask * (inv_freq_extrapolation - inv_freq_interpolation)
         return inv_freq
 
     def _get_cos_sin(self, start_pos: int, seq_len: int, device: torch.device, dtype: torch.dtype, max_len: int = 2048) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -122,6 +131,12 @@ class RotaryEmbedding(nn.Module):
         （由 inv_freq buffer 计算，scale=1）。可学习路径在此之上按 rope_log_scale
         重新计算 cos/sin（带 grad），保证梯度回流到 rope_log_scale，且绝不跨 step
         复用带 grad 图的张量（否则多步训练 backward 触发「graph freed」错误）。
+
+        性能优化（第二十六轮）：缓存命中路径删除冗余 .to(dtype)——基准表存储时
+        已是目标 dtype（L153-154 的 .to(dtype)），切片后 dtype 不变，再 .to(dtype)
+        是恒等拷贝却触发 1 次 aten::to 算子（DML ~50μs dispatch tax）。
+        4 层模型每步 8 次 RoPE 调用 × 2 次 .to = 16 次冗余算子/step。
+        dtype 不一致时仍执行转换（混合精度训练时正确）。
         """
         key = (str(device), str(dtype), self.inv_freq.shape[0])
         need = start_pos + seq_len
@@ -132,13 +147,25 @@ class RotaryEmbedding(nn.Module):
                 cached = self._cache.get(key)
                 if cached is not None and cached[0].size(2) >= need:
                     cos_full, sin_full = cached
-                    return cos_full[:, :, start_pos:need, :].to(dtype), sin_full[:, :, start_pos:need, :].to(dtype)
+                    # 缓存表已是目标 dtype（存储时 .to(dtype)），切片后 dtype 不变，
+                    # 仅在 dtype 真的不一致时才转换（混合精度训练时仍正确）
+                    cos_slice = cos_full[:, :, start_pos:need, :]
+                    sin_slice = sin_full[:, :, start_pos:need, :]
+                    if cos_slice.dtype != dtype:
+                        cos_slice = cos_slice.to(dtype)
+                        sin_slice = sin_slice.to(dtype)
+                    return cos_slice, sin_slice
             if self._use_shared_cache:
                 with self._shared_cache_lock:
                     cached = self._shared_cache.get(key)
                     if cached is not None and cached[0].size(2) >= need:
                         cos_full, sin_full = cached
-                        return cos_full[:, :, start_pos:need, :].to(dtype), sin_full[:, :, start_pos:need, :].to(dtype)
+                        cos_slice = cos_full[:, :, start_pos:need, :]
+                        sin_slice = sin_full[:, :, start_pos:need, :]
+                        if cos_slice.dtype != dtype:
+                            cos_slice = cos_slice.to(dtype)
+                            sin_slice = sin_slice.to(dtype)
+                        return cos_slice, sin_slice
 
         # 计算新缓存（基准表，由 inv_freq buffer 算，detach 确保无 grad 历史）
         L = min(max(need, 128), max_len)
@@ -170,25 +197,31 @@ class RotaryEmbedding(nn.Module):
             sin = emb_eff.sin()[None, None, :, :].to(dtype)
             return cos, sin
 
-        return cos_full[:, :, start_pos:need, :].to(dtype), sin_full[:, :, start_pos:need, :].to(dtype)
+        # 首次计算：已 .to(dtype) 后 detach，切片 dtype 一致，无需再转换
+        return cos_full[:, :, start_pos:need, :], sin_full[:, :, start_pos:need, :]
 
     def _apply_dim_wise_mask(self, cos: torch.Tensor, sin: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """维度级 RoPE 掩码：对 cos/sin 逐维度对施加可学软掩码。
 
         mask = sigmoid(dim_wise_logit)，shape [rot_dim//2]。
-        cos_masked = cos * mask + (1 - mask)  → mask=0 时 cos=1（不旋转）
-        sin_masked = sin * mask               → mask=0 时 sin=0（不旋转）
+        cos_masked = (cos - 1) * mask + 1 → mask=0 时 cos=1（不旋转）
+        sin_masked = sin * mask             → mask=0 时 sin=0（不旋转）
         cos/sin shape (... , rot_dim)，mask 按 rot_dim//2 广播后重复到 rot_dim。
+
+        性能优化（第二十九轮）：
+        - 原 `cos * mask + (1 - mask)` 4 算子（mul+sub+mul+add），改 `(cos-1)*mask+1`
+          3 算子（sub+mul+add），省 1 算子/调用。数学等价：cos*mask+(1-mask) =
+          cos*mask + 1 - mask = 1 + mask*(cos-1) = (cos-1)*mask + 1。
+        - `mask.repeat(2)` 替代 `torch.cat([mask, mask], dim=-1)`：repeat 在 DML
+          上是 view-like 操作（仅元数据，零分配），cat 触发新张量分配。
         """
         if not self.dim_wise_enabled:
             return cos, sin
         mask = torch.sigmoid(self.dim_wise_logit)  # (rot_dim//2,)
-        # cos/sin shape (..., rot_dim)，需要 mask shape (..., rot_dim) 广播
-        # cos[..., :d] 和 cos[..., d:2d] 用同一个 mask（每对维度共享）
-        d = self.dim_wise_logit.shape[0]
-        mask_full = torch.cat([mask, mask], dim=-1)  # (rot_dim,)
-        # 广播到 cos/sin 的前导维度
-        cos = cos * mask_full + (1.0 - mask_full)
+        # repeat 在 DML 上比 cat 更高效（view-like vs 实际拼接分配）
+        mask_full = mask.repeat(2)  # (rot_dim,)
+        # cos_masked = (cos - 1) * mask + 1（数学等价于 cos*mask + (1-mask)，省 1 算子）
+        cos = (cos - 1.0) * mask_full + 1.0
         sin = sin * mask_full
         return cos, sin
 
@@ -209,18 +242,39 @@ class RotaryEmbedding(nn.Module):
         cos, sin = self._apply_dim_wise_mask(cos, sin)
         return self._rope_apply(x, cos, sin)
 
-    @staticmethod
-    def _rope_apply(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
-        # 第十五轮：Partial RoPE——支持部分维度旋转。
-        # cos/sin 的最后一维 = rot_dim（旋转维度数），x 最后一维 = dim（可能 > rot_dim）。
-        # 前 rot_dim 维做旋转，后 no_pe_dim 维不变（NoPE 纯内容维度）。
+    def _rope_apply(self, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
+        """应用 RoPE 旋转。
+
+        数学：out1 = x1*cos - x2*sin, out2 = x1*sin + x2*cos（两半拼接）。
+        cos/sin 最后一维 = rot_dim（已 cat 为 [half, half] 形式）。
+
+        R28-2 性能优化（dim_wise 关闭时）：向量化实现省 2 算子/调用。
+        推导：out = x_rot * cos + x_swap * (sin * sign)
+        其中 x_swap = cat([x2, x1])（交换两半），sign = cat([-1, 1])。
+        - out[..., :d] = x1*cos - x2*sin ✓
+        - out[..., d:] = x2*cos + x1*sin = x1*sin + x2*cos ✓
+        算子：cat(x_swap) + mul(sin*sign) + mul(x_rot*cos) + mul(x_swap*sin_signed) + add = 5
+        原方案：4 mul + 1 sub + 1 add + 1 cat = 7（省 2）
+
+        dim_wise 路径：mask 修改 cos/sin 对称性（sin 不再是 [half, half]），
+        sign 向量化失效，回退原方案。
+        """
         rot_dim = cos.size(-1)
         no_pe_dim = x.size(-1) - rot_dim
         if no_pe_dim > 0:
-            # Partial RoPE：前段旋转，后段不变
             x_rot = x[..., :rot_dim]
             x_pass = x[..., rot_dim:]
-            d = rot_dim // 2
+        else:
+            x_rot = x
+            x_pass = None
+        d = rot_dim // 2
+        if not self.dim_wise_enabled and d > 0:
+            # R28-2 向量化路径：out = x_rot * cos + x_swap * (sin * sign)
+            x_swap = torch.cat([x_rot[..., d:], x_rot[..., :d]], dim=-1)
+            sin_signed = sin * self._rope_sign
+            x_rotated = x_rot * cos + x_swap * sin_signed
+        else:
+            # 原路径（dim_wise 或 d=0 时）
             x1, x2 = x_rot[..., :d], x_rot[..., d:]
             cos_half = cos[..., :d]
             sin_half = sin[..., :d]
@@ -228,16 +282,9 @@ class RotaryEmbedding(nn.Module):
                 x1 * cos_half - x2 * sin_half,
                 x1 * sin_half + x2 * cos_half,
             ], dim=-1)
+        if x_pass is not None:
             return torch.cat([x_rotated, x_pass], dim=-1)
-        # 全维旋转（原路径，dim_fraction=1.0）
-        d = rot_dim // 2
-        x1, x2 = x[..., :d], x[..., d:]
-        cos_half = cos[..., :d]
-        sin_half = sin[..., :d]
-        return torch.cat([
-            x1 * cos_half - x2 * sin_half,
-            x1 * sin_half + x2 * cos_half,
-        ], dim=-1)
+        return x_rotated
 
     def clear_cache(self):
         """清空实例缓存（长时间运行时可调用防止内存泄漏）。"""

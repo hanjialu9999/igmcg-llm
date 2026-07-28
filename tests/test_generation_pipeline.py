@@ -207,11 +207,11 @@ def test_arch_options_enabled_build_and_forward():
     assert any(hasattr(m, 'qk_norm') for m in model.modules())
     assert any(hasattr(m, 'log_temp') for m in model.modules())
     assert any(hasattr(m, 'hybrid_attn_gate') for m in model.modules())
-    # 残差门控：highway_gate=True 时是 sub1_highway/ffn_highway（动态），
-    # 否则是 sub1_gate/ffn_gate（静态）。两者至少存在其一。
+    # 残差门控：highway_gate=True 时非 hybrid 块用 highway_gates（动态，R32 合并自 sub1_highway/ffn_highway），
+    # hybrid 块用 ffn_highway（动态），否则用 sub1_gate/ffn_gate（静态）。两者至少存在其一。
     has_static_gate = any(hasattr(m, 'sub1_gate') for m in model.modules())
-    has_dynamic_gate = any(hasattr(m, 'sub1_highway') for m in model.modules())
-    assert has_static_gate or has_dynamic_gate, "残差门控参数未创建（既无静态 sub1_gate 也无动态 sub1_highway）"
+    has_dynamic_gate = any(hasattr(m, 'highway_gates') or hasattr(m, 'ffn_highway') for m in model.modules())
+    assert has_static_gate or has_dynamic_gate, "残差门控参数未创建（既无静态 sub1_gate 也无动态 highway_gates/ffn_highway）"
     # layer_film_projs 应存在（layer_film=True）
     assert hasattr(model, 'layer_film_projs'), "layer_film_projs 未创建"
     V = cfg['model']['vocab_size']

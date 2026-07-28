@@ -1,0 +1,42 @@
+perf: R28-R34 算子合并精简 + 死代码清理 + 特性优化（683 passed）
+
+## 第二十八轮 死代码清理 + RoPE 向量化
+- 删除 _cached_causal_mask/_causal_key/_causal_cache 死代码（R27 后 cache 路径永不命中）
+- RoPE _rope_apply 向量化：out = x_rot*cos + x_swap*(sin*sign)，算子 7→5/调用，+4%
+- _rope_apply 从 @staticmethod 改为实例方法，sign=cat([-1,1]) buffer 预计算
+
+## 第二十九轮 算子合并精简
+- convex_combine_scalar: g*h1+(1-g)*h2 → h2+g*(h1-h2)（5→4 算子）
+- _apply_dim_wise_mask: cos*mask+(1-mask) → (cos-1)*mask+1（4→3 算子）
+- mask.repeat(2) 替代 torch.cat([mask,mask],dim=-1)（view-like 零分配）
+
+## 第三十轮 算子合并续 + 死代码清理
+- ngram.py _compute_logprob_orders: w*p+(1-w)*uni[idx] → uni[idx]+w*(p-uni[idx])（6→5 算子）
+- transformer.py hybrid 分支删除冗余 present 赋值（块外已统一组装）
+
+## 第三十一轮 GatedDeltaNet GEMM 合并
+- alpha_proj + beta_proj 合并为 alpha_beta_proj: Linear(dim, 2*_gate_out) + chunk
+- 省 1 次 GEMM 启动税 ~50μs/调用
+- 新增 convert_legacy_state_dict 兼容旧 ckpt
+
+## 第三十二轮 highway_gates + DiffAttn qkv12 GEMM 合并
+- sub1_highway + ffn_highway 合并为 highway_gates: Linear(dim,2) + chunk
+- DifferentialAttention qkv+qkv2 合并为 qkv12(5D) 单 GEMM
+
+## 第三十三轮 convex_combine 算子合并精简
+- 6 处 R29.5 模式应用（CharMerge/ngram/YaRN/AxialLinearAttention/DALA/常量折叠）
+
+## 第三十四轮 特性算子精简
+- GatedDeltaNet forward 消除 unsqueeze/squeeze 冗余（省 2T 次/forward）
+- CrossLayerRouter routed/k → routed*(1/k) 预计算倒数（DML 乘法比除法快 ~2x）
+- DifferentialAttention /sqrt(D) → *_inv_sqrt_d 预计算倒数
+- MambaSSM _compute_dA_and_xb 复用 dt.unsqueeze(-1) + 减小中间张量
+
+## 测试
+- 新增 test_round28~34.py，共 123 项新测试
+- 全量 683 passed / 2 skipped / 1 xfailed
+
+## 其他
+- configs: 新增 config_train_full.yaml + 4 个实验配置
+- scripts: 新增 5 个 benchmark 脚本
+- AGENT_MEMORY.md 同步更新

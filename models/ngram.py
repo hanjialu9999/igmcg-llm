@@ -155,8 +155,12 @@ class NGramModel:
                 idx, p = self._ngt_dev[order][ctx]     # 已在 device，无需 .to(device)
                 ws = self._interp_weights(order)
                 w = ws[-1]
-                # vec[idx] = w*p + (1-w)*uni[idx]，其余位置保持 uni
-                base[k - 1, idx] = w * p + (1.0 - w) * uni[idx]
+                # vec[idx] = uni[idx] + w*(p - uni[idx])，其余位置保持 uni
+                # 性能优化（第三十轮）：原式 `w*p + (1-w)*uni[idx]` 6 算子，改
+                # `uni[idx] + w*(p-uni[idx])` 5 算子（结合律，与 R29.5 convex_combine
+                # 同模式），省 1 算子/循环。数学等价：w*p+(1-w)*u = u + w*(p-u)。
+                u_idx = uni[idx]
+                base[k - 1, idx] = u_idx + w * (p - u_idx)
         # 逐阶归一化后取 log（每阶独立归一，与逐阶 vec/vec.sum() 完全等价）
         base = torch.log(base / base.sum(dim=-1, keepdim=True) + 1e-10)  # (K-1, V)
         out = torch.empty(V, K, device=device)
@@ -355,7 +359,8 @@ class NGramModel:
                     counts = torch.tensor(list(counter.values()), device=device)
                     p = (counts + self.smoothing) / total
                     w = ws[order - 1] if order <= len(ws) else ws[-1]
-                    vec[idx] = vec[idx] * (1 - w) + p * w
+                    # R33 convex_combine：vec*(1-w) + p*w → vec + w*(p-vec)，5→4 算子（与 R30 L159 同模式）
+                    vec[idx] = vec[idx] + w * (p - vec[idx])
         vec = vec / vec.sum()
         vec = torch.log(vec + 1e-10)
         if len(self._logprob_cache) > self._logprob_cache_max:

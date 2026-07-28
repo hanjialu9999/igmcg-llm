@@ -164,9 +164,38 @@ def load_model(model_path, vocab_path, device: 'Union[str, torch.device]' = 'cpu
                     [_ckpt_sd.pop(_sk), _ckpt_sd.pop(_sv)], dim=0)
         print("[info] 检测到旧格式 ssm_k_proj/ssm_v_proj，已自动转换为 ssm_kv_proj 合并格式")
 
+    # 第三十一轮：GatedDeltaNet alpha_proj/beta_proj → alpha_beta_proj 自动转换
+    _model_has_ab = any(k.endswith('.alpha_beta_proj.weight') for k in _model_sd)
+    _ckpt_has_alpha = any(k.endswith('.alpha_proj.weight') for k in _ckpt_sd)
+    if _model_has_ab and _ckpt_has_alpha:
+        from models.mixers import GatedDeltaNet
+        _ckpt_sd = GatedDeltaNet.convert_legacy_state_dict(_ckpt_sd)
+        print("[info] 检测到旧格式 GatedDeltaNet 权重（alpha_proj/beta_proj），已自动转换为 alpha_beta_proj 合并格式")
+        checkpoint['model_state_dict'] = _ckpt_sd
+
+    # 第三十二轮：DifferentialAttention qkv/qkv2 → qkv12 自动转换
+    _model_has_qkv12 = any(k.endswith('.qkv12.weight') for k in _model_sd)
+    _ckpt_has_qkv2 = any(k.endswith('.qkv2.weight') for k in _ckpt_sd)
+    if _model_has_qkv12 and _ckpt_has_qkv2:
+        from models.mixers import DifferentialAttention
+        _ckpt_sd = DifferentialAttention.convert_legacy_state_dict(_ckpt_sd)
+        print("[info] 检测到旧格式 DifferentialAttention 权重（qkv/qkv2），已自动转换为 qkv12 合并格式")
+        checkpoint['model_state_dict'] = _ckpt_sd
+
+    # 第三十二轮：TransformerBlock sub1_highway/ffn_highway → highway_gates 自动转换
+    # （仅非 hybrid 块的 sub1_highway+ffn_highway 合并；hybrid 块保持 ffn_highway 原结构）
+    _model_has_hg = any(k.endswith('.highway_gates.weight') for k in _model_sd)
+    _ckpt_has_sub1h = any(k.endswith('.sub1_highway.weight') for k in _ckpt_sd)
+    if _model_has_hg and _ckpt_has_sub1h:
+        from models.transformer import TransformerBlock
+        _ckpt_sd = TransformerBlock.convert_legacy_state_dict(_ckpt_sd)
+        print("[info] 检测到旧格式 TransformerBlock 权重（sub1_highway/ffn_highway），已自动转换为 highway_gates 合并格式")
+        checkpoint['model_state_dict'] = _ckpt_sd
+
     model.load_state_dict(checkpoint['model_state_dict'], strict=False)
     # 架构型参数（hybrid_mix / ngram_gate / w13 / kv_decompress）缺失/多余属静默质量风险，主动告警。
-    _arch_keys = ['hybrid_mix', 'ngram_gate', 'w13.weight', 'kv_decompress']
+    _arch_keys = ['hybrid_mix', 'ngram_gate', 'w13.weight', 'kv_decompress',
+                  'alpha_beta_proj.weight', 'qkv12.weight', 'highway_gates.weight']
     _missing = [k for k in model.state_dict().keys() if any(ak in k for ak in _arch_keys)
                 and k not in checkpoint['model_state_dict']]
     _extra = [k for k in checkpoint['model_state_dict'].keys() if any(ak in k for ak in _arch_keys)

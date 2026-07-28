@@ -1,0 +1,70 @@
+data:
+  max_seq_length: 64
+  num_workers: 0
+  test_split: 0.1
+  train_file: data/pretrain_corpus/merged_8k.txt
+  vocab_size: 12000
+device: auto
+model:
+  alibi: true
+  alibi_learnable: true
+  attn_rel_bias: false
+  attn_window: 32
+  char_merge: true
+  char_merge_dropout: 0.0
+  char_merge_kernel: 3
+  cross_layer_routing: true
+  cross_layer_topk: 2
+  dropout: 0
+  embedding_dim: 256
+  fuse_swiglu: true
+  gpas: true
+  gpas_alpha_init: 0.5
+  gradient_checkpointing: false
+  hidden_dim: 512
+  layer_plan: attn,attn,attn,attn
+  layer_skip: true
+  mask_fill_value: -1000000000.0
+  max_seq_length: 64
+  mixer: linear2d
+  num_heads: 8
+  num_layers: 4
+  output_gate: true
+  rope_base: 10000.0
+  rope_dim_fraction: 0.5
+  rope_max_len: 4096
+  ssm_D_init: 1.0
+  ssm_a_log_init_range:
+  - -1
+  - 1
+  ssm_conv_kernel: 3
+  ssm_d_inner_factor: 1
+  ssm_d_state: 16
+  ssm_dt_proj_bias_init: 0.1
+  ssm_dt_rank: null
+  tie_weights: true
+  vocab_size: 12000
+  yarn_beta: 0.1
+  yarn_orig_max_seq_length: 0
+  yarn_scale: 2.0
+  zero_centered_norm: true
+seed: 42
+training:
+  batch_size: 24
+  compile: false
+  cpu_threads: 4
+  early_stop_patience: 9999
+  epochs: 1
+  eta_min: 0.0
+  grad_accum_steps: 1
+  gradient_clip: 1.0
+  label_smoothing: 0.0
+  learning_rate: 0.003
+  lr_schedule: wsd
+  momentum: 0.9
+  optimizer: sgd
+  precision: fp32
+  sgd_learning_rate: 0.1
+  warmup_steps: 10
+  weight_decay: 0.0
+  wsd_decay_frac: 0.1

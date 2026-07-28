@@ -1235,24 +1235,21 @@ def test_attn_linear_rope_config_consistent():
 
 
 def test_cached_causal_mask_matches_inline():
-    # §优化#1 回归：增量解码纯因果掩码缓存须与原始 arange 公式数值一致，
-    # 且重复调用（cache 命中）返回同一形状/值，不影响注意力输出。
+    # §优化#1 回归：增量解码纯因果掩码须与原始 arange 公式数值一致。
+    # R28-1 清理：_cached_causal_mask 已删除（R27 后死代码），
+    # 改测 _build_causal_window_mask 的纯因果路径（window=0, mem_cols=0）。
     m = _small(num_layers=1)
     attn = m.blocks[0].attn
     dev = torch.device('cpu')
     Tq, Tkv, start_pos = 1, 13, 12
-    cached = attn._cached_causal_mask(Tq, Tkv, dev, start_pos)
+    mask = attn._build_causal_window_mask(Tq, Tkv, 0, dev, start_pos)
     # 原始公式复算
     qpos = torch.arange(start_pos, start_pos + Tq).unsqueeze(1).float()
     kpos = torch.arange(0, Tkv).unsqueeze(0).float()
     expected = (kpos > qpos).float() * attn.mask_fill_value
     expected = expected.unsqueeze(0).unsqueeze(0)
-    assert torch.allclose(cached, expected)
-    # 缓存命中：再次调用返回同形状同值（不重建）
-    cached2 = attn._cached_causal_mask(Tq, Tkv, dev, start_pos)
-    assert cached2.shape == cached.shape
-    assert torch.allclose(cached2, cached)
-    # 生成确定性：多次 generate 走 cache 命中路径，输出一致（覆盖掩码缓存不污染结果）
+    assert torch.allclose(mask, expected)
+    # 生成确定性：多次 generate 走 cache 路径，输出一致（覆盖掩码缓存不污染结果）
     m.eval()
     out1 = m.generate([1, 2, 3], max_length=8, device='cpu', temperature=1.0, top_k=0)
     out2 = m.generate([1, 2, 3], max_length=8, device='cpu', temperature=1.0, top_k=0)
@@ -1925,13 +1922,15 @@ def test_specialized_inits_survive_init_weights():
         if isinstance(proj, torch.nn.Linear):
             assert proj.weight.abs().max().item() == 0.0, "layer_film weight 被 _init_weights 覆盖"
             assert proj.bias.abs().max().item() == 0.0, "layer_film bias 被 _init_weights 覆盖"
-    # highway_gate: sub1_highway/ffn_highway weight=0, bias=3.0
+    # highway_gate: highway_gates/ffn_highway weight=0, bias=3.0
+    # R32 合并：非 hybrid 块用 highway_gates（2 维），hybrid 块用 ffn_highway（1 维）
     m5 = _small(highway_gate=True, num_layers=2)
     for blk in m5.blocks:
-        if hasattr(blk, 'sub1_highway'):
-            assert blk.sub1_highway.weight.abs().max().item() == 0.0, "sub1_highway weight 被 _init_weights 覆盖"
-            assert abs(blk.sub1_highway.bias.item() - 3.0) < 1e-6, "sub1_highway bias 应为 3.0"
-        if hasattr(blk, 'ffn_highway'):
+        if hasattr(blk, 'highway_gates'):
+            assert blk.highway_gates.weight.abs().max().item() == 0.0, "highway_gates weight 被 _init_weights 覆盖"
+            assert torch.allclose(blk.highway_gates.bias, torch.full_like(blk.highway_gates.bias, 3.0)), \
+                "highway_gates bias 应为 3.0"
+        if hasattr(blk, 'ffn_highway'):  # hybrid 块
             assert blk.ffn_highway.weight.abs().max().item() == 0.0, "ffn_highway weight 被 _init_weights 覆盖"
             assert abs(blk.ffn_highway.bias.item() - 3.0) < 1e-6, "ffn_highway bias 应为 3.0"
     # progressive_residual + highway_gate 组合：highway bias 按 3/sqrt(depth) 衰减
@@ -1940,6 +1939,9 @@ def test_specialized_inits_survive_init_weights():
         if i == 0:
             continue
         expected_bias = 3.0 / math.sqrt(i + 1)
+        if hasattr(blk, 'highway_gates'):
+            assert torch.allclose(blk.highway_gates.bias, torch.full_like(blk.highway_gates.bias, expected_bias)), \
+                f"layer {i} highway_gates.bias={blk.highway_gates.bias} 应为 {expected_bias}（progressive_residual 未作用于 highway）"
         if hasattr(blk, 'ffn_highway'):
             assert abs(blk.ffn_highway.bias.item() - expected_bias) < 1e-6, \
                 f"layer {i} ffn_highway.bias={blk.ffn_highway.bias.item()} 应为 {expected_bias}（progressive_residual 未作用于 highway）"
@@ -2122,16 +2124,17 @@ def test_layer_film_incremental_decode():
 
 
 def test_highway_gate_param_created():
-    """highway_gate 启用时创建 sub1_highway/ffn_highway Linear。"""
+    """highway_gate 启用时创建 highway_gates Linear（R32 合并自 sub1_highway/ffn_highway）。"""
     m = _small(highway_gate=True, num_layers=2)
     blk = m.blocks[0]
-    assert hasattr(blk, 'sub1_highway'), "sub1_highway 未创建"
-    assert hasattr(blk, 'ffn_highway'), "ffn_highway 未创建"
+    # R32 合并：非 hybrid 块用 highway_gates（合并自 sub1_highway + ffn_highway）
+    assert hasattr(blk, 'highway_gates'), "highway_gates 未创建"
+    assert not hasattr(blk, 'sub1_highway'), "旧 sub1_highway 应已合并为 highway_gates"
+    assert not hasattr(blk, 'ffn_highway'), "旧 ffn_highway 应已合并为 highway_gates"
     # init: weight=0, bias=3.0 → sigmoid(3)≈0.95
-    assert blk.sub1_highway.weight.abs().max().item() == 0.0, "sub1_highway weight 应 init 0"
-    assert abs(blk.sub1_highway.bias.item() - 3.0) < 1e-6, "sub1_highway bias 应为 3.0"
-    assert blk.ffn_highway.weight.abs().max().item() == 0.0, "ffn_highway weight 应 init 0"
-    assert abs(blk.ffn_highway.bias.item() - 3.0) < 1e-6, "ffn_highway bias 应为 3.0"
+    assert blk.highway_gates.weight.abs().max().item() == 0.0, "highway_gates weight 应 init 0"
+    assert torch.allclose(blk.highway_gates.bias, torch.full_like(blk.highway_gates.bias, 3.0)), \
+        "highway_gates bias 应为 3.0"
 
 
 def test_highway_gate_changes_output():
@@ -2142,11 +2145,12 @@ def test_highway_gate_changes_output():
     m_off.load_state_dict({k: v for k, v in m_on.state_dict().items()
                            if 'highway' not in k}, strict=False)
     # 让 highway Linear 权重非 0（init weight=0 时 gate 仅依赖 bias，仍与静态 gate 不同）
+    # R32 合并：非 hybrid 块用 highway_gates，hybrid 块用 ffn_highway
     with torch.no_grad():
         for blk in m_on.blocks:
-            if hasattr(blk, 'sub1_highway'):
-                blk.sub1_highway.weight.normal_(0, 0.1)
-            if hasattr(blk, 'ffn_highway'):
+            if hasattr(blk, 'highway_gates'):
+                blk.highway_gates.weight.normal_(0, 0.1)
+            elif hasattr(blk, 'ffn_highway'):
                 blk.ffn_highway.weight.normal_(0, 0.1)
     m_on.eval(); m_off.eval()
     x = torch.randint(0, 200, (2, 8))
@@ -2165,19 +2169,20 @@ def test_highway_gate_backward():
     logits = out["logits"] if isinstance(out, dict) else out
     logits.sum().backward()
     blk = m.blocks[0]
-    assert blk.sub1_highway.weight.grad is not None, "sub1_highway.weight 无梯度"
-    assert blk.ffn_highway.weight.grad is not None, "ffn_highway.weight 无梯度"
+    # R32 合并：非 hybrid 块用 highway_gates
+    assert blk.highway_gates.weight.grad is not None, "highway_gates.weight 无梯度"
 
 
 def test_highway_gate_cache_parity():
     """highway_gate 训练/推理路径数值一致（cache parity）。"""
     m = _small(highway_gate=True, num_layers=3)
     # 让权重非 0 以真正测试动态门控
+    # R32 合并：非 hybrid 块用 highway_gates，hybrid 块用 ffn_highway
     with torch.no_grad():
         for blk in m.blocks:
-            if hasattr(blk, 'sub1_highway'):
-                blk.sub1_highway.weight.normal_(0, 0.1)
-            if hasattr(blk, 'ffn_highway'):
+            if hasattr(blk, 'highway_gates'):
+                blk.highway_gates.weight.normal_(0, 0.1)
+            elif hasattr(blk, 'ffn_highway'):
                 blk.ffn_highway.weight.normal_(0, 0.1)
     m.eval()
     ids = torch.randint(0, m.vocab_size, (1, 8))
@@ -2212,9 +2217,10 @@ def test_layer_film_and_highway_gate_combined():
             if isinstance(proj, torch.nn.Linear):
                 proj.weight.normal_(0, 0.1)
         for blk in m.blocks:
-            if hasattr(blk, 'sub1_highway'):
-                blk.sub1_highway.weight.normal_(0, 0.1)
-            if hasattr(blk, 'ffn_highway'):
+            # R32 合并：非 hybrid 块用 highway_gates，hybrid 块用 ffn_highway
+            if hasattr(blk, 'highway_gates'):
+                blk.highway_gates.weight.normal_(0, 0.1)
+            elif hasattr(blk, 'ffn_highway'):
                 blk.ffn_highway.weight.normal_(0, 0.1)
     m.train()
     x = torch.randint(0, 200, (2, 8))
@@ -2525,7 +2531,7 @@ def test_partial_rope_no_pe_dim_passthrough():
     # x shape (1,1,2,8)：前 4 维旋转，后 4 维透传
     x = torch.randn(1, 1, 2, 8)
     x_pass_original = x[..., 4:].clone()
-    out = RotaryEmbedding._rope_apply(x, cos, sin)
+    out = r._rope_apply(x, cos, sin)
     # cos=1, sin=0 时旋转部分 = 原值（x1*1 - x2*0 = x1），后段透传也应等于原值
     assert torch.allclose(out[..., :4], x[..., :4], atol=1e-6), \
         f"identity 旋转应保持原值，got {out[..., :4]} vs {x[..., :4]}"
@@ -2696,16 +2702,17 @@ def test_gated_delta_net_forward_shape():
 
 
 def test_gated_delta_net_param_created():
-    """mixer='gated_delta' 创建 alpha_proj/beta_proj Linear，init W=0。"""
+    """mixer='gated_delta' 创建 alpha_beta_proj Linear（R31 合并自 alpha_proj/beta_proj），init W=0。"""
     m = _small(mixer='gated_delta')
     attn = m.blocks[0].attn
-    assert hasattr(attn, 'alpha_proj'), "alpha_proj 未创建"
-    assert hasattr(attn, 'beta_proj'), "beta_proj 未创建"
-    assert attn.alpha_proj.weight.abs().max().item() == 0.0, "alpha_proj.weight 应 init 0"
-    assert attn.beta_proj.weight.abs().max().item() == 0.0, "beta_proj.weight 应 init 0"
-    # bias 默认：alpha_init=-2 → sigmoid≈0.12，beta_init=2 → sigmoid≈0.88
-    assert abs(attn.alpha_proj.bias[0].item() - (-2.0)) < 1e-6
-    assert abs(attn.beta_proj.bias[0].item() - 2.0) < 1e-6
+    assert hasattr(attn, 'alpha_beta_proj'), "alpha_beta_proj 未创建"
+    assert not hasattr(attn, 'alpha_proj'), "旧 alpha_proj 应已合并为 alpha_beta_proj"
+    assert not hasattr(attn, 'beta_proj'), "旧 beta_proj 应已合并为 alpha_beta_proj"
+    assert attn.alpha_beta_proj.weight.abs().max().item() == 0.0, "alpha_beta_proj.weight 应 init 0"
+    # bias 默认：前 _gate_out 维 alpha_init=-2 → sigmoid≈0.12，后 _gate_out 维 beta_init=2 → sigmoid≈0.88
+    _g = attn._gate_out
+    assert abs(attn.alpha_beta_proj.bias[:_g][0].item() - (-2.0)) < 1e-6, "alpha 段 bias 应为 -2.0"
+    assert abs(attn.alpha_beta_proj.bias[_g:][0].item() - 2.0) < 1e-6, "beta 段 bias 应为 2.0"
 
 
 def test_gated_delta_net_changes_output_vs_linear():
@@ -2715,7 +2722,7 @@ def test_gated_delta_net_changes_output_vs_linear():
     m_delta.eval(); m_linear.eval()
     # 对齐共享参数（qkv/proj/qk_norm/log_temp）使差异仅来自 delta rule
     shared_keys = {k: v for k, v in m_delta.state_dict().items()
-                   if 'alpha_proj' not in k and 'beta_proj' not in k
+                   if 'alpha_beta_proj' not in k
                    and any(k.endswith(sk) for sk in ('qkv.weight', 'proj.weight',
                                                        'qk_norm.weight', 'log_temp',
                                                        'rope.inv_freq'))}
@@ -2729,7 +2736,7 @@ def test_gated_delta_net_changes_output_vs_linear():
 
 
 def test_gated_delta_net_backward_flows():
-    """GatedDeltaNet 反向可训，alpha/beta proj 收到梯度。"""
+    """GatedDeltaNet 反向可训，alpha_beta_proj 收到梯度。"""
     import torch.nn.functional as F
     m = _small(mixer='gated_delta')
     m.train()
@@ -2738,8 +2745,7 @@ def test_gated_delta_net_backward_flows():
     logits = out["logits"] if isinstance(out, dict) else out
     loss = F.cross_entropy(logits.reshape(-1, 200), torch.randint(0, 200, (16,)))
     loss.backward()
-    assert m.blocks[0].attn.alpha_proj.weight.grad is not None, "alpha_proj.weight 无梯度"
-    assert m.blocks[0].attn.beta_proj.weight.grad is not None, "beta_proj.weight 无梯度"
+    assert m.blocks[0].attn.alpha_beta_proj.weight.grad is not None, "alpha_beta_proj.weight 无梯度"
     # 共享投影也应收到梯度
     assert m.blocks[0].attn.qkv.weight.grad is not None, "qkv 无梯度"
 
@@ -3037,8 +3043,10 @@ def test_gate_cfg_highway_mutual_exclusion():
 
     blk = TransformerBlock(64, 4, 128, block_type='attn',
                             gate_cfg=GateConfig(highway_gate=True))
-    assert hasattr(blk, 'sub1_highway'), "highway_gate=True 应创建 sub1_highway"
-    assert hasattr(blk, 'ffn_highway'), "highway_gate=True 应创建 ffn_highway"
+    # R32 合并：非 hybrid 块用 highway_gates（合并自 sub1_highway + ffn_highway）
+    assert hasattr(blk, 'highway_gates'), "highway_gate=True 应创建 highway_gates（非 hybrid 块）"
+    assert not hasattr(blk, 'sub1_highway'), "旧 sub1_highway 应已合并为 highway_gates"
+    assert not hasattr(blk, 'ffn_highway'), "旧 ffn_highway 应已合并为 highway_gates"
     assert not hasattr(blk, 'sub1_gate'), "highway_gate=True 时不应创建 sub1_gate（dead param）"
     assert not hasattr(blk, 'ffn_gate'), "highway_gate=True 时不应创建 ffn_gate（dead param）"
 

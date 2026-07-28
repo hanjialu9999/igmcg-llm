@@ -79,22 +79,21 @@ def test_nope_layers_negative_index():
 # ---------------------------------------------------------------------------
 
 def test_kda_channel_wise_param_dims():
-    """channel_wise=True 时 alpha_proj/beta_proj 输出维度 = num_heads * head_dim。"""
+    """channel_wise=True 时 alpha_beta_proj 输出维度 = 2 * num_heads * head_dim（R31 合并后）。"""
     dim, num_heads = 64, 4
     head_dim = dim // num_heads  # 16
     m = GatedDeltaNet(dim, num_heads, channel_wise=True)
-    assert m.alpha_proj.out_features == num_heads * head_dim, \
-        f"channel_wise alpha_proj 输出应为 {num_heads * head_dim}，实际 {m.alpha_proj.out_features}"
-    assert m.beta_proj.out_features == num_heads * head_dim, \
-        f"channel_wise beta_proj 输出应为 {num_heads * head_dim}，实际 {m.beta_proj.out_features}"
+    # R31 合并：alpha_beta_proj 输出 = 2 * _gate_out = 2 * num_heads * head_dim
+    assert m.alpha_beta_proj.out_features == 2 * num_heads * head_dim, \
+        f"channel_wise alpha_beta_proj 输出应为 {2 * num_heads * head_dim}，实际 {m.alpha_beta_proj.out_features}"
 
 
 def test_kda_scalar_param_dims():
-    """channel_wise=False（默认）时 alpha_proj/beta_proj 输出维度 = num_heads（标量）。"""
+    """channel_wise=False（默认）时 alpha_beta_proj 输出维度 = 2 * num_heads（R31 合并后）。"""
     dim, num_heads = 64, 4
     m = GatedDeltaNet(dim, num_heads, channel_wise=False)
-    assert m.alpha_proj.out_features == num_heads
-    assert m.beta_proj.out_features == num_heads
+    # R31 合并：alpha_beta_proj 输出 = 2 * _gate_out = 2 * num_heads
+    assert m.alpha_beta_proj.out_features == 2 * num_heads
 
 
 def test_kda_compute_gates_shape():
@@ -131,7 +130,7 @@ def test_kda_channel_wise_changes_output():
     """channel_wise=True 与 False 输出不同（逐通道衰减改变行为）。
 
     注：weight=0 时两种模式行为等价（设计预期，平滑过渡）。
-    需设置 alpha_proj/beta_proj weight 非 0 使逐通道 alpha 产生差异。
+    需设置 alpha_beta_proj weight 非 0 使逐通道 alpha 产生差异。
     """
     torch.manual_seed(42)
     dim, num_heads = 64, 4
@@ -139,12 +138,11 @@ def test_kda_channel_wise_changes_output():
     m_scalar = GatedDeltaNet(dim, num_heads, channel_wise=False, max_seq_length=T)
     torch.manual_seed(42)
     m_chan = GatedDeltaNet(dim, num_heads, channel_wise=True, max_seq_length=T)
-    # 设置 alpha/beta proj weight 非 0，使 channel_wise 模式产生逐通道不同的门控值
+    # 设置 alpha_beta_proj weight 非 0，使 channel_wise 模式产生逐通道不同的门控值
+    # R31 合并：weight shape (2*_gate_out, dim)，前 _gate_out 维对应 alpha，后 _gate_out 维对应 beta
     with torch.no_grad():
-        torch.nn.init.normal_(m_scalar.alpha_proj.weight, 0, 0.1)
-        torch.nn.init.normal_(m_scalar.beta_proj.weight, 0, 0.1)
-        torch.nn.init.normal_(m_chan.alpha_proj.weight, 0, 0.1)
-        torch.nn.init.normal_(m_chan.beta_proj.weight, 0, 0.1)
+        torch.nn.init.normal_(m_scalar.alpha_beta_proj.weight, 0, 0.1)
+        torch.nn.init.normal_(m_chan.alpha_beta_proj.weight, 0, 0.1)
     x = torch.randn(B, T, dim)
     with torch.no_grad():
         out_scalar, _ = m_scalar(x)
@@ -162,8 +160,7 @@ def test_kda_channel_wise_backward():
     out, _ = m(x)
     loss = out.float().sum()
     loss.backward()
-    assert m.alpha_proj.weight.grad is not None, "alpha_proj 无梯度"
-    assert m.beta_proj.weight.grad is not None, "beta_proj 无梯度"
+    assert m.alpha_beta_proj.weight.grad is not None, "alpha_beta_proj 无梯度"
 
 
 def test_kda_channel_wise_cache_parity():
@@ -197,21 +194,24 @@ def test_kda_channel_wise_cache_parity():
 
 
 def test_kda_specialized_init_preserved():
-    """channel_wise 模式专用初始化在 _apply_specialized_inits 后正确重置。"""
+    """channel_wise 模式专用初始化在 _apply_specialized_inits 后正确重置（R31 合并后）。"""
     m = _small(mixer='gated_delta', gated_delta_channel_wise=True,
                delta_alpha_init=-2.0, delta_beta_init=2.0)
     for blk in m.blocks:
         attn = getattr(blk, 'attn', None)
-        if attn is None or not hasattr(attn, 'alpha_proj'):
+        if attn is None or not hasattr(attn, 'alpha_beta_proj'):
             continue
-        assert torch.allclose(attn.alpha_proj.weight, torch.zeros_like(attn.alpha_proj.weight)), \
-            "alpha_proj weight 应为 0"
-        assert torch.allclose(attn.alpha_proj.bias, torch.full_like(attn.alpha_proj.bias, -2.0)), \
-            "alpha_proj bias 应为 alpha_init=-2.0"
-        assert torch.allclose(attn.beta_proj.weight, torch.zeros_like(attn.beta_proj.weight)), \
-            "beta_proj weight 应为 0"
-        assert torch.allclose(attn.beta_proj.bias, torch.full_like(attn.beta_proj.bias, 2.0)), \
-            "beta_proj bias 应为 beta_init=2.0"
+        # R31 合并：alpha_beta_proj.weight 应为 0
+        assert torch.allclose(attn.alpha_beta_proj.weight, torch.zeros_like(attn.alpha_beta_proj.weight)), \
+            "alpha_beta_proj weight 应为 0"
+        # bias 前 _gate_out 维应为 alpha_init=-2.0，后 _gate_out 维应为 beta_init=2.0
+        _g = attn._gate_out
+        alpha_bias = attn.alpha_beta_proj.bias[:_g]
+        beta_bias = attn.alpha_beta_proj.bias[_g:]
+        assert torch.allclose(alpha_bias, torch.full_like(alpha_bias, -2.0)), \
+            "alpha 段 bias 应为 alpha_init=-2.0"
+        assert torch.allclose(beta_bias, torch.full_like(beta_bias, 2.0)), \
+            "beta 段 bias 应为 beta_init=2.0"
 
 
 # ---------------------------------------------------------------------------

@@ -130,10 +130,15 @@ class TransformerBlock(nn.Module):
         # residual_gate。gate = sigmoid(W·x + b)，x_out = x + gate·f(x)。
         # init: W=0, b=3.0 → sigmoid(3)≈0.95 → x + 0.95·f(x) ≈ 原 residual_gate=1.0 行为，
         # 平滑过渡；训练中模型逐 token 自决残差强度（不确定时 gate↓ 保留输入，有把握时 gate↑ 强变换）。
+        # R32 合并：非 hybrid 块合并 sub1_highway + ffn_highway 为 highway_gates（同 x 输入单 GEMM），
+        # 省 1 次 GEMM 启动税 ~50μs/调用（与 R31 alpha_beta_proj / R32-1 qkv12 同模式）。
+        # hybrid 块只有 ffn_highway（第一子层用 hybrid_attn_gate/hybrid_ssm_gate），保持原结构。
         if self.highway_gate_enabled:
             if block_type != 'hybrid':
-                self.sub1_highway = nn.Linear(dim, 1)
-            self.ffn_highway = nn.Linear(dim, 1)
+                # 合并：highway_gates 输出 2 维（gate1, gate2），chunk 拆分
+                self.highway_gates = nn.Linear(dim, 2)
+            else:
+                self.ffn_highway = nn.Linear(dim, 1)
         # ⭐A 混合块内 attn/ssm 两路可学习门控（init 1.0）
         if self.hybrid_gate_enabled and block_type == 'hybrid':
             self.hybrid_attn_gate = nn.Parameter(torch.ones(1))
@@ -310,13 +315,18 @@ class TransformerBlock(nn.Module):
         # highway_gate: gate = sigmoid(W·x + b)，逐 token 动态（init b=3 → sigmoid≈0.95）
         # residual_gate: 静态标量 gate（init 1.0），整个层共享
         # SEL 交替训练：_rt["highway_gate"]=False 时回退到静态 residual_gate 行为
+        # R32 合并：非 hybrid 块用 highway_gates 单 GEMM（2 维输出 chunk 拆分），hybrid 块保持 ffn_highway
         if self.highway_gate_enabled and self._rt.get("highway_gate", True):
-            # 第一子层动态门控（hybrid 块用 hybrid_attn_gate/hybrid_ssm_gate，无 sub1_highway）
-            if self.block_type != 'hybrid' and hasattr(self, 'sub1_highway'):
-                gate1 = torch.sigmoid(self.sub1_highway(x))  # (B,T,1)
+            if self.block_type != 'hybrid' and hasattr(self, 'highway_gates'):
+                # 合并路径（R32）：单 GEMM 输出 2 维，chunk 拆分
+                # 数学等价：cat([sub1_highway(x), ffn_highway(x)], dim=-1) == highway_gates(x)
+                gates = self.highway_gates(x)  # (B, T, 2)
+                gate1 = torch.sigmoid(gates[..., 0:1])  # (B, T, 1)
+                gate2 = torch.sigmoid(gates[..., 1:2])  # (B, T, 1)
             else:
+                # hybrid 块只有 ffn_highway（第一子层用 hybrid_attn_gate/hybrid_ssm_gate）
                 gate1 = None
-            gate2 = torch.sigmoid(self.ffn_highway(x))  # (B,T,1)
+                gate2 = torch.sigmoid(self.ffn_highway(x))  # (B,T,1)
         else:
             gate1 = (getattr(self, 'sub1_gate', None) if (self.residual_gate_enabled and self._rt["residual_gate"]) else None)
             gate2 = (getattr(self, 'ffn_gate', None) if (self.residual_gate_enabled and self._rt["residual_gate"]) else None)
@@ -375,8 +385,7 @@ class TransformerBlock(nn.Module):
                       + self.drop(apply_direct(self.hybrid_ssm_gate, ssm_eff))
             else:
                 x = x + self.drop(h_eff) + self.drop(ssm_eff)
-            if use_cache:
-                present = (attn_present, ssm_present_state, ssm_present_conv_state)
+            # present 在块外统一组装（L391-401），此处无需提前设置
         # 块输出后写入可学习压缩记忆（记忆存压缩表示，由 LM loss 监督）
         if memory is not None:
             memory.write(x)
@@ -419,6 +428,42 @@ class TransformerBlock(nn.Module):
     def set_skip_active(self, active: bool = True):
         """运行时开关跳过层门控（推理剪枝时关闭则所有层恒保留）。"""
         self._skip_active = bool(active)
+
+    @staticmethod
+    def convert_legacy_state_dict(state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        """将旧格式 state_dict（sub1_highway + ffn_highway 分离）转换为新格式（highway_gates 合并）。
+
+        供 R32+ 模型加载旧 checkpoint（含 sub1_highway.weight/bias 和 ffn_highway.weight/bias）
+        时使用：
+            highway_gates.weight = cat([sub1_highway.weight, ffn_highway.weight], dim=0)
+            highway_gates.bias   = cat([sub1_highway.bias,   ffn_highway.bias],   dim=0)
+        与 R31 GatedDeltaNet.convert_legacy_state_dict / R32-1 DifferentialAttention.convert_legacy_state_dict 同模式。
+        hybrid 块的 ffn_highway 保持原结构不转换（仅非 hybrid 块的 sub1_highway+ffn_highway 合并）。
+        """
+        new_sd: Dict[str, torch.Tensor] = {}
+        skip = set()
+        # 先标记 ffn_highway 要跳过（仅当同 prefix 下 sub1_highway 也存在时；非 hybrid 块）
+        for k in state_dict:
+            parts = k.split('.')
+            if len(parts) >= 2 and parts[-2] == 'sub1_highway' and parts[-1] in ('weight', 'bias'):
+                prefix = '.'.join(parts[:-2])
+                ffn_key = f'{prefix}.ffn_highway.{parts[-1]}' if prefix else f'ffn_highway.{parts[-1]}'
+                if ffn_key in state_dict:
+                    skip.add(ffn_key)
+        for k, v in state_dict.items():
+            if k in skip:
+                continue
+            parts = k.split('.')
+            if len(parts) >= 2 and parts[-2] == 'sub1_highway' and parts[-1] in ('weight', 'bias'):
+                prefix = '.'.join(parts[:-2])
+                ffn_key = f'{prefix}.ffn_highway.{parts[-1]}' if prefix else f'ffn_highway.{parts[-1]}'
+                hg_key = f'{prefix}.highway_gates.{parts[-1]}' if prefix else f'highway_gates.{parts[-1]}'
+                if ffn_key in state_dict:
+                    # 合并：cat([sub1_highway.X, ffn_highway.X], dim=0) → highway_gates.X
+                    new_sd[hg_key] = torch.cat([v, state_dict[ffn_key]], dim=0)
+                    continue
+            new_sd[k] = v
+        return new_sd
 
 
 def _parse_layer_plan(layer_plan: Optional[List[str] | str], num_layers: int) -> List[str]:
@@ -512,7 +557,8 @@ class CrossLayerRouter(nn.Module):
         gates = torch.sigmoid(scores) * mask  # (B, num_prev)
         # 加权求和：einsum 避免 gather/scatter，DML 原生支持
         routed = torch.einsum('bn,bntd->btd', gates, prev_stack)  # (B, T, D)
-        routed = routed / k  # 归一化（保持 magnitude 不随 k 爆炸）
+        # R34 优化：除法→乘法（预计算倒数），DML 上乘法比除法快 ~2x
+        routed = routed * (1.0 / k)  # 归一化（保持 magnitude 不随 k 爆炸）
         return x + routed
 
 
@@ -697,7 +743,7 @@ class TransformerModel(nn.Module):
             if _invalid:
                 raise ValueError(f"nope_layers 索引越界: {sorted(_invalid)}，有效范围 [0, {_n_layers})")
         # 第十五轮：保存 GatedDeltaNet 专用初始化参数，供 _apply_specialized_inits 重置
-        # （_init_weights 通用 N(0,0.02) 会覆盖 alpha_proj/beta_proj 的 zero weight + 专用 bias）
+        # （_init_weights 通用 N(0,0.02) 会覆盖 alpha_beta_proj 的 zero weight + 专用 bias）
         self._delta_alpha_init = float(delta_alpha_init)
         self._delta_beta_init = float(delta_beta_init)
         # 层间共享 attention projection（share_attn_proj=True）：
@@ -986,7 +1032,8 @@ class TransformerModel(nn.Module):
             # 纯 linear mixer（self.attn 即 LinearAttention、linear_attn 为 None）直接 0.3x 折扣。
             if getattr(blk, 'linear_attn', None) is not None:
                 mg = torch.sigmoid(blk.mixer_gate).sum()
-                attn_cost = mg * 1.0 + (1.0 - mg) * 0.3
+                # R33 常量折叠：mg*1 + (1-mg)*0.3 = 0.3 + 0.7*mg，5→2 算子（省 3）
+                attn_cost = 0.3 + 0.7 * mg
                 layer_cost = layer_cost * attn_cost
             elif hasattr(blk, 'attn') and isinstance(blk.attn, LinearAttention):
                 layer_cost = layer_cost * 0.3
@@ -1089,16 +1136,19 @@ class TransformerModel(nn.Module):
                 if isinstance(proj, nn.Linear):
                     nn.init.zeros_(proj.weight)
                     nn.init.zeros_(proj.bias)
-        # highway_gate: sub1_highway/ffn_highway weight=0, bias=3.0
+        # highway_gate: highway_gates/ffn_highway weight=0, bias=3.0
         # → sigmoid(3)≈0.95 → x + 0.95·f(x) ≈ 原 residual_gate=1.0 行为
         # progressive_residual + highway_gate 组合：bias=3.0/sqrt(depth)（深层衰减）
+        # R32 合并：非 hybrid 块用 highway_gates（2 维输出），hybrid 块用 ffn_highway（1 维）
         for i, blk in enumerate(self.blocks):
             if getattr(blk, 'highway_gate_enabled', False):
                 # layer 0 不衰减（bias=3.0），layer i>0 按 1/sqrt(depth) 衰减
                 bias_val = 3.0 if i == 0 or not self.progressive_residual else 3.0 / math.sqrt(i + 1)
-                if hasattr(blk, 'sub1_highway'):
-                    nn.init.zeros_(blk.sub1_highway.weight)
-                    nn.init.constant_(blk.sub1_highway.bias, bias_val)
+                if hasattr(blk, 'highway_gates'):
+                    # 合并的 highway_gates：weight=0, bias=[bias_val, bias_val]
+                    # nn.init.constant_ 把 (2,) bias 两维都设为 bias_val
+                    nn.init.zeros_(blk.highway_gates.weight)
+                    nn.init.constant_(blk.highway_gates.bias, bias_val)
                 if hasattr(blk, 'ffn_highway'):
                     nn.init.zeros_(blk.ffn_highway.weight)
                     nn.init.constant_(blk.ffn_highway.bias, bias_val)
@@ -1112,21 +1162,27 @@ class TransformerModel(nn.Module):
                     nn.init.zeros_(gate.weight)
                     nn.init.constant_(gate.bias, -3.0)
         # 第十五轮：GatedDeltaNet 专用初始化重置
-        # alpha_proj/beta_proj 在 __init__ 中已做 zero weight + 专用 bias（alpha_init/beta_init），
-        # 但 _init_weights 遍历 nn.Linear 时用 N(0,0.02) 覆盖了 weight，用 zeros 覆盖了 bias。
+        # alpha_beta_proj（R31 合并自 alpha_proj/beta_proj）在 __init__ 中已做 zero weight +
+        # 专用 bias（前 _gate_out 维 alpha_init，后 _gate_out 维 beta_init），但 _init_weights
+        # 遍历 nn.Linear 时用 N(0,0.02) 覆盖了 weight，用 zeros 覆盖了 bias。
         # 此处按 GatedDeltaNet 设计意图恢复：weight=0（弱门控，逐 token 由模型自决），
-        # bias=alpha_init/beta_init（alpha sigmoid≈0.12 弱遗忘起步 / beta sigmoid≈0.88 强写入起步）。
+        # bias 前 _gate_out 维 alpha_init（sigmoid≈0.12 弱遗忘起步）/ 后 _gate_out 维 beta_init
+        # （sigmoid≈0.88 强写入起步）。
         # 同时重置 SlidingWindowCausalSelfAttention.output_gate（weight=0, bias=0 → sigmoid=0.5 半通起步）。
         for blk in self.blocks:
             attn = getattr(blk, 'attn', None)
             if attn is None:
                 continue
-            if hasattr(attn, 'alpha_proj'):
-                nn.init.zeros_(attn.alpha_proj.weight)
-                nn.init.constant_(attn.alpha_proj.bias, self._delta_alpha_init)
-            if hasattr(attn, 'beta_proj'):
-                nn.init.zeros_(attn.beta_proj.weight)
-                nn.init.constant_(attn.beta_proj.bias, self._delta_beta_init)
+            if hasattr(attn, 'alpha_beta_proj'):
+                nn.init.zeros_(attn.alpha_beta_proj.weight)
+                _g = getattr(attn, '_gate_out', None)
+                if _g is not None:
+                    _bias = torch.empty(2 * _g, dtype=attn.alpha_beta_proj.bias.dtype,
+                                         device=attn.alpha_beta_proj.bias.device)
+                    _bias[:_g].fill_(self._delta_alpha_init)
+                    _bias[_g:].fill_(self._delta_beta_init)
+                    with torch.no_grad():
+                        attn.alpha_beta_proj.bias.copy_(_bias)
             if getattr(attn, 'output_gate_enabled', False) and hasattr(attn, 'output_gate'):
                 nn.init.zeros_(attn.output_gate.weight)
                 nn.init.zeros_(attn.output_gate.bias)
@@ -1321,7 +1377,8 @@ class TransformerModel(nn.Module):
             if _prev_layer_out is not None:
                 if _dala_x0 is not None:
                     _alpha_i = i / max(len(self.blocks) - 1, 1)
-                    _target = _alpha_i * _prev_layer_out + (1.0 - _alpha_i) * _dala_x0
+                    # R33 convex_combine：α*prev + (1-α)*x0 → x0 + α*(prev-x0)，5→4 算子
+                    _target = _dala_x0 + _alpha_i * (_prev_layer_out - _dala_x0)
                 else:
                     _target = _prev_layer_out
                 cos_sim = F.cosine_similarity(x, _target, dim=-1).mean()

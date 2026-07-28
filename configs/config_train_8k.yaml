@@ -56,21 +56,23 @@ model:
 
 training:
   batch_size: 24                 # DML 性能甜点（bs32 OOM）
-  epochs: 1
+  epochs: 3                      # 历史经验：1ep val5.19 → 3ep val4.13（epochs 是质量第一杠杆）
   learning_rate: 3.0e-3
   optimizer: sgd                 # DML 友好（AdamW lerp_ 回退 CPU ~96ms/步）
   sgd_learning_rate: 0.1         # SGD 需大 lr
   momentum: 0.9
   weight_decay: 0.0
   gradient_clip: 1.0
-  warmup_steps: 0
+  warmup_steps: 10               # 10 步预热避免初期不稳
   early_stop_patience: 9999
   label_smoothing: 0.0
   cpu_threads: 4
+  checkpoint_percents: [0.25, 0.5, 0.8]  # Step 级 checkpoint：25%/50%/80% 时存档，支持中断续训
   precision: "fp32"
   grad_accum_steps: 1
   eta_min: 0.0
-  lr_schedule: "constant"
+  lr_schedule: "wsd"             # warmup-stable-decay，末段衰减收敛更好
+  wsd_decay_frac: 0.1            # 最后 10% 步衰减
   compile: false
 
 data:
@@ -81,8 +83,8 @@ data:
   test_split: 0.1
 
 paths:
-  checkpoint_dir: "checkpoints_train_8k"
-  log_dir: "logs_train_8k"
+  checkpoint_dir: "checkpoints_train_8k_v3"
+  log_dir: "logs_train_8k_v3"
 
 device: "auto"
 seed: 42
