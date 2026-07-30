@@ -197,7 +197,9 @@ class TransformerBlock(nn.Module):
                                  yarn_beta=attn_kwargs.get('yarn_beta', 0.1),
                                  yarn_orig_max_seq_length=attn_kwargs.get('yarn_orig_max_seq_length', 0),
                                  dim_wise_rope=attn_kwargs.get('dim_wise_rope', False),
-                                 rwkv7=attn_kwargs.get('rwkv7', False))
+                                 rwkv7=attn_kwargs.get('rwkv7', False),
+                                 chunk_scan=attn_kwargs.get('gated_delta_chunk_scan', False),
+                                 chunk_size=attn_kwargs.get('gated_delta_chunk_size', 16))
             return attn, None, None
         if mixer == 'linear2d':
             # 2D 轴向线性注意力：O(T·√T)，适合序列长度为完全平方数或接近的场景
@@ -218,7 +220,8 @@ class TransformerBlock(nn.Module):
             attn_only = {k: v for k, v in attn_kwargs.items()
                          if k not in ('linear_attn_feature', 'linear_attn_head_dim',
                                       'delta_alpha_init', 'delta_beta_init',
-                                      'gated_delta_channel_wise', 'rwkv7')}
+                                      'gated_delta_channel_wise', 'rwkv7',
+                                      'gated_delta_chunk_scan', 'gated_delta_chunk_size')}
             attn = SlidingWindowCausalSelfAttention(dim, num_heads, max_seq_length=max_seq_length,
                                                      shared_qkv=shared_qkv, shared_proj=shared_proj,
                                                      **attn_only)
@@ -237,7 +240,8 @@ class TransformerBlock(nn.Module):
         attn_only = {k: v for k, v in attn_kwargs.items()
                      if k not in ('linear_attn_feature', 'linear_attn_head_dim',
                                   'delta_alpha_init', 'delta_beta_init',
-                                  'gated_delta_channel_wise', 'rwkv7')}
+                                  'gated_delta_channel_wise', 'rwkv7',
+                                      'gated_delta_chunk_scan', 'gated_delta_chunk_size')}
         attn = SlidingWindowCausalSelfAttention(dim, num_heads, max_seq_length=max_seq_length,
                                                  shared_qkv=shared_qkv, shared_proj=shared_proj,
                                                  **attn_only)
@@ -581,6 +585,7 @@ class TransformerModel(nn.Module):
     def __init__(self, vocab_size: int, embedding_dim: int, num_heads: int, num_layers: int,
                  hidden_dim: int, max_seq_length: int, dropout: float = 0.0, tie_weights: bool = True,
                  gradient_checkpointing: bool = True,
+                 grad_ckpt_auto: bool = False,
                  layer_plan: Optional[List[str] | str] = None,
                  ssm_d_state: int = 16, ssm_d_inner_factor: int = 1, ssm_dt_rank: Optional[int] = None,
                  ssm_conv_kernel: int = 3, ssm_dt_proj_bias_init: float = 0.1,
@@ -647,14 +652,21 @@ class TransformerModel(nn.Module):
                    intra_hybrid_ratio: float = 0.5,
                    gpas: bool = False,
                    gpas_alpha_init: float = 0.5,
-                   alibi_learnable: bool = False):
+                   alibi_learnable: bool = False,
+                   kv_cache_int8: bool = False,
+                   gated_delta_chunk_scan: bool = False,
+                   gated_delta_chunk_size: int = 16):
         super(TransformerModel, self).__init__()
 
         self.vocab_size = vocab_size
         self.embedding_dim = embedding_dim
+        self.hidden_dim = hidden_dim
+        self.num_heads = num_heads
         self.max_seq_length = max_seq_length
         self.attn_window = attn_window
         self.gradient_checkpointing = gradient_checkpointing
+        # R36-1: 自动禁用 gradient_checkpointing（小模型重算纯浪费）
+        self.grad_ckpt_auto = grad_ckpt_auto
         # 阶段8.1：n-gram 神经融合——把统计 n-gram 先验经可学习门控 g_t=sigmoid(h_t·W_g)
         # 逐位置加回 logits（z_neural + g_t·ngram_vec.detach()）。主干 z_neural 仍吃完整
         # CE 梯度（gate 只缩放外部统计向量、不缩放主干），故不会塌缩、主干始终是独立 LM。
@@ -735,7 +747,10 @@ class TransformerModel(nn.Module):
                            rwkv7=rwkv7,
                            intra_hybrid_rope=intra_hybrid_rope,
                            intra_hybrid_ratio=intra_hybrid_ratio,
-                           alibi_learnable=alibi_learnable)
+                           alibi_learnable=alibi_learnable,
+                           kv_cache_int8=kv_cache_int8,
+                           gated_delta_chunk_scan=gated_delta_chunk_scan,
+                           gated_delta_chunk_size=gated_delta_chunk_size)
         # 第十八轮：iRoPE 交错 NoPE 层——nope_layers 中的层关闭 RoPE，强制 alibi 提供位置信号
         self.nope_layers_set = set(nope_layers or [])
         # 防护：nope_layers 索引越界校验（审查 Finding 3 LOW）
@@ -881,6 +896,42 @@ class TransformerModel(nn.Module):
         # 与 SSM proper_init 同理（也在 _init_weights 后调用）。
         self._apply_specialized_inits()
 
+        # R36-1: grad_ckpt_auto 启发式——小模型激活内存低，重算纯浪费计算
+        if self.grad_ckpt_auto and self.gradient_checkpointing:
+            if self._should_disable_ckpt():
+                self.set_gradient_checkpointing(False)
+                # 仅提示（不修改 config 原值，运行时覆盖）
+                import sys
+                print(f"[grad_ckpt_auto] 模型规模小（num_layers={num_layers}, "
+                      f"max_seq_length={max_seq_length}, dim={embedding_dim}, "
+                      f"hidden_dim={hidden_dim}），自动关闭 gradient_checkpointing "
+                      f"以加速训练（依据：激活内存估算 < 512MB）", file=sys.stderr)
+
+    def _should_disable_ckpt(self) -> bool:
+        """R36-1: 启发式判断是否应自动关闭 gradient_checkpointing。
+
+        依据：激活内存估算 < 512MB（fp32, batch_size=32 保守上界）时，
+        反向重算的算力浪费超过省下的显存收益（CHANGELOG 记录 +47% 加速）。
+
+        估算公式（Pre-LN transformer 单层激活，保守上界）：
+          - attn QKV+proj: 4 * B * T * D
+          - attn scores: B * H * T * T
+          - ffn SwiGLU: 3 * B * T * hidden_dim
+        总激活 = num_layers * B * T * (4D + H*T + 3*hidden_dim) * 4 bytes (fp32)
+
+        阈值 512MB：DML 780M 共享显存 ~2GB，512MB 激活远低于 OOM 风险。
+        """
+        B = 32  # 保守 batch_size 上界（典型训练 bs<=32）
+        T = self.max_seq_length
+        D = self.embedding_dim
+        H = self.num_heads
+        L = len(self.blocks)
+        HD = self.hidden_dim
+        # 单层激活（保守上界）
+        per_layer = B * T * (4 * D + H * T + 3 * HD)
+        total_bytes = L * per_layer * 4  # fp32
+        return total_bytes < 512 * 1024 * 1024  # 512MB
+
     @classmethod
     def from_config(cls, cfg: 'ModelConfig', ngram_model=None) -> TransformerModel:
         """从 ModelConfig dataclass 构建（替代 config_loader 中 42 个 mc.get()）。"""
@@ -894,6 +945,7 @@ class TransformerModel(nn.Module):
             dropout=cfg.dropout,
             tie_weights=cfg.tie_weights,
             gradient_checkpointing=cfg.gradient_checkpointing,
+            grad_ckpt_auto=cfg.grad_ckpt_auto,
             layer_plan=cfg.layer_plan,
             ssm_d_state=cfg.ssm.d_state,
             ssm_d_inner_factor=cfg.ssm.d_inner_factor,
@@ -974,6 +1026,9 @@ class TransformerModel(nn.Module):
             gpas=cfg.attn.gpas,
             gpas_alpha_init=cfg.attn.gpas_alpha_init,
             alibi_learnable=cfg.attn.alibi_learnable,
+            kv_cache_int8=cfg.attn.kv_cache_int8,
+            gated_delta_chunk_scan=cfg.attn.gated_delta_chunk_scan,
+            gated_delta_chunk_size=cfg.attn.gated_delta_chunk_size,
         )
 
     def set_enhancements_active(self, spec):

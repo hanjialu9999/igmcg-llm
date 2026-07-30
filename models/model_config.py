@@ -64,6 +64,11 @@ class AttnConfig:
     gpas_alpha_init: float = 0.5       # GPAS α 初始值（0.5=中等缩放；1.0≈行为不变）
     # 第二十五轮新特性
     alibi_learnable: bool = False      # ALiBi 斜率可学（buffer→Parameter，per-head 自由学习位置衰减模式）
+    # R36-3 新特性
+    kv_cache_int8: bool = False        # KV cache int8 量化（增量解码 cache 存 int8+scale，内存减 4x；仅标准 attn 路径生效，MLA 已压缩不复用）
+    # R36-4b 新特性
+    gated_delta_chunk_scan: bool = False  # GatedDeltaNet S 更新 chunk-wise 矩阵前缀扫描（O(T log T) 替代 O(T²)，opt-in 默认关）
+    gated_delta_chunk_size: int = 16       # chunk-wise 扫描的 chunk 大小（T=64 → 4 chunks，log(4)=2 轮扫描）
 
     def __post_init__(self):
         _VALID = {'attn', 'linear', 'linear2d', 'attn_linear', 'hybrid_linear2d', 'diff', 'gated_delta'}
@@ -145,6 +150,9 @@ class ModelConfig:
     dropout: float = 0.0
     tie_weights: bool = True
     gradient_checkpointing: bool = True
+    # R36-1: 自动禁用 gradient_checkpointing（小模型重算纯浪费，已知 +47% 加速）。
+    # opt-in 默认关；开启时根据激活内存启发式判断是否自动关闭 gradient_checkpointing。
+    grad_ckpt_auto: bool = False
     layer_plan: Optional[str] = None
     rope_base: float = ROPE_BASE
     rope_max_len: Optional[int] = None  # None → 用 max_seq_length
@@ -258,6 +266,9 @@ class ModelConfig:
             gpas=bool(mc.get('gpas', False)),
             gpas_alpha_init=float(mc.get('gpas_alpha_init', 0.5)),
             alibi_learnable=bool(mc.get('alibi_learnable', False)),
+            kv_cache_int8=bool(mc.get('kv_cache_int8', False)),
+            gated_delta_chunk_scan=bool(mc.get('gated_delta_chunk_scan', False)),
+            gated_delta_chunk_size=int(mc.get('gated_delta_chunk_size', 16)),
         )
         memory = MemoryConfig(
             size=mc.get('memory_size', 0),
@@ -279,6 +290,7 @@ class ModelConfig:
             dropout=mc.get('dropout', 0.0),
             tie_weights=mc.get('tie_weights', True),
             gradient_checkpointing=mc.get('gradient_checkpointing', True),
+            grad_ckpt_auto=bool(mc.get('grad_ckpt_auto', False)),
             layer_plan=mc.get('layer_plan', None),
             rope_base=mc.get('rope_base', ROPE_BASE),
             rope_max_len=mc.get('rope_max_len', None),

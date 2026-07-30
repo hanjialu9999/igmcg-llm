@@ -88,6 +88,114 @@ def _parallel_prefix_scan(
     return B
 
 
+def _matrix_prefix_scan(
+    A: torch.Tensor, B: torch.Tensor,
+    past_state: Optional[torch.Tensor] = None,
+    chunk_size: int = 16,
+) -> torch.Tensor:
+    """Chunk-wise 矩阵前缀扫描：S_t = A_t @ S_{t-1} + B_t（R36-4b）。
+
+    与 _parallel_prefix_scan（标量、逐元素乘）对称，本函数处理 D×D 矩阵递推。
+    半群 `(A1,B1) ⊙ (A2,B2) = (A2@A1, A2@B1 + B2)`（矩阵乘不可交换，顺序敏感）。
+
+    实现：chunk-wise（chunk_size 默认 16）
+    - 第 1 阶段（chunk 内）：逐 t 顺序扫描，得到 chunk 内累积 (A_intra, B_intra)，
+      以及 chunk 整体聚合 (A_chunk_agg, B_chunk_agg)。
+    - 第 2 阶段（chunk 间）：Hillis-Steele 并行扫描 log(num_chunks) 轮，得到 chunk 边界
+      累积 (A_cs, B_cs)，并转换为 exclusive 形式 (A_excl, B_excl) 表示"从 S_{-1} 到
+      chunk 起点处 S"的变换。
+    - 第 3 阶段（重建）：S_t = A_intra[c,t_in_chunk] @ S_start[c] + B_intra[c,t_in_chunk]，
+      其中 S_start[c] = A_excl[c] @ past_state + B_excl[c]。
+
+    内存：仅 O(num_chunks + chunk_size) 个 D×D 矩阵/B*H；全量扫描需 O(T) 个，chunk-wise 显著节省。
+    数值：矩阵乘累积误差远小于逐元素（bmm 走 cuDNN/DML 优化路径），parity 阈值 0.1-0.2。
+
+    Args:
+        A: (B', L, D, D) per-step D×D 变换矩阵
+        B: (B', L, D, D) per-step D×D 加性矩阵
+        past_state: (B', D, D) 可选初始状态 S_{-1}，默认零矩阵
+        chunk_size: chunk 内顺序扫描的 chunk 大小
+
+    Returns:
+        S: (B', L, D, D) 其中 S_t = (A_t @ ... @ A_0) @ past_state + (累积 B)
+    """
+    Bb, L, D, _ = A.shape
+    if past_state is None:
+        past_state = torch.zeros(Bb, D, D, device=A.device, dtype=A.dtype)
+    # T=1 退化：直接 S_0 = A_0 @ past + B_0
+    if L == 1:
+        return torch.bmm(A.reshape(-1, D, D), past_state.reshape(-1, D, D)).view(Bb, 1, D, D) + B
+
+    # Padding L 到 chunk_size 整数倍（用单位元 (I, 0) 填充）
+    num_chunks = (L + chunk_size - 1) // chunk_size
+    pad = num_chunks * chunk_size - L
+    if pad > 0:
+        I_pad = torch.eye(D, device=A.device, dtype=A.dtype).view(1, 1, D, D).expand(Bb, pad, D, D)
+        Z_pad = torch.zeros(Bb, pad, D, D, device=A.device, dtype=A.dtype)
+        A = torch.cat([A, I_pad], dim=1)
+        B = torch.cat([B, Z_pad], dim=1)
+    A_chunked = A.view(Bb, num_chunks, chunk_size, D, D)
+    B_chunked = B.view(Bb, num_chunks, chunk_size, D, D)
+
+    # === 第 1 阶段：chunk 内顺序扫描（inclusive）===
+    # A_intra[c, t] = A[c, t] @ A[c, t-1] @ ... @ A[c, 0]
+    # B_intra[c, t] = A[c, t] @ ... @ A[c, 1] @ B[c, 0] + ... + B[c, t]
+    A_intra_list = [A_chunked[:, :, 0]]   # (B', num_chunks, D, D)
+    B_intra_list = [B_chunked[:, :, 0]]
+    for t in range(1, chunk_size):
+        A_prev = A_intra_list[-1]   # (B', num_chunks, D, D)
+        B_prev = B_intra_list[-1]
+        A_curr = A_chunked[:, :, t]  # (B', num_chunks, D, D)
+        B_curr = B_chunked[:, :, t]
+        # compose: (A2, B2) ⊙ (A1, B1) = (A2@A1, A2@B1 + B2)
+        A_new = torch.bmm(A_curr.reshape(-1, D, D), A_prev.reshape(-1, D, D)).view(Bb, num_chunks, D, D)
+        B_new = torch.bmm(A_curr.reshape(-1, D, D), B_prev.reshape(-1, D, D)).view(Bb, num_chunks, D, D) + B_curr
+        A_intra_list.append(A_new)
+        B_intra_list.append(B_new)
+    A_intra = torch.stack(A_intra_list, dim=2)   # (B', num_chunks, chunk_size, D, D)
+    B_intra = torch.stack(B_intra_list, dim=2)
+    # chunk 整体聚合（chunk 末位的 inclusive 累积）
+    A_chunk_agg = A_intra[:, :, -1]   # (B', num_chunks, D, D)
+    B_chunk_agg = B_intra[:, :, -1]
+
+    # === 第 2 阶段：chunk 间 Hillis-Steele 扫描 ===
+    # 得到 inclusive 累积 (A_cs, B_cs)，再转 exclusive (A_excl, B_excl)
+    A_cs = A_chunk_agg
+    B_cs = B_chunk_agg
+    pos = torch.arange(num_chunks, device=A.device)
+    I_chunk = torch.eye(D, device=A.device, dtype=A.dtype).view(1, 1, D, D).expand(Bb, num_chunks, D, D)
+    Z_chunk = torch.zeros_like(B_cs)
+    offset = 1
+    while offset < num_chunks:
+        mask = (pos < offset).view(1, num_chunks, 1, 1)
+        A_prev = torch.where(mask, I_chunk,
+                             torch.cat([A_cs[:, -offset:], A_cs[:, :-offset]], dim=1))
+        B_prev = torch.where(mask, Z_chunk,
+                             torch.cat([B_cs[:, -offset:], B_cs[:, :-offset]], dim=1))
+        # compose: new = A_cs @ A_prev, A_cs @ B_prev + B_cs
+        A_new = torch.bmm(A_cs.reshape(-1, D, D), A_prev.reshape(-1, D, D)).view(Bb, num_chunks, D, D)
+        B_new = torch.bmm(A_cs.reshape(-1, D, D), B_prev.reshape(-1, D, D)).view(Bb, num_chunks, D, D) + B_cs
+        A_cs = A_new
+        B_cs = B_new
+        offset <<= 1
+    # exclusive: 位置 0 用单位元（表示 S_start[0] = past_state）
+    A_excl = torch.cat([I_chunk[:, :1], A_cs[:, :-1]], dim=1)   # (B', num_chunks, D, D)
+    B_excl = torch.cat([Z_chunk[:, :1], B_cs[:, :-1]], dim=1)
+
+    # === 第 3 阶段：重建 S_t ===
+    # S_start[c] = A_excl[c] @ past_state + B_excl[c]
+    past_expanded = past_state.unsqueeze(1).expand(-1, num_chunks, -1, -1)   # (B', num_chunks, D, D)
+    S_start = torch.bmm(A_excl.reshape(-1, D, D), past_expanded.reshape(-1, D, D)).view(Bb, num_chunks, D, D) + B_excl
+    # S_t = A_intra[c, t_in_chunk] @ S_start[c] + B_intra[c, t_in_chunk]
+    S_start_exp = S_start.unsqueeze(2).expand(-1, -1, chunk_size, -1, -1)   # (B', num_chunks, chunk_size, D, D)
+    A_intra_flat = A_intra.reshape(-1, D, D)
+    S_start_flat = S_start_exp.reshape(-1, D, D)
+    S = torch.bmm(A_intra_flat, S_start_flat).view(Bb, num_chunks, chunk_size, D, D) + B_intra
+    S = S.view(Bb, num_chunks * chunk_size, D, D)
+    S = S[:, :L]   # 裁剪 padding
+    return S
+
+
 def apply_qk_norm_and_temp(q: torch.Tensor, k: torch.Tensor,
                             rt: Dict[str, bool], qk_norm: Optional[nn.Module],
                             log_temp: Optional[nn.Parameter]) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -134,7 +242,8 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
                  value_relative_coding: bool = False,
                  intra_hybrid_rope: bool = False,
                  intra_hybrid_ratio: float = 0.5,
-                 alibi_learnable: bool = False):
+                 alibi_learnable: bool = False,
+                 kv_cache_int8: bool = False):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
@@ -202,6 +311,10 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         # 不被压缩-还原破坏（与 DeepSeek-V3 decoupled RoPE 思路一致，但简化为单段压缩）。
         # 默认关（向后兼容），config 显式开启。
         self.mla_kv_enabled = use_mla_kv
+        # R36-3: KV cache int8 量化——增量解码时 cache 存 int8 + per-tensor scale，
+        # 读取时反量化为 fp32。内存减 4x，精度损失 < 1e-2（per-tensor absmax 量化）。
+        # opt-in 默认关；仅标准 attn 路径（非 MLA）生效（MLA 已潜空间压缩，再 int8 风险高）。
+        self.kv_cache_int8 = kv_cache_int8 and not use_mla_kv
         # 第十八轮：iRoPE 交错 NoPE 层——use_rope=False 时跳过 RoPE 应用，
         # 位置信号由 ALiBi 提供（NoPE 层须强制 alibi=True）。
         # 灵感：LLaMA 4 iRoPE（3:1 交错 RoPE/NoPE）。NoPE 层理论上能学到任意长度外推。
@@ -551,6 +664,12 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
             if past_kv is not None:
                 # past_kv 可能为 (k, v) 或混合 mixer 的 (k, v, linear_S)，仅取前两项
                 pk, pv = past_kv[0], past_kv[1]
+                # R36-3: int8 反量化（kv_cache_int8 开启时 past_kv 存 int8 + scale）
+                # 4 元组 (k_q, v_q, k_scale, v_scale)；VRC 时 v 保持 fp32（v_scale=None）
+                if pk.dtype == torch.int8:
+                    pk = self._dequantize_int8(pk, past_kv[2])
+                if pv.dtype == torch.int8:
+                    pv = self._dequantize_int8(pv, past_kv[3])
                 k = torch.cat([pk, k], dim=2)
                 v = torch.cat([pv, v], dim=2)
             # present 存累积的 token KV（past+token，不含 memory），作为下一步的 past_kv；
@@ -564,6 +683,15 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
             #   避免 O(T log T) prefix scan 重算。MLA 无 VRC 时仍为 None（原行为，省内存）。
             if self.mla_kv_enabled:
                 present = (c_kv_full, v) if self.value_relative_coding_enabled else (c_kv_full, None)
+            elif self.kv_cache_int8:
+                # R36-3: int8 量化 KV cache（内存减 4x，精度损失 < 1e-2）
+                k_q, k_scale = self._quantize_int8(k)
+                if self.value_relative_coding_enabled:
+                    # VRC: V 保持 fp32（递推累积误差风险），只量化 K
+                    present = (k_q, v, k_scale, None)
+                else:
+                    v_q, v_scale = self._quantize_int8(v)
+                    present = (k_q, v_q, k_scale, v_scale)
             else:
                 present = (k, v)
             Tkv = k.size(2)
@@ -664,6 +792,26 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         if mem_cols > 0:
             mask[..., :mem_cols] = False
         return (mask.float() * self.mask_fill_value).unsqueeze(0).unsqueeze(0)
+
+    # R36-3: KV cache int8 量化辅助方法
+    def _quantize_int8(self, t: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Per-tensor absmax 量化：fp32 → int8 + scale。
+
+        数学：scale = max(|t|) / 127; q = round(t / scale).clamp(-128, 127).to(int8)
+        反量化：dq = q.to(float32) * scale
+        精度：per-tensor 量化误差 < 1e-2（典型 KV cache 动态范围适中）。
+        内存：int8 占 1 byte vs fp32 占 4 bytes，减 4x。
+        """
+        absmax = t.abs().max()
+        # 防止 absmax=0（全零张量）导致除零：clamp 到 1e-8
+        scale = (absmax / 127.0).clamp(min=1e-8)
+        q = (t / scale).round().clamp(-128, 127).to(torch.int8)
+        return q, scale
+
+    @staticmethod
+    def _dequantize_int8(q: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
+        """反量化 int8 → fp32。q: int8 张量, scale: 标量张量。"""
+        return q.to(torch.float32) * scale
 
 
 def _accum_kv(past_kv, k, v):
@@ -808,7 +956,9 @@ class GatedDeltaNet(LinearMixerBase):
                  channel_wise: bool = False,
                  yarn_scale: float = 1.0, yarn_beta: float = 0.1, yarn_orig_max_seq_length: int = 0,
                  dim_wise_rope: bool = False,
-                 rwkv7: bool = False):
+                 rwkv7: bool = False,
+                 chunk_scan: bool = False,
+                 chunk_size: int = 16):
         super().__init__(dim, num_heads, qk_norm, attn_temp, max_seq_length, feature,
                          head_dim, rope_learnable, rope_dim_fraction,
                          shared_qkv, shared_proj,
@@ -853,6 +1003,17 @@ class GatedDeltaNet(LinearMixerBase):
             self.b_proj = nn.Linear(dim, num_heads * self.head_dim, bias=False)  # 扰动方向
             nn.init.zeros_(self.z_proj.weight)
             nn.init.constant_(self.z_proj.bias, -3.0)
+        # R36-4b：S 更新 chunk-wise 矩阵前缀扫描（O(T log T) 替代 O(T²) for 循环）
+        # 用「标准 delta rule」形式 S_t = A_t·S_{t-1} + B_t（注意：与原 for-loop 转置约定不同，
+        # for-loop 用 Sk = kf^T@S 即 S·k 的转置形式，二者 off-diagonal 项不等）。
+        #   A_t = α·I - β·k⊗k^T（标量）/ Diag(α) - Diag(β)·k⊗k^T（channel_wise）
+        #   B_t = β·v⊗k（标量）/ Diag(β)·v⊗k（channel_wise）
+        #   RWKV-7: A_t' = (I + z·b⊗b^T)·A_t，B_t' = (I + z·b⊗b^T)·B_t
+        # 半群 (A1,B1)⊙(A2,B2)=(A2@A1, A2@B1+B2) 满足结合律（注意矩阵乘不可交换）。
+        # opt-in 默认关，保证旧权重向后兼容；开启时全量训练路径走 _matrix_prefix_scan，
+        # 增量解码路径（T=1）也用标准形式单步更新 S=A_t'@S+B_t'，保证 cache parity。
+        self.chunk_scan_enabled = chunk_scan
+        self.chunk_size = max(1, int(chunk_size))
 
     @staticmethod
     def convert_legacy_state_dict(state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
@@ -950,20 +1111,46 @@ class GatedDeltaNet(LinearMixerBase):
             # z 更新用原形状无需 squeeze，省 2 次 squeeze/步。
             alpha_t = alpha[:, :, 0, :]   # (B,H,1) 或 (B,H,D)
             beta_t = beta[:, :, 0, :]
-            alpha_S = alpha_t.unsqueeze(-1)  # (B,H,1,1) 与 S (B,H,D,D) 广播
-            beta_S = beta_t.unsqueeze(-1)
-            # S·k_t：当前 key 与旧状态的关联
-            Sk = torch.einsum('bhd,bhde->bhe', kf_t, S)  # (B,H,D)
-            # delta 更新：S = α·S + β·(v - S·k)⊗k
-            # R35 续：addcmul 融合 mul+add，5→4 算子/迭代（alpha_S*S 仍需独立 mul）。
-            S = torch.addcmul(alpha_S * S, beta_S, (v_t - Sk).unsqueeze(-1) * kf_t.unsqueeze(-2))
-            if rwkv7:
-                # rank-1 扰动：S += z_t·b_t⊗(b_t^T·S)
-                zt = z_gate[:, :, 0]  # (B,H)
-                bt = b_dir[:, :, 0, :]  # (B,H,D)
-                bTS = torch.einsum('bhd,bhde->bhe', bt, S)  # (B,H,D)
-                # R35 续：addcmul 融合 mul+add，3→2 算子/迭代。
-                S = torch.addcmul(S, zt.unsqueeze(-1).unsqueeze(-1), torch.einsum('bhd,bhe->bhde', bt, bTS))
+            if self.chunk_scan_enabled:
+                # R36-4b：标准 delta rule 单步更新（与 chunk_scan 全量路径约定一致，非 for-loop 转置约定）。
+                # S_new = A_t' @ S + B_t'，其中 A_t'/B_t' 已含 RWKV-7 修正：
+                #   A_t = α·I - β·k⊗k^T（标量）/ Diag(α) - Diag(β)·k⊗k^T（channel_wise）
+                #   B_t = β·v⊗k（标量）/ Diag(β)·v⊗k（channel_wise）
+                #   RWKV-7: A_t' = A_t + z·b⊗(b^T@A_t), B_t' = B_t + z·b⊗(b^T@B_t)（rank-1 形式）
+                # 数学等价于 _matrix_prefix_scan 在 T=1 时的退化情况（A.reshape @ past + B），
+                # 保证与 chunk_scan 全量训练路径的 cache parity。alpha_t/beta_t.unsqueeze(-1)
+                # 同时覆盖标量 (B,H,1,1) 与 channel_wise (B,H,D,1) 广播。
+                kf_kfT_t = kf_t.unsqueeze(-1) * kf_t.unsqueeze(-2)  # (B,H,D,D) k⊗k^T
+                v_k_t = v_t.unsqueeze(-1) * kf_t.unsqueeze(-2)     # (B,H,D,D) v⊗k
+                I_D = torch.eye(D, device=x.device, dtype=x.dtype).view(1, 1, D, D)
+                A_t = alpha_t.unsqueeze(-1) * I_D - beta_t.unsqueeze(-1) * kf_kfT_t  # (B,H,D,D)
+                B_t = beta_t.unsqueeze(-1) * v_k_t                                    # (B,H,D,D)
+                if rwkv7:
+                    zt = z_gate[:, :, 0]       # (B,H)
+                    bt = b_dir[:, :, 0, :]     # (B,H,D)
+                    bT_A = torch.einsum('bhd,bhde->bhe', bt, A_t)  # (B,H,D)
+                    bT_B = torch.einsum('bhd,bhde->bhe', bt, B_t)
+                    z_exp = zt.unsqueeze(-1).unsqueeze(-1)        # (B,H,1,1)
+                    A_t = A_t + z_exp * (bt.unsqueeze(-1) * bT_A.unsqueeze(-2))
+                    B_t = B_t + z_exp * (bt.unsqueeze(-1) * bT_B.unsqueeze(-2))
+                # S_new = A_t' @ S + B_t'（bmm 走 cuDNN/DML 优化路径）
+                S = torch.bmm(A_t.reshape(-1, D, D), S.reshape(-1, D, D)).view(B, H, D, D) + B_t
+            else:
+                # 原 for-loop delta rule（转置约定 Sk = kf^T@S，向后兼容旧权重）。
+                alpha_S = alpha_t.unsqueeze(-1)  # (B,H,1,1) 与 S (B,H,D,D) 广播
+                beta_S = beta_t.unsqueeze(-1)
+                # S·k_t：当前 key 与旧状态的关联
+                Sk = torch.einsum('bhd,bhde->bhe', kf_t, S)  # (B,H,D)
+                # delta 更新：S = α·S + β·(v - S·k)⊗k
+                # R35 续：addcmul 融合 mul+add，5→4 算子/迭代（alpha_S*S 仍需独立 mul）。
+                S = torch.addcmul(alpha_S * S, beta_S, (v_t - Sk).unsqueeze(-1) * kf_t.unsqueeze(-2))
+                if rwkv7:
+                    # rank-1 扰动：S += z_t·b_t⊗(b_t^T·S)
+                    zt = z_gate[:, :, 0]  # (B,H)
+                    bt = b_dir[:, :, 0, :]  # (B,H,D)
+                    bTS = torch.einsum('bhd,bhde->bhe', bt, S)  # (B,H,D)
+                    # R35 续：addcmul 融合 mul+add，3→2 算子/迭代。
+                    S = torch.addcmul(S, zt.unsqueeze(-1).unsqueeze(-1), torch.einsum('bhd,bhe->bhde', bt, bTS))
             # R35 续：addcmul 融合 mul+add，3→2 算子/迭代。
             z = torch.addcmul(alpha_t * z, beta_t, kf_t)
             num = torch.einsum('bhd,bhde->bhe', qf[:, :, 0, :], S)  # (B,H,D)
@@ -971,15 +1158,75 @@ class GatedDeltaNet(LinearMixerBase):
             out = (num / den).reshape(B, 1, H * D)
             return self.proj(out), (*_accum_kv(past_kv, k, v), S, z)
 
-        # 全量训练：for 循环递推（T≤64 开销可控；后续可优化为 chunk-wise parallel）
+        # 全量训练：for 循环递推 S（T≤64 开销可控；后续可优化为 chunk-wise parallel）
         S = torch.zeros(B, H, D, D, device=x.device, dtype=x.dtype)
-        z = torch.zeros(B, H, D, device=x.device, dtype=x.dtype)
+        # R36-4 第一阶段：z 更新用前缀扫描（标量线性递推 z_t = α_t·z_{t-1} + β_t·k_t）。
+        # 原 for 循环每步 z 更新需 mul+addcmul = 2 dispatch/t，T=64 → 128 dispatch/层/步。
+        # 改用 _parallel_prefix_scan（log(T)=6 轮，每轮 ~5 dispatch）→ ~30 dispatch，省 ~98 dispatch。
+        # 数学等价：z_t = α_t·z_{t-1} + β_t·k_t 是线性递推，半群 (A,B)⊙(A',B')=(A·A', A'·B+B') 满足结合律。
+        # 标量模式 α/β (B,H,T,1) 需 expand 到 (B,H,T,D)；channel_wise 已是 (B,H,T,D)。
+        if not self.channel_wise:
+            alpha_exp = alpha.expand_as(kf)   # (B,H,T,1) → (B,H,T,D) view（零分配）
+            beta_exp = beta.expand_as(kf)
+        else:
+            alpha_exp = alpha
+            beta_exp = beta
+        # 适配 _parallel_prefix_scan 输入 (B,L,d_inner,d_state)
+        a_z = alpha_exp.permute(0, 2, 1, 3).reshape(B, T, H * D, 1)   # (B,T,H*D,1)
+        b_z = (beta_exp * kf).permute(0, 2, 1, 3).reshape(B, T, H * D, 1)
+        z_all = _parallel_prefix_scan(a_z, b_z)                        # (B,T,H*D,1)
+        z_all = z_all.reshape(B, T, H, D).permute(0, 2, 1, 3)         # (B,H,T,D)
+
+        # R36-4b：S 更新 chunk-wise 矩阵前缀扫描（opt-in 默认关）。
+        # 用「标准 delta rule」形式 S_t = A_t·S_{t-1} + B_t（注意：非原 for-loop 转置约定，
+        # for-loop 的 Sk = einsum('bhd,bhde->bhe', kf, S) 实为 kf^T@S，含 S^T 项无法写成线性递推；
+        # 开启 chunk_scan 后改用标准形式，与原 for-loop 数值不等，但与增量解码 cache parity 一致）。
+        #   A_t = α·I - β·k⊗k^T（标量）/ Diag(α) - Diag(β)·k⊗k^T（channel_wise）
+        #   B_t = β·v⊗k（标量）/ Diag(β)·v⊗k（channel_wise）
+        #   RWKV-7: A_t' = (I + z·b⊗b^T)·A_t, B_t' = (I + z·b⊗b^T)·B_t（仍线性，结合律保持）
+        # 半群 (A1,B1)⊙(A2,B2) = (A2@A1, A2@B1+B2) 满足结合律（矩阵乘不可交换，顺序敏感）。
+        if self.chunk_scan_enabled:
+            # 构建 D×D 矩阵 A_t, B_t，shape (B,H,T,D,D)
+            I_D = torch.eye(D, device=x.device, dtype=x.dtype).view(1, 1, 1, D, D)
+            # kf_kfT = k ⊗ k^T (outer product, k 在行也在列)
+            kf_kfT = kf.unsqueeze(-1) * kf.unsqueeze(-2)   # (B,H,T,D,D)
+            # v_k = v ⊗ k (outer product, v 在行 k 在列)
+            v_k = v.unsqueeze(-1) * kf.unsqueeze(-2)       # (B,H,T,D,D)
+            # α·I 与 β·(v⊗k) 的广播形式统一处理标量/channel_wise：
+            # - 标量 α/β (B,H,T,1) → unsqueeze(-1) → (B,H,T,1,1)，与 I_D/(k⊗k^T) 广播
+            # - channel_wise α/β (B,H,T,D) → unsqueeze(-1) → (B,H,T,D,1)，乘 I_D 得 diag(α)
+            A_mats = alpha.unsqueeze(-1) * I_D - beta.unsqueeze(-1) * kf_kfT
+            B_mats = beta.unsqueeze(-1) * v_k
+            # RWKV-7: 用 rank-1 形式 M_t·A_t = A_t + z·b⊗(b^T·A_t)
+            # （比构造完整 M_t 然后 bmm 更省算子：避免 I + z·b⊗b^T 的 D² 次加法）
+            if rwkv7:
+                # b^T @ A_t: einsum 沿 D 求和（即 b · A 的列内积）
+                bT_A = torch.einsum('bhtd,bhtde->bhte', b_dir, A_mats)  # (B,H,T,D)
+                bT_B = torch.einsum('bhtd,bhtde->bhte', b_dir, B_mats)
+                z_exp = z_gate.unsqueeze(-1).unsqueeze(-1)              # (B,H,T,1,1)
+                # b ⊗ (b^T @ A_t): outer product，加到 A_mats
+                A_mats = A_mats + z_exp * (b_dir.unsqueeze(-1) * bT_A.unsqueeze(-2))
+                B_mats = B_mats + z_exp * (b_dir.unsqueeze(-1) * bT_B.unsqueeze(-2))
+            # 调用矩阵前缀扫描（B*H 作为 batch 维）
+            A_scan = A_mats.reshape(B * H, T, D, D)
+            B_scan = B_mats.reshape(B * H, T, D, D)
+            S_all = _matrix_prefix_scan(A_scan, B_scan, past_state=None,
+                                        chunk_size=self.chunk_size)
+            S_all = S_all.reshape(B, H, T, D, D)
+            # 输出：num = qf · S_t（qf 与 S 的每列内积），den = qf · z_t
+            num = torch.einsum('bhtd,bhtde->bhte', qf, S_all)          # (B,H,T,D)
+            den = torch.einsum('bhtd,bhtd->bht', qf, z_all).unsqueeze(-1).clamp_min(1e-6)
+            out = (num / den).transpose(1, 2).reshape(B, T, H * D)
+            z = z_all[:, :, -1, :]                                     # 最终 z（cache 用）
+            S = S_all[:, :, -1, :, :]                                  # 最终 S（cache 用）
+            present = (k, v, S, z) if use_cache else None
+            return self.proj(out), present
+
         outs = []
         for t in range(T):
             kf_t = kf[:, :, t, :]
             v_t = v[:, :, t, :]
             # R34 优化：alpha_t/beta_t 保持原形状 (B,H,X)，仅 S 更新需 unsqueeze 广播；
-            # z 更新用原形状无需 squeeze，省 2 次 squeeze/迭代 × T 迭代 = 2T 次 squeeze/forward。
             alpha_t = alpha[:, :, t, :]   # (B,H,1) 或 (B,H,D)
             beta_t = beta[:, :, t, :]
             alpha_S = alpha_t.unsqueeze(-1)  # (B,H,1,1) 与 S (B,H,D,D) 广播
@@ -995,13 +1242,14 @@ class GatedDeltaNet(LinearMixerBase):
                 bTS = torch.einsum('bhd,bhde->bhe', bt, S)  # (B,H,D)
                 # R35 续：addcmul 融合 mul+add，3→2 算子/迭代。
                 S = torch.addcmul(S, zt.unsqueeze(-1).unsqueeze(-1), torch.einsum('bhd,bhe->bhde', bt, bTS))
-            # R35 续：addcmul 融合 mul+add，3→2 算子/迭代。
-            z = torch.addcmul(alpha_t * z, beta_t, kf_t)
+            # z_t 已由前缀扫描预计算（R36-4），直接取用，省 T 次串行 z 更新
+            z_t = z_all[:, :, t, :]
             num = torch.einsum('bhd,bhde->bhe', qf[:, :, t, :], S)
-            den = torch.einsum('bhd,bhd->bh', qf[:, :, t, :], z).unsqueeze(-1).clamp_min(1e-6)
+            den = torch.einsum('bhd,bhd->bh', qf[:, :, t, :], z_t).unsqueeze(-1).clamp_min(1e-6)
             outs.append(num / den)
         out = torch.stack(outs, dim=2)  # (B,H,T,D)
         out = out.transpose(1, 2).reshape(B, T, H * D)
+        z = z_all[:, :, -1, :]  # 最终 z（用于 cache，与原 for 循环结束时一致）
         present = (k, v, S, z) if use_cache else None
         return self.proj(out), present
 

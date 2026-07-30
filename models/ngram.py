@@ -104,7 +104,15 @@ class NGramModel:
     # ------------------------------------------------------------------
     def _interp_weights(self, order):
         """返回 order 阶插值的子阶权重 (w1, w2, ..., w_{order})，归一化和为 1。
-        默认方案：指数衰减，高阶权重更大（如 order=3 → 0.1/0.3/0.6）。"""
+        默认方案：指数衰减，高阶权重更大（如 order=3 → 0.1/0.3/0.6）。
+
+        性能优化（第三十六轮-2）：order 范围固定 2..max_order，权重只依赖
+        l1/l2/l3（__init__ 后不变），故首次计算后缓存，省去每次的列表推导+
+        求和+归一化（约 order 次浮点 × K-1 阶 × U 唯一上下文）。"""
+        if not hasattr(self, '_interp_w_cache'):
+            self._interp_w_cache: Dict[int, List[float]] = {}
+        if order in self._interp_w_cache:
+            return self._interp_w_cache[order]
         if order <= 3:
             # 向后兼容：保留原 l1/l2/l3
             ws = [self.l1, self.l2, self.l3][:order]
@@ -112,7 +120,9 @@ class NGramModel:
             # 泛化：指数衰减 w_i = 0.5^(order-i)，归一化
             ws = [0.5 ** (order - i) for i in range(1, order + 1)]
         s = sum(ws)
-        return [w / s for w in ws]
+        ws = [w / s for w in ws]
+        self._interp_w_cache[order] = ws
+        return ws
 
     def _ensure_dev_caches(self, device):
         """惰性设备缓存：首次访问某设备时，一次性把 uni_prob + ngram_tensors 传到 device。
@@ -145,24 +155,32 @@ class NGramModel:
         uni = self._uni_dev_tensor                     # (V,) 已归一化 unigram
         # (K-1, V) 背景：各高阶阶从 unigram 起步，逐阶独立叠加自身命中修正
         base = uni.unsqueeze(0).expand(K - 1, V).clone()   # (K-1, V)
+        # R36-2: 预取 _ngt_dev 引用，避免循环内重复 .get(order, {}) 创建空 dict
+        ngt_dev = self._ngt_dev
+        n_ctx = len(ctx_tokens)
         for k in range(1, K):
             order = k + 1  # n-gram 阶数
-            if len(ctx_tokens) >= order - 1:
-                ctx = tuple(ctx_tokens[-(order - 1):])  # 最近 order-1 个 token
-            else:
-                ctx = None
-            if ctx is not None and ctx in self._ngt_dev.get(order, {}):
-                idx, p = self._ngt_dev[order][ctx]     # 已在 device，无需 .to(device)
-                ws = self._interp_weights(order)
-                w = ws[-1]
-                # vec[idx] = uni[idx] + w*(p - uni[idx])，其余位置保持 uni
-                # 性能优化（第三十轮）：原式 `w*p + (1-w)*uni[idx]` 6 算子，改
-                # `uni[idx] + w*(p-uni[idx])` 5 算子（结合律，与 R29.5 convex_combine
-                # 同模式），省 1 算子/循环。数学等价：w*p+(1-w)*u = u + w*(p-u)。
-                # 性能优化（第三十五轮续）：改用 torch.lerp（fused kernel，支持标量 weight），
-                # 5 算子→1 算子/循环。lerp(start, end, weight) = start + weight*(end-start)。
-                u_idx = uni[idx]
-                base[k - 1, idx] = torch.lerp(u_idx, p, w)
+            # R36-2: 提前检查长度 + order 是否存在，避免无效切片和空 dict 创建
+            need = order - 1
+            if n_ctx < need:
+                continue
+            ngram_dev = ngt_dev.get(order)
+            if ngram_dev is None:
+                continue
+            ctx = tuple(ctx_tokens[-need:])  # 最近 need 个 token
+            hit = ngram_dev.get(ctx)
+            if hit is None:
+                continue
+            idx, p = hit     # 已在 device，无需 .to(device)
+            w = self._interp_weights(order)[-1]  # R36-2: 已缓存，O(1) 查表
+            # vec[idx] = uni[idx] + w*(p - uni[idx])，其余位置保持 uni
+            # 性能优化（第三十轮）：原式 `w*p + (1-w)*uni[idx]` 6 算子，改
+            # `uni[idx] + w*(p-uni[idx])` 5 算子（结合律，与 R29.5 convex_combine
+            # 同模式），省 1 算子/循环。数学等价：w*p+(1-w)*u = u + w*(p-u)。
+            # 性能优化（第三十五轮续）：改用 torch.lerp（fused kernel，支持标量 weight），
+            # 5 算子→1 算子/循环。lerp(start, end, weight) = start + weight*(end-start)。
+            u_idx = uni[idx]
+            base[k - 1, idx] = torch.lerp(u_idx, p, w)
         # 逐阶归一化后取 log（每阶独立归一，与逐阶 vec/vec.sum() 完全等价）
         base = torch.log(base / base.sum(dim=-1, keepdim=True) + 1e-10)  # (K-1, V)
         out = torch.empty(V, K, device=device)
