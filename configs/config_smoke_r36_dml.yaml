@@ -1,0 +1,77 @@
+# R36-7 端到端训练验证：在 DML 后端跑通 MoE（topk backward 修复后）+ R36-1/3/5/6 全部新特性
+# 目的：验证 moe + early_exit + grad_ckpt_auto + kv_cache_int8 集成训练能在 DML 上跑通、loss 下降、aux loss 正常
+# 与 config_smoke_r36.yaml 相同模型（3 层/256dim/2 专家 MoE），仅切到 DML：device auto + sgd
+model:
+  vocab_size: 12000
+  embedding_dim: 256
+  num_heads: 4
+  num_layers: 3
+  hidden_dim: 512
+  max_seq_length: 64
+  dropout: 0
+  tie_weights: true
+  gradient_checkpointing: false      # 小模型无需重算，直接关
+  rope_base: 10000.0
+  rope_max_len: 4096
+  mask_fill_value: -1e9
+  layer_plan: null                    # 全注意力（不开 gated_delta，避免改 attention 机制让行为复杂）
+  ssm_d_state: 16
+  ssm_d_inner_factor: 1
+  ssm_dt_rank: null
+  ssm_conv_kernel: 3
+  ssm_dt_proj_bias_init: 0.1
+  ssm_a_log_init_range: [-1, 1]
+  ssm_D_init: 1.0
+  attn_window: 0
+  attn_rel_bias: false
+  fuse_swiglu: true                   # 算子融合加速
+  # ===== R36-1: gradient_checkpointing 自动禁用 =====
+  grad_ckpt_auto: true                # 小模型自动关 gc（此处已手动关，验证启发式逻辑）
+  # ===== R36-3: KV cache int8 量化（推理增量解码生效，训练期不生效）=====
+  kv_cache_int8: true
+  # ===== R36-5: 提前退出 Early Exit =====
+  early_exit: true
+  early_exit_layers: null             # null → 默认 [N-2, N-1] = [1, 2]
+  early_exit_threshold: 0.5           # 生成时推理全量前向的置信度阈值
+  early_exit_loss_weight: 0.5
+  # ===== R36-6: Mixture of Experts FFN =====
+  moe: true
+  moe_num_experts: 2                 # 最小专家数（验证 dense MoE 训练能跑）
+  moe_top_k: 1                       # top-1 路由（退化为单专家选择，最快）
+  moe_load_balance_weight: 0.01
+  moe_router_z_loss_weight: 0.001
+  moe_router_noise: 0.0
+  moe_layers: null                    # null → 全部层用 MoE
+
+training:
+  batch_size: 16
+  epochs: 1
+  learning_rate: 0.3                 # DML 用 sgd + 高 lr（与 config_full_dml.yaml 一致）
+  optimizer: sgd                     # DML 后端用 sgd（adamw 在 DML 上慢/不稳）
+  sgd_learning_rate: 0.3
+  momentum: 0.9
+  weight_decay: 0.0
+  gradient_clip: 1.0
+  warmup_steps: 0
+  early_stop_patience: 9999
+  label_smoothing: 0.0
+  cpu_threads: 4
+  precision: "fp32"
+  grad_accum_steps: 1
+  eta_min: 0.0
+  lr_schedule: "constant"
+  compile: false
+
+data:
+  train_file: "data/pretrain_corpus/merged_sample.txt"
+  vocab_size: 12000
+  max_seq_length: 64
+  num_workers: 0
+  test_split: 0.1
+
+paths:
+  checkpoint_dir: "checkpoints_smoke_r36_dml"
+  log_dir: "logs_smoke_r36_dml"
+
+device: "auto"                       # DML（R36-7 修复后 MoE backward 可用）
+seed: 42

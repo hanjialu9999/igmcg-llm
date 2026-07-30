@@ -424,9 +424,9 @@ def test_model_moe_use_cache_unchanged():
 def test_moe_runs_on_dml_device():
     """R36-6-33: MoE forward 在 DML 设备上跑通（验证无 gather/scatter，DML 友好）。
 
-    仅测 forward：DML 后端 autograd engine 有已知 device_ready_queues 限制（与 MoE
-    无关，是 privateuseone 通用问题）；MoE 梯度回流已在 test_moe_layer_gradient_flow
-    和 test_model_moe_backward_loss_decreases 于 CPU 上充分验证。
+    仅测 forward：DML backward 由 test_round36_7.py 覆盖（R36-7 修复 topk 仅选位置后，
+    DML 上 MoE backward/训练均可用；早期「device_ready_queues 限制」实为 pytest
+    assertion-rewriting 模式干扰，test_round36_7.py 顶部提前 import torch_directml 规避）。
     """
     try:
         dev = torch.device('privateuseone:0')
@@ -447,8 +447,8 @@ def test_moe_runs_on_dml_device():
 def test_model_moe_runs_on_dml_device():
     """R36-6-34: 完整 MoE 模型 forward 在 DML 设备上跑通（无 gather/scatter）。
 
-    backward 在 CPU 上由 test_model_moe_backward_loss_decreases 验证；
-    DML autograd engine 限制与 MoE 无关，故此处仅测 forward。
+    backward 在 DML 上由 test_round36_7.py::test_model_moe_dml_backward_full 覆盖
+    （R36-7 修复后可用）；此处保留 forward 断言。
     """
     try:
         dev = torch.device('privateuseone:0')

@@ -17,11 +17,17 @@ class MoELayer(nn.Module):
       - 输出: top-k 专家输出的加权和（路由权重归一化后）
 
     DML 兼容设计（关键约束）：
-      DirectML 后端不支持 gather/scatter 的 per-sample 动态索引。本模块采用
-      **dense 计算**——所有专家对所有 token 求值，再用广播比较构建 top-k 掩码
-      （element-wise == + any/sum，无 gather/scatter）。代价是损失了 MoE 的
-      FLOPs 节省（计算所有专家），但保证 DML 可运行；对小模型可接受。
-      路由稀疏性仍由组合权重（非 top-k 专家权重为 0）体现，负载均衡损失仍生效。
+      DirectML 后端有两个限制：(1) 不支持 gather/scatter 的 per-sample 动态索引；
+      (2) topk/max 的 backward 用 scatter 回传梯度，但 DML scatter 不支持
+      "partially modified dimensions"（R36-7 定位）。本模块应对：
+      - **dense 计算**：所有专家对所有 token 求值，再用广播比较构建 top-k 掩码
+        （element-wise == + any/sum，无 gather/scatter）。代价是损失了 MoE 的
+        FLOPs 节省（计算所有专家），但保证 DML 可运行；对小模型可接受。
+        路由稀疏性仍由组合权重（非 top-k 专家权重为 0）体现，负载均衡损失仍生效。
+      - **topk 仅选位置（R36-7 修复）**：topk_indices 在 torch.no_grad() 下获取
+        （绕过 topk backward 的 scatter 限制），组合权重改为
+        combined = routing_probs * topk_mask（可导，梯度经 routing_probs→softmax→router
+        回流）。数学/梯度均与原 topk_probs 路径等价（数值 0 diff 已验证）。
 
     辅助损失（forward 后存入 last_load_balance_loss / last_z_loss，
     由 TransformerModel.forward 累积，train.py 按各自权重加到主 loss）：
@@ -76,22 +82,30 @@ class MoELayer(nn.Module):
             router_logits = router_logits + self.router_noise * torch.randn_like(router_logits)
         routing_probs = F.softmax(router_logits, dim=-1)  # (N, E)
 
-        # --- Top-k 选择 ---
-        topk_probs, topk_indices = routing_probs.topk(self.top_k, dim=-1)  # (N, k)
-        # 归一化 top-k 概率（Σ over k = 1）；clamp 防 0 除
-        topk_probs = topk_probs / topk_probs.sum(dim=-1, keepdim=True).clamp(min=1e-9)
+        # --- Top-k 选择（DML 兼容：topk_indices 在 no_grad 下获取，绕过 topk backward 的 scatter 限制）---
+        # R36-7: DML 后端 topk/max 的 backward 用 scatter 回传梯度，但 DML scatter 不支持
+        # "partially modified dimensions"。故 topk 只用于选位置（detach），权重值取自
+        # routing_probs（可导），梯度经 routing_probs→softmax→router 回流，绕过 topk backward。
+        # 数学等价：combined[n,e] = routing_probs[n,e] if e∈topk else 0，归一化后与原
+        # (match * topk_probs).sum 数值相等；梯度等价：combined 对 routing_probs 梯度 = topk_mask
+        # （只 top-k 位置非零），经 softmax 映射到 router_logits 与原 topk backward scatter 一致。
+        with torch.no_grad():
+            _, topk_indices = routing_probs.topk(self.top_k, dim=-1)  # (N, k) 仅选位置，不回传梯度
+        expert_ids = torch.arange(self.num_experts, device=x_flat.device)  # (E,)
+        # topk_mask: (N, E) 0/1，每 token 选中的 top-k 专家（与原 match.any(dim=1) 等价；detached）
+        topk_mask = (topk_indices.unsqueeze(-1) == expert_ids.view(1, 1, -1)).any(dim=1).to(routing_probs.dtype)
 
         # --- Dense 专家计算（DML 友好：无 gather/scatter）---
         # 所有专家对所有 token 求值（损失 FLOPs 但保证 DML 可运行）
         # expert_outs: (N, E, D)
         expert_outs = torch.stack([expert(x_flat) for expert in self.experts], dim=1)
 
-        # --- 构建组合权重（DML 友好的广播比较，替代 gather/scatter）---
-        # match[n, k, e] = 1 if topk_indices[n, k] == e else 0  (element-wise 比较，无 gather)
-        expert_ids = torch.arange(self.num_experts, device=x_flat.device)  # (E,)
-        match = (topk_indices.unsqueeze(-1) == expert_ids.view(1, 1, -1)).to(x_flat.dtype)  # (N, k, E)
-        # combined[n, e] = Σ_k match[n,k,e] * topk_probs[n,k]  (非 top-k 专家为 0)
-        combined = (match * topk_probs.unsqueeze(-1)).sum(dim=1)  # (N, E)
+        # --- 构建组合权重（DML 友好 + 可导：routing_probs * topk_mask）---
+        # combined[n, e] = routing_probs[n,e] if e ∈ topk_indices[n] else 0
+        # 数值等价于原 (match * topk_probs).sum（topk_probs = gather(routing_probs)）；
+        # 梯度等价：combined 对 routing_probs 梯度 = topk_mask（只 top-k 位置非零），经 softmax 回流 router
+        combined = routing_probs * topk_mask  # (N, E) 可导
+        combined = combined / combined.sum(dim=-1, keepdim=True).clamp(min=1e-9)  # 归一化（与原 topk_probs/sum 等价）
 
         # --- 加权求和（element-wise 乘 + reduce，DML 原生支持）---
         # out[n, d] = Σ_e combined[n,e] * expert_outs[n,e,d]
@@ -102,7 +116,7 @@ class MoELayer(nn.Module):
             # 负载均衡损失：L_bal = E · Σ_i f_i · p_i
             # f_i = 选中专家 i 的 token 数占比（每 token 选 top_k 个 → Σ f_i = top_k → 归一化使 Σ=1）
             # any(dim=1): 每个 token 在 top-k 中是否选中专家 e（top-k 返回 distinct 索引，故 0/1）
-            selected = match.any(dim=1).to(x_flat.dtype)  # (N, E) 0/1
+            selected = topk_mask  # (N, E) 0/1，每 token 是否选中专家 e（detached，与原 match.any 一致）
             f_i = selected.mean(dim=0) / float(self.top_k)  # (E,) Σ=1
             p_i = routing_probs.mean(dim=0)  # (E,) Σ=1
             self.last_load_balance_loss = self.num_experts * (f_i * p_i).sum()

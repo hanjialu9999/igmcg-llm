@@ -944,9 +944,9 @@ class GatedDeltaNet(LinearMixerBase):
     与项目内 LinearAttention 同接口（project_and_norm + forward），mixer='gated_delta' 启用，
     默认关（AttnConfig.mixer 默认 'attn'，向后兼容）。
 
-    训练全量路径：T≤64 时用 for 循环递推（D·D 矩阵-向量乘开销小，循环开销可接受）。
-    增量解码：T=1 单步 delta 更新，O(D²) 内存。
-    TODO: 后续可优化为 chunk-wise parallel（DeltaNet 原论文做法）以支持更长训练序列。
+    训练全量路径：默认 for 循环递推（T≤64 开销可接受）；开启 gated_delta_chunk_scan 后用
+    _matrix_prefix_scan chunk-wise 矩阵前缀扫描（O(T log T) vs O(T²)，R36-4b 实现）。
+    增量解码：T=1 单步 delta 更新，O(D²) 内存（chunk_scan 开启时用标准 delta rule 单步 bmm，cache parity 保持）。
 
     参数:
         alpha_init: 衰减门偏置初值（init -2.0 → sigmoid≈0.12，弱遗忘起步，保留长程信息）
