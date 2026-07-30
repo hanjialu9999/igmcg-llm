@@ -130,7 +130,7 @@ def _matrix_prefix_scan(
     num_chunks = (L + chunk_size - 1) // chunk_size
     pad = num_chunks * chunk_size - L
     if pad > 0:
-        I_pad = torch.eye(D, device=A.device, dtype=A.dtype).view(1, 1, D, D).expand(Bb, pad, D, D)
+        I_pad = torch.eye(D, dtype=A.dtype).to(A.device).view(1, 1, D, D).expand(Bb, pad, D, D)
         Z_pad = torch.zeros(Bb, pad, D, D, device=A.device, dtype=A.dtype)
         A = torch.cat([A, I_pad], dim=1)
         B = torch.cat([B, Z_pad], dim=1)
@@ -163,7 +163,7 @@ def _matrix_prefix_scan(
     A_cs = A_chunk_agg
     B_cs = B_chunk_agg
     pos = torch.arange(num_chunks, device=A.device)
-    I_chunk = torch.eye(D, device=A.device, dtype=A.dtype).view(1, 1, D, D).expand(Bb, num_chunks, D, D)
+    I_chunk = torch.eye(D, dtype=A.dtype).to(A.device).view(1, 1, D, D).expand(Bb, num_chunks, D, D)
     Z_chunk = torch.zeros_like(B_cs)
     offset = 1
     while offset < num_chunks:
@@ -179,8 +179,13 @@ def _matrix_prefix_scan(
         B_cs = B_new
         offset <<= 1
     # exclusive: 位置 0 用单位元（表示 S_start[0] = past_state）
-    A_excl = torch.cat([I_chunk[:, :1], A_cs[:, :-1]], dim=1)   # (B', num_chunks, D, D)
-    B_excl = torch.cat([Z_chunk[:, :1], B_cs[:, :-1]], dim=1)
+    # num_chunks==1 时 A_cs[:,:-1] 为空 tensor，DML 后端不支持 cat 空 tensor，特判跳过。
+    if num_chunks == 1:
+        A_excl = I_chunk   # (B', 1, D, D) 即单位元
+        B_excl = Z_chunk
+    else:
+        A_excl = torch.cat([I_chunk[:, :1], A_cs[:, :-1]], dim=1)   # (B', num_chunks, D, D)
+        B_excl = torch.cat([Z_chunk[:, :1], B_cs[:, :-1]], dim=1)
 
     # === 第 3 阶段：重建 S_t ===
     # S_start[c] = A_excl[c] @ past_state + B_excl[c]
@@ -1122,7 +1127,7 @@ class GatedDeltaNet(LinearMixerBase):
                 # 同时覆盖标量 (B,H,1,1) 与 channel_wise (B,H,D,1) 广播。
                 kf_kfT_t = kf_t.unsqueeze(-1) * kf_t.unsqueeze(-2)  # (B,H,D,D) k⊗k^T
                 v_k_t = v_t.unsqueeze(-1) * kf_t.unsqueeze(-2)     # (B,H,D,D) v⊗k
-                I_D = torch.eye(D, device=x.device, dtype=x.dtype).view(1, 1, D, D)
+                I_D = torch.eye(D, dtype=x.dtype).to(x.device).view(1, 1, D, D)
                 A_t = alpha_t.unsqueeze(-1) * I_D - beta_t.unsqueeze(-1) * kf_kfT_t  # (B,H,D,D)
                 B_t = beta_t.unsqueeze(-1) * v_k_t                                    # (B,H,D,D)
                 if rwkv7:
@@ -1187,7 +1192,7 @@ class GatedDeltaNet(LinearMixerBase):
         # 半群 (A1,B1)⊙(A2,B2) = (A2@A1, A2@B1+B2) 满足结合律（矩阵乘不可交换，顺序敏感）。
         if self.chunk_scan_enabled:
             # 构建 D×D 矩阵 A_t, B_t，shape (B,H,T,D,D)
-            I_D = torch.eye(D, device=x.device, dtype=x.dtype).view(1, 1, 1, D, D)
+            I_D = torch.eye(D, dtype=x.dtype).to(x.device).view(1, 1, 1, D, D)
             # kf_kfT = k ⊗ k^T (outer product, k 在行也在列)
             kf_kfT = kf.unsqueeze(-1) * kf.unsqueeze(-2)   # (B,H,T,D,D)
             # v_k = v ⊗ k (outer product, v 在行 k 在列)
