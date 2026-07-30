@@ -201,6 +201,11 @@ class ModelConfig:
     # 第二十轮新特性
     aligned_training: bool = False       # 深度感知层间对齐（DALA：浅层对齐 x0，深层对齐前层，与 input_highway 对称）
     dim_wise_rope: bool = False          # 维度级 RoPE 动态分配（逐维度对选择旋转/不旋转，升级 Partial RoPE 的前缀切分）
+    # R36-5 新特性：动态深度/提前退出
+    early_exit: bool = False             # 提前退出（出口层添加辅助 CE 损失 + 推理时置信度阈值提前返回；opt-in 默认关）
+    early_exit_layers: Optional[List[int]] = None  # 出口层索引列表；None → 默认 [N-2, N-1]（倒数 2、1 层）
+    early_exit_threshold: float = 0.9    # 推理时退出的置信度阈值（softmax max prob 的批次+序列均值）
+    early_exit_loss_weight: float = 0.5  # 训练时辅助损失的总权重（L_total = L_main + λ * Σ_k w_k * CE_k）
 
     # n-gram
     ngram_fusion: bool = False
@@ -323,6 +328,10 @@ class ModelConfig:
             yarn_orig_max_seq_length=int(mc.get('yarn_orig_max_seq_length', 0)),
             aligned_training=bool(mc.get('aligned_training', False)),
             dim_wise_rope=bool(mc.get('dim_wise_rope', False)),
+            early_exit=bool(mc.get('early_exit', False)),
+            early_exit_layers=(list(mc.get('early_exit_layers')) if mc.get('early_exit_layers') is not None else None),
+            early_exit_threshold=float(mc.get('early_exit_threshold', 0.9)),
+            early_exit_loss_weight=float(mc.get('early_exit_loss_weight', 0.5)),
             ngram_fusion=mc.get('ngram_fusion', False),
             ngram_gate_scale=float(mc.get('ngram_gate_scale', 1.0)),
             igmcg=bool(mc.get('igmcg', False)),

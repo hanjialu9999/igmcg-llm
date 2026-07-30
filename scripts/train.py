@@ -228,18 +228,25 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
         # 让模型学会"何时依赖 IGMCG、何时靠自身"——否则 use 门控恒开、无自决意义。
         _igmcg_off = igmcg_sel_prob > 0.0 and random.random() < igmcg_sel_prob
         # Forward pass (optionally under autocast for mixed precision)
+        # R36-5: 训练期传入 targets 用于出口层辅助 CE 损失（early_exit 开启时生效；
+        #         关闭时 forward 内 targets 被忽略，无开销）
         if use_amp and amp_device is not None:
             with torch_autocast(amp_device, dtype=autocast_dtype):
-                logits = model(input_ids, igmcg_force_off=_igmcg_off).view(-1, model.vocab_size)
+                logits = model(input_ids, igmcg_force_off=_igmcg_off, targets=target_ids).view(-1, model.vocab_size)
                 loss = criterion(logits, target_ids.view(-1))
         else:
-            logits = model(input_ids, igmcg_force_off=_igmcg_off).view(-1, model.vocab_size)
+            logits = model(input_ids, igmcg_force_off=_igmcg_off, targets=target_ids).view(-1, model.vocab_size)
             loss = criterion(logits, target_ids.view(-1))
         # 第十四轮：层间对比绑定辅助损失——训练期 model._contrastive_loss 累积相邻层 (1-cos_sim)，
         # 以小权重（0.01）加入主 loss，防止深层过度偏离浅层特征。eval 时不计算（_contrastive_loss=None）。
         _cl = getattr(model, '_contrastive_loss', None)
         if _cl is not None:
             loss = loss + 0.01 * _cl
+        # R36-5: 提前退出辅助损失——训练期 model._early_exit_aux_loss 累积出口层加权 CE，
+        # 以 early_exit_loss_weight 加入主 loss（浅层出口权重大，鼓励浅层学到判别性）。
+        _ee = getattr(model, '_early_exit_aux_loss', None)
+        if _ee is not None:
+            loss = loss + model.early_exit_loss_weight * _ee
         # 阶段8.2：复杂度约束（正则项）——把"小模型/提速"从弱乘奖励升级为预算硬约束。
         #  - 旧式弱乘：complexity_lambda>0 且未设 budget → loss += λ·comp（λ=1e-4，量级可忽略）。
         #  - 新式 hinge 预算：设 complexity_budget∈(0,1]（相对 max_complexity 的目标占比）→

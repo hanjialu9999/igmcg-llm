@@ -655,7 +655,12 @@ class TransformerModel(nn.Module):
                    alibi_learnable: bool = False,
                    kv_cache_int8: bool = False,
                    gated_delta_chunk_scan: bool = False,
-                   gated_delta_chunk_size: int = 16):
+                   gated_delta_chunk_size: int = 16,
+                   # R36-5: 提前退出（出口层辅助 CE 损失 + 推理时置信度阈值提前返回）
+                   early_exit: bool = False,
+                   early_exit_layers: Optional[List[int]] = None,
+                   early_exit_threshold: float = 0.9,
+                   early_exit_loss_weight: float = 0.5):
         super(TransformerModel, self).__init__()
 
         self.vocab_size = vocab_size
@@ -885,6 +890,35 @@ class TransformerModel(nn.Module):
         # 第十四轮：ALiBi 跨层共享——所有注意力层共用同一组 alibi_slopes（减参+一致位置建模）
         # 在 block 创建后统一绑定（见下方 blocks 构建完毕后的 shared_alibi 处理）
         self.shared_alibi_enabled = shared_alibi and (alibi or bool(self.nope_layers_set))
+        # R36-5: 提前退出（Early Exit）——出口层辅助 CE 损失 + 推理时置信度阈值提前返回
+        # opt-in 默认关（early_exit=False），开启时构建共享 early_exit_head（RMSNorm + Linear）。
+        # 出口层索引：用户指定或默认 [N-2, N-1]（倒数 2、1 层）；至少需 2 层才启用。
+        # early_exit_head 共享于所有出口层（参数量 = D×V，与 output_head 相同，不随出口数增加）。
+        # RMSNorm 用与 ln_f 相同的 zero_centered 设置（保持 norm 一致性）。
+        # Linear 权重由 _init_weights 初始化为 N(0,0.02)（与 output_head 一致）。
+        self.early_exit_enabled = bool(early_exit) and num_layers >= 2
+        self.early_exit_threshold = float(early_exit_threshold)
+        self.early_exit_loss_weight = float(early_exit_loss_weight)
+        if self.early_exit_enabled:
+            # 解析出口层索引：用户指定 → 排序去重；None → 默认倒数 2 层
+            if early_exit_layers is not None:
+                _layers = sorted(set(int(i) for i in early_exit_layers))
+                for i in _layers:
+                    if not (0 <= i < num_layers):
+                        raise ValueError(
+                            f"early_exit_layers 索引 {i} 越界（num_layers={num_layers}）")
+                self.early_exit_layers = _layers
+            else:
+                # 默认倒数 2 层（N>=2 保证至少有 1 个出口；N>=3 时取 [N-2, N-1]）
+                self.early_exit_layers = [num_layers - 2, num_layers - 1] if num_layers >= 2 else [num_layers - 1]
+            # 共享 early_exit_head：RMSNorm（与 ln_f 同 zero_centered）+ Linear(D, V, bias=False)
+            self.early_exit_head = nn.Sequential(
+                RMSNorm(embedding_dim, zero_centered=zero_centered_norm),
+                nn.Linear(embedding_dim, vocab_size, bias=False))
+        else:
+            self.early_exit_layers = []
+        # 训练时辅助损失占位（forward 中重置；None 表示不计算/未启用）
+        self._early_exit_aux_loss = None
         # 权重初始化（_init_weights 遍历所有 Linear 用 N(0,0.02)，再对 SSM 调 proper_init 覆盖）
         self._init_weights()
         # 专用初始化必须在 _init_weights 之后重新应用（否则被通用 N(0,0.02)/zeros 覆盖）：
@@ -1029,6 +1063,10 @@ class TransformerModel(nn.Module):
             kv_cache_int8=cfg.attn.kv_cache_int8,
             gated_delta_chunk_scan=cfg.attn.gated_delta_chunk_scan,
             gated_delta_chunk_size=cfg.attn.gated_delta_chunk_size,
+            early_exit=cfg.early_exit,
+            early_exit_layers=cfg.early_exit_layers,
+            early_exit_threshold=cfg.early_exit_threshold,
+            early_exit_loss_weight=cfg.early_exit_loss_weight,
         )
 
     def set_enhancements_active(self, spec):
@@ -1273,10 +1311,12 @@ class TransformerModel(nn.Module):
                         blk.attn.alibi_slopes = _shared
         return module
 
-    def forward(self, src: torch.Tensor, past_key_values: Optional[List[Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]]]] = None, use_cache: bool = False, intuition: Optional[torch.Tensor] = None, igmcg_force_off: bool = False, temperature: float = 1.0) -> Tuple[torch.Tensor, Optional[List[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]]]]:
+    def forward(self, src: torch.Tensor, past_key_values: Optional[List[Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]]]] = None, use_cache: bool = False, intuition: Optional[torch.Tensor] = None, igmcg_force_off: bool = False, temperature: float = 1.0, targets: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, Optional[List[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]]]]:
         # src: (batch, seq_len)；RoPE 在注意力内部按位置旋转，无需外部 PE
         # 阶段8.7 IGMCG 2.0：intuition 为 (B,7) 连续直觉向量（训练期可作为条件输入，推理期可选）；
         # igmcg_force_off 用于训练期 IGMCG-SEL（随机整批关闭 IGMCG 引导，让模型学"何时用"）。
+        # R36-5: targets (B,T) 仅训练期用于出口层辅助 CE 损失；None 时不计算 aux loss（向后兼容）。
+        # 早退（推理 eval+use_cache=False）不需要 targets，仅检查置信度阈值。
         x = self.embedding(src) * math.sqrt(self.embedding_dim)
         x = self.drop(x)
         # 学习型分词：字符级序列融合为词表示（门控卷积，受 LM loss 监督）
@@ -1384,6 +1424,11 @@ class TransformerModel(nn.Module):
             self._contrastive_loss = None
             _prev_layer_out = None
             _dala_x0 = None
+        # R36-5: 重置提前退出辅助损失——仅训练期 + targets 提供时计算（eval/use_cache 不计算）
+        if self.early_exit_enabled and self.training and targets is not None:
+            self._early_exit_aux_loss = x.new_zeros(())
+        else:
+            self._early_exit_aux_loss = None
         for i, block in enumerate(self.blocks):
             if (not self.training) and getattr(self, '_pruned_layers', None) and i in self._pruned_layers:
                 presents.append(block_states[i])
@@ -1447,6 +1492,30 @@ class TransformerModel(nn.Module):
             # 记录 hybrid 块输出供下一个 hybrid 块使用
             if self.cross_ssm_transfer and self.layer_plan[i] == 'hybrid':
                 prev_hybrid_x = x
+            # R36-5: 提前退出（Early Exit）——出口层后计算辅助损失/检查置信度
+            # 训练期：计算 aux CE 损失（加权 w_k=1/(rank+1)），累积到 _early_exit_aux_loss
+            # 推理期（eval + use_cache=False）：检查置信度，超阈值则提前返回 exit logits
+            # use_cache=True：跳过（KV cache 一致性要求每层每 token 完整）
+            if self.early_exit_enabled and i in self.early_exit_layers:
+                if self.training:
+                    if self._early_exit_aux_loss is not None and targets is not None:
+                        exit_logits = self.early_exit_head(x)  # (B, T, V)
+                        # 权重 w_k = 1/(rank+1)：浅出口（rank 小）权重大，鼓励浅层学到判别性
+                        rank_k = self.early_exit_layers.index(i)
+                        w_k = 1.0 / (rank_k + 1)
+                        ce_k = F.cross_entropy(
+                            exit_logits.view(-1, self.vocab_size), targets.view(-1))
+                        self._early_exit_aux_loss = self._early_exit_aux_loss + w_k * ce_k
+                elif not use_cache:
+                    # 推理 eval 全量前向：检查批次+序列均值置信度
+                    with torch.no_grad():
+                        exit_logits = self.early_exit_head(x)  # (B, T, V)
+                        # softmax max prob 的批次+序列均值（标量）——DML 友好（无 gather/scatter）
+                        confidence = F.softmax(exit_logits, dim=-1).max(dim=-1).values.mean()
+                    if confidence.item() > self.early_exit_threshold:
+                        # 提前返回 exit logits（不经过 ln_f/output_head/ngram_fusion，raw 早退 logits）
+                        # presents 仅含已处理层（0..i），use_cache=False 不返回 presents
+                        return exit_logits
         x = self.ln_f(x)
         # 阶段8.1：n-gram 神经融合——z_neural + g_t·ngram_vec。ngram_vec 是固定统计缓冲
         # （.detach() 不引梯度，主干 z_neural 仍吃完整 CE 梯度、不被缩放 → 不塌缩）。
