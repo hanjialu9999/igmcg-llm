@@ -247,6 +247,14 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
         _ee = getattr(model, '_early_exit_aux_loss', None)
         if _ee is not None:
             loss = loss + model.early_exit_loss_weight * _ee
+        # R36-6: MoE 辅助损失——负载均衡（Switch Transformer）+ router z-loss（ST-MoE）。
+        # 训练期 model._moe_load_balance_loss / _moe_z_loss 跨层累积，按各自权重加入主 loss。
+        _mlb = getattr(model, '_moe_load_balance_loss', None)
+        if _mlb is not None:
+            loss = loss + model.moe_load_balance_weight * _mlb
+        _mzl = getattr(model, '_moe_z_loss', None)
+        if _mzl is not None:
+            loss = loss + model.moe_router_z_loss_weight * _mzl
         # 阶段8.2：复杂度约束（正则项）——把"小模型/提速"从弱乘奖励升级为预算硬约束。
         #  - 旧式弱乘：complexity_lambda>0 且未设 budget → loss += λ·comp（λ=1e-4，量级可忽略）。
         #  - 新式 hinge 预算：设 complexity_budget∈(0,1]（相对 max_complexity 的目标占比）→

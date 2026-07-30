@@ -18,6 +18,7 @@ from models.mixers import (SlidingWindowCausalSelfAttention, LinearAttention,
                            AxialLinearAttention, DifferentialAttention, MambaSSM,
                            MambaSSMWithCAST, SwiGLU, apply_qk_norm_and_temp,
                            GatedDeltaNet)
+from models.moe import MoELayer
 from models.sampling import (apply_repetition_penalty, sample_next_token,
                              _decode_one_step)
 from models.layers import CharMergeLayer
@@ -33,7 +34,7 @@ __all__ = [
     "apply_qk_norm_and_temp", "apply_repetition_penalty", "sample_next_token",
     "_decode_one_step", "CharMergeLayer", "BlockState",
     "TransformerBlock", "_parse_layer_plan", "TransformerModel",
-    "GatedDeltaNet",
+    "GatedDeltaNet", "MoELayer",
 ]
 
 
@@ -52,7 +53,12 @@ class TransformerBlock(nn.Module):
                  zero_centered_norm: bool = False,
                  fuse_swiglu: bool = False,
                  gpas: bool = False,
-                 gpas_alpha_init: float = 0.5):
+                 gpas_alpha_init: float = 0.5,
+                 # R36-6: MoE FFN——本层启用时 self.ffn 替换为 MoELayer（路由多专家）
+                 moe: bool = False,
+                 moe_num_experts: int = 8,
+                 moe_top_k: int = 2,
+                 moe_router_noise: float = 0.0):
         super().__init__()
         self.block_type = block_type
         self.drop = nn.Dropout(dropout)
@@ -117,7 +123,17 @@ class TransformerBlock(nn.Module):
         if gpas:
             self.gpas1 = GPASNorm(gpas_alpha_init)
             self.gpas2 = GPASNorm(gpas_alpha_init)
-        self.ffn = shared_ffn if shared_ffn is not None else SwiGLU(dim, hidden_dim, fuse_swiglu=fuse_swiglu)
+        # R36-6: MoE FFN——本层启用 MoE 时 self.ffn 替换为 MoELayer（top-k 路由多专家）。
+        # MoE 与 shared_ffn 互斥（共享会破坏负载均衡语义，TransformerModel 层级已校验），
+        # 双重保险：moe=True 且 shared_ffn 非空时报错。
+        if moe:
+            if shared_ffn is not None:
+                raise ValueError("moe=True 与 share_ffn 不兼容（共享 FFN 破坏 MoE 负载均衡语义）")
+            self.ffn = MoELayer(dim, hidden_dim, num_experts=moe_num_experts,
+                                top_k=moe_top_k, fuse_swiglu=fuse_swiglu,
+                                router_noise=moe_router_noise)
+        else:
+            self.ffn = shared_ffn if shared_ffn is not None else SwiGLU(dim, hidden_dim, fuse_swiglu=fuse_swiglu)
         # ②/⑥ 每层可学习残差门控：x = x + gate * f(x)（init 1.0，默认行为不变）
         # 第十三轮：highway_gate 与静态 residual_gate 互斥——highway_gate=True 时不创建
         # sub1_gate/ffn_gate（避免 dead params：highway 路径从不读取静态门）。
@@ -660,7 +676,15 @@ class TransformerModel(nn.Module):
                    early_exit: bool = False,
                    early_exit_layers: Optional[List[int]] = None,
                    early_exit_threshold: float = 0.9,
-                   early_exit_loss_weight: float = 0.5):
+                   early_exit_loss_weight: float = 0.5,
+                   # R36-6: Mixture of Experts FFN
+                   moe: bool = False,
+                   moe_num_experts: int = 8,
+                   moe_top_k: int = 2,
+                   moe_load_balance_weight: float = 0.01,
+                   moe_router_z_loss_weight: float = 0.001,
+                   moe_router_noise: float = 0.0,
+                   moe_layers: Optional[List[int]] = None):
         super(TransformerModel, self).__init__()
 
         self.vocab_size = vocab_size
@@ -778,9 +802,34 @@ class TransformerModel(nn.Module):
             self.shared_qkv = _shared_qkv
             self.shared_proj = _shared_proj
         # 层间共享 FFN（share_ffn=True）：各层复用同一组 SwiGLU 参数
+        # R36-6: MoE 与 share_ffn 互斥（共享 FFN 破坏 MoE 负载均衡语义——各层专家
+        # 路由独立，共享专家参数会让所有层路由同一组权重，失去 MoE 意义）。
+        if moe and share_ffn:
+            raise ValueError("moe=True 与 share_ffn=True 不兼容（共享 FFN 破坏 MoE 负载均衡语义）")
         _shared_ffn = SwiGLU(embedding_dim, hidden_dim, fuse_swiglu=fuse_swiglu) if share_ffn else None
         if share_ffn:
             self.shared_ffn = _shared_ffn
+        # R36-6: MoE FFN——确定哪些层启用 MoE。
+        # moe_layers=None → 全部层；list → 指定索引集（校验越界）。
+        # MoE 层的 self.ffn 替换为 MoELayer（top-k 路由多专家），其余层保持 SwiGLU。
+        self.moe_enabled = bool(moe)
+        if self.moe_enabled:
+            if moe_layers is not None:
+                _moe_set = set(int(i) for i in moe_layers)
+                _n_layers = len(self.layer_plan)
+                _invalid = {i for i in _moe_set if i < 0 or i >= _n_layers}
+                if _invalid:
+                    raise ValueError(f"moe_layers 索引越界: {sorted(_invalid)}，有效范围 [0, {_n_layers})")
+                self.moe_layer_set = _moe_set
+            else:
+                self.moe_layer_set = set(range(len(self.layer_plan)))
+        else:
+            self.moe_layer_set = set()
+        self.moe_load_balance_weight = float(moe_load_balance_weight)
+        self.moe_router_z_loss_weight = float(moe_router_z_loss_weight)
+        # 训练期累积的 MoE 辅助损失（forward 中重置；None 表示不计算/未启用）
+        self._moe_load_balance_loss: Optional[torch.Tensor] = None
+        self._moe_z_loss: Optional[torch.Tensor] = None
         # 层间共享 LayerNorm（share_norm=True）：各层复用同一组 RMSNorm 参数
         _shared_lns = (RMSNorm(embedding_dim, zero_centered=zero_centered_norm),
                        RMSNorm(embedding_dim, zero_centered=zero_centered_norm)) if share_norm else None
@@ -809,7 +858,11 @@ class TransformerModel(nn.Module):
                              zero_centered_norm=zero_centered_norm,
                              fuse_swiglu=fuse_swiglu,
                              gpas=gpas,
-                             gpas_alpha_init=gpas_alpha_init)
+                             gpas_alpha_init=gpas_alpha_init,
+                             moe=(i in self.moe_layer_set),
+                             moe_num_experts=moe_num_experts,
+                             moe_top_k=moe_top_k,
+                             moe_router_noise=moe_router_noise)
             for i, bt in enumerate(self.layer_plan)
         ])
         # 第十四轮：ALiBi 跨层共享——所有注意力层共用第一层的 alibi_slopes buffer
@@ -1067,6 +1120,13 @@ class TransformerModel(nn.Module):
             early_exit_layers=cfg.early_exit_layers,
             early_exit_threshold=cfg.early_exit_threshold,
             early_exit_loss_weight=cfg.early_exit_loss_weight,
+            moe=cfg.moe,
+            moe_num_experts=cfg.moe_num_experts,
+            moe_top_k=cfg.moe_top_k,
+            moe_load_balance_weight=cfg.moe_load_balance_weight,
+            moe_router_z_loss_weight=cfg.moe_router_z_loss_weight,
+            moe_router_noise=cfg.moe_router_noise,
+            moe_layers=cfg.moe_layers,
         )
 
     def set_enhancements_active(self, spec):
@@ -1429,6 +1489,14 @@ class TransformerModel(nn.Module):
             self._early_exit_aux_loss = x.new_zeros(())
         else:
             self._early_exit_aux_loss = None
+        # R36-6: 重置 MoE 辅助损失——仅训练期 + MoE 启用时累积（MoELayer 仅训练期计算）
+        # eval/推理 MoELayer.last_*_loss 为 None，此处置 None 与之对齐，省算力。
+        if self.moe_enabled and self.training and self.moe_layer_set:
+            self._moe_load_balance_loss = x.new_zeros(())
+            self._moe_z_loss = x.new_zeros(())
+        else:
+            self._moe_load_balance_loss = None
+            self._moe_z_loss = None
         for i, block in enumerate(self.blocks):
             if (not self.training) and getattr(self, '_pruned_layers', None) and i in self._pruned_layers:
                 presents.append(block_states[i])
@@ -1470,6 +1538,15 @@ class TransformerModel(nn.Module):
             x, present = block(x, block_states[i].to_tuple() if block_states[i] is not None else None,
                                use_cache, start_pos, ssm_past_state, ssm_past_conv_state, memory)
             presents.append(BlockState.from_tuple(present))
+            # R36-6: 累积 MoE 辅助损失（仅 MoE 层 + 训练期；MoELayer.forward 已计算 last_*_loss）
+            if (self.moe_enabled and self.training and i in self.moe_layer_set
+                    and self._moe_load_balance_loss is not None):
+                _lb = getattr(block.ffn, 'last_load_balance_loss', None)
+                if _lb is not None:
+                    self._moe_load_balance_loss = self._moe_load_balance_loss + _lb
+                _zl = getattr(block.ffn, 'last_z_loss', None)
+                if _zl is not None:
+                    self._moe_z_loss = self._moe_z_loss + _zl
             # 第十四轮：层间对比绑定——累积相邻层 (1 - cos_sim) 损失
             # 第二十轮：DALA 升级——aligned_training 时对齐目标为 geodesic 路径插值
             # target_i = α_i * x_{i-1} + (1-α_i) * x0，α_i = i/(N-1)

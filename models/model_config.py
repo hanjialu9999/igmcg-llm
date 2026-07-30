@@ -206,6 +206,14 @@ class ModelConfig:
     early_exit_layers: Optional[List[int]] = None  # 出口层索引列表；None → 默认 [N-2, N-1]（倒数 2、1 层）
     early_exit_threshold: float = 0.9    # 推理时退出的置信度阈值（softmax max prob 的批次+序列均值）
     early_exit_loss_weight: float = 0.5  # 训练时辅助损失的总权重（L_total = L_main + λ * Σ_k w_k * CE_k）
+    # R36-6 新特性：Mixture of Experts FFN
+    moe: bool = False                     # 启用 MoE FFN（替换 SwiGLU 为 top-k 路由的多专家；opt-in 默认关）
+    moe_num_experts: int = 8             # 每个 MoE 层的专家数量
+    moe_top_k: int = 2                   # 每 token 激活的专家数（top-k 路由；须 ≤ moe_num_experts）
+    moe_load_balance_weight: float = 0.01  # 负载均衡辅助损失权重（Switch Transformer: L_bal = E·Σ f_i·p_i）
+    moe_router_z_loss_weight: float = 0.001  # Router z-loss 权重（ST-MoE: L_z = (1/N)·Σ(logsumexp)²，防 logits 爆炸）
+    moe_router_noise: float = 0.0        # 训练期路由噪声标准差（noisy top-k gating，鼓励探索；0=关）
+    moe_layers: Optional[List[int]] = None  # MoE 层索引；None → 全部层
 
     # n-gram
     ngram_fusion: bool = False
@@ -228,6 +236,14 @@ class ModelConfig:
             f"embedding_dim ({self.embedding_dim}) must be divisible by num_heads ({self.num_heads})"
         if self.rope_max_len is None:
             self.rope_max_len = self.max_seq_length
+        # R36-6: MoE 配置校验
+        if self.moe:
+            assert self.moe_num_experts >= 1, f"moe_num_experts must be >= 1, got {self.moe_num_experts}"
+            assert 1 <= self.moe_top_k <= self.moe_num_experts, (
+                f"moe_top_k must be in [1, moe_num_experts={self.moe_num_experts}], got {self.moe_top_k}")
+            assert self.moe_router_noise >= 0.0, f"moe_router_noise must be >= 0, got {self.moe_router_noise}"
+            assert self.moe_load_balance_weight >= 0.0, f"moe_load_balance_weight must be >= 0"
+            assert self.moe_router_z_loss_weight >= 0.0, f"moe_router_z_loss_weight must be >= 0"
 
     @classmethod
     def from_dict(cls, mc: Dict[str, Any]) -> ModelConfig:
@@ -332,6 +348,13 @@ class ModelConfig:
             early_exit_layers=(list(mc.get('early_exit_layers')) if mc.get('early_exit_layers') is not None else None),
             early_exit_threshold=float(mc.get('early_exit_threshold', 0.9)),
             early_exit_loss_weight=float(mc.get('early_exit_loss_weight', 0.5)),
+            moe=bool(mc.get('moe', False)),
+            moe_num_experts=int(mc.get('moe_num_experts', 8)),
+            moe_top_k=int(mc.get('moe_top_k', 2)),
+            moe_load_balance_weight=float(mc.get('moe_load_balance_weight', 0.01)),
+            moe_router_z_loss_weight=float(mc.get('moe_router_z_loss_weight', 0.001)),
+            moe_router_noise=float(mc.get('moe_router_noise', 0.0)),
+            moe_layers=(list(mc.get('moe_layers')) if mc.get('moe_layers') is not None else None),
             ngram_fusion=mc.get('ngram_fusion', False),
             ngram_gate_scale=float(mc.get('ngram_gate_scale', 1.0)),
             igmcg=bool(mc.get('igmcg', False)),
