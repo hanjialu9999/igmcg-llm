@@ -111,6 +111,8 @@ class ControllerModel(nn.Module):
         self.ln_layers = nn.ModuleList([RMSNorm(ctrl_dim) for _ in range(ctrl_layers)])
         # GatedDeltaNet mixer：线性复杂度看全上下文，S 矩阵=上下文压缩
         # 用项目已验证的默认参数（alpha_init=-2 弱遗忘 / beta_init=2 强写入）
+        # chunk_scan=False（for-loop 路径）：比 chunk_scan 省峰值内存（后者 A_mats/B_mats 各 50MB，
+        # DML OOM）；for-loop 仅保持单步 S (B,H,D,D)，峰值低。
         self.mixers = nn.ModuleList([
             GatedDeltaNet(dim=ctrl_dim, num_heads=ctrl_heads, qk_norm=True, attn_temp=True,
                           max_seq_length=max_seq_length, alpha_init=-2.0, beta_init=2.0)

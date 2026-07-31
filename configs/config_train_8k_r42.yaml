@@ -1,0 +1,90 @@
+# R42 Controller/Generator 双模型编排训练配置（8000 行）
+# 基于 config_train_8k.yaml + Controller 全信号 + 三阶段训练
+# Controller: 2 层 GatedDeltaNet（线性复杂度），3 类控制信号（mem_kv/FiLM/direction）
+# 三阶段：前 30% epoch 关 Controller（Generator warmup 省算力）→ 之后开启（零初始化平滑过渡）
+model:
+  vocab_size: 12000
+  embedding_dim: 256
+  num_heads: 8
+  num_layers: 4
+  hidden_dim: 512
+  max_seq_length: 64
+  dropout: 0
+  tie_weights: true
+  gradient_checkpointing: false
+  rope_base: 10000.0
+  rope_max_len: 4096
+  mask_fill_value: -1e9
+  layer_plan: "attn,attn,attn,attn"
+  ssm_d_state: 16
+  ssm_d_inner_factor: 1
+  ssm_dt_rank: null
+  ssm_conv_kernel: 3
+  ssm_dt_proj_bias_init: 0.1
+  ssm_a_log_init_range: [-1, 1]
+  ssm_D_init: 1.0
+  attn_window: 0
+  attn_rel_bias: false
+  alibi: true
+  mixer: "attn"
+  char_merge: true
+  char_merge_kernel: 3
+  char_merge_dropout: 0.0
+  rope_dim_fraction: 0.5
+  output_gate: true
+  zero_centered_norm: true
+  fuse_swiglu: true
+  yarn_scale: 2.0
+  yarn_beta: 0.1
+  yarn_orig_max_seq_length: 0
+  intra_hybrid_rope: true
+  intra_hybrid_ratio: 0.5
+  head_temp: true
+  value_relative_coding: true
+  gpas: true
+  gpas_alpha_init: 0.5
+  alibi_learnable: true
+  # R42: Controller/Generator 双模型编排
+  controller: true
+  controller_dim: 0              # 0 → 用 embedding_dim（256，共享投影最省）
+  controller_heads: 0            # 0 → 用 num_heads（8）
+  controller_layers: 1           # 轻量决策器（1 层 GatedDeltaNet，降内存防 DML 碎片化）
+  controller_mem_slots: 4        # 压缩记忆槽数 M
+  controller_direction: true     # ③ 生成方向偏置
+  controller_film: true          # ② FiLM per-layer 调制
+  controller_memory_compress: true  # ① 压缩记忆 mem_kv
+
+training:
+  batch_size: 24
+  epochs: 3
+  learning_rate: 3.0e-3
+  optimizer: adamw
+  weight_decay: 0.0
+  gradient_clip: 1.0
+  warmup_steps: 10
+  early_stop_patience: 9999
+  label_smoothing: 0.0
+  cpu_threads: 4
+  checkpoint_percents: [0.25, 0.5, 0.8]
+  precision: "fp32"
+  grad_accum_steps: 1
+  eta_min: 0.0
+  lr_schedule: "wsd"
+  wsd_decay_frac: 0.1
+  compile: false
+  # R42: 三阶段训练——前 30% epoch 关 Controller（Generator warmup），之后开启
+  controller_warmup_frac: 0.3
+
+data:
+  train_file: "data/pretrain_corpus/merged_8k.txt"
+  vocab_size: 12000
+  max_seq_length: 64
+  num_workers: 0
+  test_split: 0.1
+
+paths:
+  checkpoint_dir: "checkpoints_train_8k_r42"
+  log_dir: "logs_train_8k_r42"
+
+device: "auto"
+seed: 42

@@ -829,7 +829,17 @@ def main(config_path='configs/pretrain.yaml', resume=False):
             if no_improve_epochs >= patience:
                 print(f"Early stopping triggered after {no_improve_epochs} epochs without improvement.")
                 break
-        
+
+        # R42: DML/CUDA 内存碎片清理——每 epoch 结束后释放未用缓存，防止累积碎片导致
+        # 后续 epoch 严重变慢（实测无清理时 epoch 3 比 epoch 2 慢 7x：3.8it/s → 0.6it/s）。
+        import gc; gc.collect()
+        try:
+            import torch_directml; torch_directml.empty_cache()
+        except (ImportError, AttributeError):
+            pass
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         print("-" * 50)
     
     # R39 修复：清理挪到 save_final_model 之后（此前先删 step ckpt 再保存 final——
