@@ -1738,16 +1738,28 @@ class MambaSSM(nn.Module):
             x_conv = self.conv(conv_input)[:, :, self.conv_kernel - 1].unsqueeze(1)  # (B, 1, d_inner)
             present_conv_state = conv_input[:, :, -(self.conv_kernel - 1):]  # (B, d_inner, conv_kernel-1)
         else:
-            # 全量序列或 prefill：因果卷积后截断到前 L 个位置
-            x_conv = self.conv(x_in.transpose(1, 2)).transpose(1, 2)[:, :L, :]  # (B, L, d_inner)
+            # 全量序列或 prefill：因果卷积后截取当前 L 个 token 的输出位置。
+            # Conv1d(padding=keep) 对称填充（两侧各 keep），out[i] = 窗口 [in[i-2],in[i-1],in[i]]
+            # （越界零填充）——勿额外预填充，否则填充列参与窗口造成双重填充（R37 踩坑）。
+            # 无 past（首步/full）：token t 窗口 = out[t] → 取 out[0:L]；
+            # 有 past（分块增量）：in = [past(keep), x_in(L)]，token t 窗口 = out[keep+t] → 取 out[keep:keep+L]。
+            # R37 修复：有 past_conv_state 且 L>1 时旧实现直接丢弃历史（零填充），块首
+            # conv_kernel-1 个位置与全量前向不一致——cache parity bug，被旧弱初始化
+            # （dt≈0 状态近似静态）掩盖，proper_init 恢复后暴露（标准 Mamba 与 CAST 均差 ~0.15）。
+            keep = max(self.conv_kernel - 1, 0)
+            if past_conv_state is not None and past_conv_state.shape[0] == B:
+                conv_input = torch.cat([past_conv_state, x_in.transpose(1, 2)], dim=-1)
+                offset = keep
+            else:
+                conv_input = x_in.transpose(1, 2)
+                offset = 0
+            x_conv = self.conv(conv_input).transpose(1, 2)[:, offset:offset + L, :]  # (B, L, d_inner)
             if use_cache and L > 0:
-                # 保存最后 conv_kernel-1 个 token 供下一步增量使用。
-                # max(.,0) 防御 conv_kernel=1 时 -(1-1)=-0 等价于 0 导致返回全长序列（应空切片）
-                keep = max(self.conv_kernel - 1, 0)
+                # 保存最后 keep 个 token 供下一步增量使用（与增量分支拼接语义一致）。
+                # 首步 L < keep（如 L=1, keep=2）时切片不足，左补零对齐（因果左填充语义：
+                # 缺失位置等价于零输入，与增量分支拼接的过去窗口一致）。
                 if keep > 0:
-                    conv_state = x_in.transpose(1, 2)[:, :, -keep:]
-                    # 首步 L < keep（如 pure_incremental L=1, keep=2）时切片不足 keep 个元素，
-                    # 左补零对齐（因果卷积左填充语义：缺失位置等价于零输入）
+                    conv_state = conv_input[:, :, -keep:]
                     if conv_state.size(-1) < keep:
                         conv_state = torch.nn.functional.pad(conv_state, (keep - conv_state.size(-1), 0))
                     present_conv_state = conv_state
@@ -1881,6 +1893,19 @@ class MambaSSMWithCAST(MambaSSM):
         self.cast_stat_proj = nn.Linear(3, cast_hidden, bias=False)
         self.cast_delta_proj = nn.Linear(cast_hidden, self.d_inner * d_state, bias=False)
         nn.init.zeros_(self.cast_delta_proj.weight)  # 零初始化→初始行为等价于标准 Mamba
+
+    def proper_init(self):
+        """CAST 专用初始化（R37 新增覆写）：标准 SSM proper_init 之上，cast_delta_proj
+        保持零初始化——A_delta≡0 → 初始行为等价于标准 Mamba。
+
+        R37 背景：TransformerModel._init_weights 先以 N(0,0.02) 覆盖所有 Linear 再对
+        isinstance(MambaSSM) 重放 proper_init；若不在此归零，cast_delta_proj 会被通用
+        初始化污染，CAST 的「初始等价标准 Mamba」设计意图失效。
+        注意：基类 __init__ 尾部调用 self.proper_init() 时 CAST 层尚未创建，需守卫。
+        """
+        super().proper_init()
+        if hasattr(self, 'cast_delta_proj'):
+            nn.init.zeros_(self.cast_delta_proj.weight)
 
     def _compute_cast_delta(self, x: torch.Tensor) -> torch.Tensor:
         """从输入 x 的局部统计身份推导 A_delta。"""

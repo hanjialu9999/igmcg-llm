@@ -1,4 +1,4 @@
-# 全量训练配置：attn_linear + 12 项高价值特性 + Step 级 checkpoint
+# 全量训练配置：attn + 12 项高价值特性 + Step 级 checkpoint
 # 数据：merged.txt（3.65M 行全量），1 epoch
 # 预计时间：~16.7 小时（DML, AMD 780M iGPU, 4250 tok/s）
 # Step checkpoint：25%/50%/80% 时存档（~4.2h/8.4h/13.4h），中断可用 --resume 续训
@@ -26,7 +26,7 @@ model:
   attn_window: 0
   attn_rel_bias: false
   alibi: true
-  mixer: "attn_linear"
+  mixer: "attn"                  # R37: attn_linear → attn（R29 实测两者速度/质量相等，省线性分支 + mixer_gate）
   char_merge: true
   char_merge_kernel: 3
   char_merge_dropout: 0.0
@@ -49,9 +49,7 @@ training:
   batch_size: 24
   epochs: 1                      # 全量 1 epoch（3.65M 行 × 1ep ≈ 16.7h）
   learning_rate: 3.0e-3
-  optimizer: sgd
-  sgd_learning_rate: 0.1
-  momentum: 0.9
+  optimizer: adamw               # R37: sgd → adamw（train.py _dml_foreach_lerp patch 已消除 DML CPU lerp 回退税）
   weight_decay: 0.0
   gradient_clip: 1.0
   warmup_steps: 100              # 全量训练需更多预热（0.1% 步数）

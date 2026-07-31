@@ -110,6 +110,9 @@ class TransformerBlock(nn.Module):
                     mixer, dim, num_heads, max_seq_length, attn_kwargs,
                     shared_qkv=shared_qkv, shared_proj=shared_proj)
         if block_type in ('ssm', 'hybrid'):
+            # R37: ssm_kwargs 由 TransformerModel 构造一次共享给所有块，pop 会变异共享
+            # dict 致后续块 ssm_type 静默回落 'standard'（cast 只对第 0 块生效的 bug）。
+            ssm_kwargs = dict(ssm_kwargs or {})
             _ssm_type = ssm_kwargs.pop('ssm_type', 'standard')
             if _ssm_type == 'cast':
                 self.ssm = MambaSSMWithCAST(dim, **ssm_kwargs)
@@ -1250,8 +1253,10 @@ class TransformerModel(nn.Module):
                         nn.init.zeros_(m.bias)
         nn.init.normal_(self.embedding.weight, 0, 0.02)
         # SSM 模块用更专业的初始化覆盖通用初始化
+        # R37: isinstance 而非 type(m) is——MambaSSMWithCAST 是子类，type 精确匹配会漏掉，
+        # 其 dt_proj.bias=0（非 0.1）且 cast_delta_proj 零初始化设计意图被通用 N(0,0.02) 覆盖。
         for m in self.modules():
-            if type(m) is MambaSSM:
+            if isinstance(m, MambaSSM):
                 m.proper_init()
 
     def _apply_specialized_inits(self):
