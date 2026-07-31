@@ -56,7 +56,7 @@ data:
 - **Label Smoothing**：当前**未启用**——`CrossEntropyLoss` 在同时使用 `label_smoothing` 与 `ignore_index`（padding 屏蔽）时不支持，训练脚本会忽略该配置并打印警告（见 `scripts/train.py`）。
 - **早停**：连续 `early_stop_patience` 个 epoch 无提升则停止。
 - **检查点清理**：仅保留最近若干 epoch 与最佳模型。
-- **SELv2 默认增强调度**：`pretrain.yaml` 默认带 `training.enhancement_schedule`（SELv2 8 段：1 全开 + 1 全关极端 + 6 局部，attn_temp 仅全关段关），即默认训练按分段选择性增强训练；`validate` 强制全开。受控对比可用 `config_cmp_{enh,sel,selv2}_full.yaml` + 根目录 `run_full_cmp.ps1` 一键三模型顺序训练。
+- **SELv2 默认增强调度**：`pretrain.yaml` 默认带 `training.enhancement_schedule`（SELv2 8 段：1 全开 + 1 全关极端 + 6 局部，attn_temp 仅全关段关），即默认训练按分段选择性增强训练；`validate` 强制全开。受控对比可用 `config_cmp_{enh,sel,selv2}_full.yaml` 手动顺序训练三模型。
 
 ## 监控训练
 

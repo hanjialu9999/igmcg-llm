@@ -2,7 +2,7 @@
 
 基于 Transformer 的中文 LM 训练 / 推理项目，融合自定义混合架构（注意力 × SSM × IGMCG 直觉引导解码）与统计式 n-gram 双轨解码。目标是在 CPU / AMD iGPU（DirectML）等低资源设备上也能训练并跑出连贯的中文生成。
 
-当前状态（2026-07-31，R39）：全量测试 **922 passed / 2 skipped / 1 xfailed**；DML 训练实测 **7346 tok/s**（12 层，R38 优化后）。
+当前状态（2026-08-01，R41）：全量测试 **936 passed / 2 skipped / 1 xfailed**；DML 训练实测 **7346 tok/s**（12 层，R38 优化后）。
 
 ## 特性
 
@@ -48,7 +48,7 @@ scripts/         入口与数据处理
 configs/         所有 YAML 配置 (pretrain.yaml 为规范默认；config_full_dml.yaml 为 DML 生产配置)
 experiments/     实验 / 诊断 / 一次性脚本（可独立运行，自带路径修正）
 tools/           检查与监控工具 (view_model / compare_epochs / dialogue / dialogue_interactive / monitor/ ...)
-tests/           正式 pytest 单元测试（已纳入 git 跟踪，当前 922 passed / 2 skipped / 1 xfailed）
+tests/           正式 pytest 单元测试（已纳入 git 跟踪，当前 936 passed / 2 skipped / 1 xfailed）
 test/            本地自测沙箱（gitignore，仅本机运行，不入库）
 data/            语料 (pretrain_corpus/) 与数据集 (datasets/)
 logs/            运行日志
