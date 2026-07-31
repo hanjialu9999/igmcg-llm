@@ -74,7 +74,8 @@ def save_checkpoint(model: torch.nn.Module,
                     checkpoint_dir: str,
                     vocab_size: int,
                     model_config: Optional[Dict] = None,
-                    scaler: Optional[object] = None) -> str:
+                    scaler: Optional[object] = None,
+                    global_step: Optional[int] = None) -> str:
     """
     Save model checkpoint with separate config YAML for weights_only=True compatibility.
 
@@ -86,6 +87,7 @@ def save_checkpoint(model: torch.nn.Module,
         checkpoint_dir: Directory to save checkpoint
         vocab_size: Vocabulary size
         model_config: Model configuration dict (saved as separate YAML)
+        global_step: 累计有效步（跨 epoch 计数，供 resume 后 LR/退火连续）。None 时不存（兼容旧调用）。
 
     Returns:
         Path to saved checkpoint
@@ -99,6 +101,8 @@ def save_checkpoint(model: torch.nn.Module,
         'best_loss': best_loss,
         'vocab_size': vocab_size,
     }
+    if global_step is not None:
+        save_dict['global_step'] = global_step
     if scaler is not None:
         save_dict['scaler_state_dict'] = scaler.state_dict()
     torch.save(save_dict, checkpoint_path)

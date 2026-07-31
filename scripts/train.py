@@ -765,7 +765,9 @@ def main(config_path='configs/pretrain.yaml', resume=False):
             # R38: resume 后 LR 调度从已完成的累计步继续（此前 warmup/衰减从头爬升）
             initial_eff_step=resume_skip_batches // grad_accum_steps if epoch == start_epoch else 0,
         )
-        global_step += total_batches
+        global_step += (total_batches - resume_skip_batches) if epoch == start_epoch else total_batches
+        # R39 修复：resume 轮实际只训了 (total_batches - skip_batches) 批却记满
+        # total_batches → 课程退火 frac 超前 skip 批，重复 resume 累计漂移。
 
         history['train_loss'].append(train_loss)
         
@@ -786,7 +788,7 @@ def main(config_path='configs/pretrain.yaml', resume=False):
             no_improve_epochs = 0
             # Save per-epoch checkpoint (skipped when single epoch to avoid redundant file)
             if config['training']['epochs'] > 1:
-                save_checkpoint(model, optimizer, epoch, best_loss, checkpoint_dir, len(vocab), config['model'], scaler=scaler)
+                save_checkpoint(model, optimizer, epoch, best_loss, checkpoint_dir, len(vocab), config['model'], scaler=scaler, global_step=global_step)
         else:
             no_improve_epochs += 1
             print(f"No improvement for {no_improve_epochs} epoch(s).")
@@ -796,7 +798,14 @@ def main(config_path='configs/pretrain.yaml', resume=False):
         
         print("-" * 50)
     
-    # Clean up old checkpoints before saving final model
+    # R39 修复：清理挪到 save_final_model 之后（此前先删 step ckpt 再保存 final——
+    # 若 final save 失败/崩溃，step ckpt 已删且无 final 模型，无可恢复点）。
+    # Save final model and vocab
+    # CPU-offload 后再保存，确保任意设备（含 DML/CUDA）都能用 weights_only=True 加载
+    final_model_path, vocab_path = save_final_model(
+        model, vocab, checkpoint_dir, config['model'])
+
+    # Clean up old checkpoints after final save succeeded
     print("\n" + "="*50)
     print("Cleaning up old checkpoints...")
     print("="*50)
@@ -810,11 +819,6 @@ def main(config_path='configs/pretrain.yaml', resume=False):
         os.remove(_p)
     if _step_ckpts:
         print(f"[Cleanup] 删除 {len(_step_ckpts)} 个已完成训练的 step checkpoint")
-    
-    # Save final model and vocab
-    # CPU-offload 后再保存，确保任意设备（含 DML/CUDA）都能用 weights_only=True 加载
-    final_model_path, vocab_path = save_final_model(
-        model, vocab, checkpoint_dir, config['model'])
 
     print(f"\nTraining completed!")
     print(f"Best loss: {best_loss:.4f} (Epoch {history['best_epoch']})")

@@ -87,19 +87,43 @@ def test_r38_a1_present_strips_memory_columns():
 
     旧 bug：present=(k,v) 含注入的记忆列 → 下一步 past 再拼新记忆，
     Tkv 每步膨胀 M+1（M=mem_cols），缓存爆炸 + 检索偏置错位。
+    R39 加固（MAJOR-1）：仅查尺寸会漏判——注入在拼接之前时布局为
+    [pk|mk|cur]（记忆在中间），剥离 mem_cols 列剥掉的是 past 尾部真实
+    token，记忆列反而留在缓存（多份记忆副本 + 真实上下文永久丢失，
+    parity 残差 0.0434 超固有 divergence 上界）。修复：注入移入拼接
+    之后，布局恒为 [mk|pk|cur]。本测试同时断言内容：present 的每一列
+    都不得与任何一步注入的记忆列重合（逐列内容级守卫）。
     """
+    from models.memory import MemoryBank
     m = _build()
     m.eval()
     x = torch.randint(0, 200, (1, 6))
-    with torch.no_grad():
-        _, past = m(x[:, :3], use_cache=True)
-        # past: list[block] → 块元素 ((k, v), None, None) 嵌套；k 为 (B,H,T,D)
-        sizes = [past[0][0][0].size(2)]
-        for t in range(3, 6):
-            _, past = m(x[:, t:t + 1], past_key_values=past, use_cache=True)
-            sizes.append(past[0][0][0].size(2))
+    captured = []
+    orig_inject = MemoryBank.inject_memory
+    def spy(q, k, v, mk, mv, meta, mask_fill):
+        captured.append(mk.detach().clone())
+        return orig_inject(q, k, v, mk, mv, meta, mask_fill)
+    MemoryBank.inject_memory = staticmethod(spy)
+    try:
+        with torch.no_grad():
+            _, past = m(x[:, :3], use_cache=True)
+            sizes = [past[0][0][0].size(2)]
+            for t in range(3, 6):
+                _, past = m(x[:, t:t + 1], past_key_values=past, use_cache=True)
+                sizes.append(past[0][0][0].size(2))
+    finally:
+        MemoryBank.inject_memory = staticmethod(orig_inject)
     assert sizes == [3, 4, 5, 6], \
         f"cache 应每步只增 1 列（记忆列不得进入 present），实际增长 {sizes}"
+    # 内容级守卫：present 不得含任何一步注入的记忆列
+    assert captured, "记忆注入应至少发生一次"
+    present_k = past[0][0][0]
+    pm = present_k.flatten(0, 1)                       # (B*H, Tkv, D)
+    mka = torch.cat(captured, dim=1).flatten(0, 1)     # (B*H, M*steps, D)
+    leak = sum(1 for i in range(pm.size(1))
+               if ((pm[:, i:i + 1, :] - mka).abs().max(dim=-1).values < 1e-5).any())
+    assert leak == 0, \
+        f"present 泄漏 {leak} 列记忆（应只含真实 token KV）"
 
 
 # ===========================================================================

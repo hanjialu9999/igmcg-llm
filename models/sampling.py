@@ -31,13 +31,18 @@ def sample_next_token(logits_t: torch.Tensor, *, temperature: float,
                       generated_len: int, min_length: int, eos_penalty: float,
                       top_k: int, vocab_size: int,
                       raw_logits: Optional[torch.Tensor] = None,
-                      temperature_applied: bool = False) -> Optional[int]:
+                      temperature_applied: bool = False,
+                      bos_id: Optional[int] = None) -> Optional[int]:
     """INT-2：单步采样单一事实来源——model.generate（单序列）与 generate.py 批量候选
     解码（_generate_candidates_batch）共用，消除两套采样循环公式漂移。
 
-    流程：温度缩放 → 加性重复惩罚 → n-gram 先验叠加 → pad/sep 屏蔽 → min_length/eos 处理
+    流程：温度缩放 → 加性重复惩罚 → n-gram 先验叠加 → pad/sep/bos 屏蔽 → min_length/eos 处理
     → top_k 截断 → 全 -inf 回退 → softmax → multinomial。低置信（probs.max()<0.01）返回
     None 表示提前终止。返回的是 token id（或 None）。
+
+    `bos_id`：R39 加固——BOS 只作为序列起始标记出现（data_utils encode 在位置 0 注入），
+    训练 target 从 row[1:] 取，模型从未被监督输出 BOS；不屏蔽则采样可能抽中它，在生成
+    文本中插入垃圾标记（decode 时被跳过，但浪费 token 且污染后续 n-gram 上下文）。
 
     `temperature_applied`：当上游已对主干 logits 应用过温度（n-gram 融合路径，forward 内
     log_softmax(z/τ)），此处不再整体除以 τ（否则会错误缩放 n-gram 先验）。此时若提供了
@@ -48,6 +53,8 @@ def sample_next_token(logits_t: torch.Tensor, *, temperature: float,
         lt = lt + ngram_weight * ngram_fn(generated_ids, device)
     lt[pad_id] = float('-inf')
     lt[sep_id] = float('-inf')
+    if bos_id is not None:
+        lt[bos_id] = float('-inf')
     if generated_len < min_length:
         lt[eos_id] = float('-inf')
     else:
@@ -64,6 +71,8 @@ def sample_next_token(logits_t: torch.Tensor, *, temperature: float,
         if not temperature_applied:
             rb = rb / temperature
         rb[pad_id] = float('-inf')
+        if bos_id is not None:
+            rb[bos_id] = float('-inf')
         lt = rb
     probs = torch.softmax(lt, dim=-1)
     if probs.max() < 0.01:

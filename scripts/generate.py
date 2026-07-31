@@ -166,7 +166,7 @@ def _style_features(text):
 
 def _generate_candidates_batch(model, ids, temps, max_length, top_k, rep_penalty,
                                 device, ngram_fn, ngram_weight, pad_id, sep_id, eos_id,
-                                min_length=3, eos_penalty=-5.0,
+                                min_length=3, eos_penalty=-5.0, bos_id=None,
                                 intuition=None):
     """并行生成 N 个候选：单次 batch 前向（batch=N），每个候选在 batch 内各自独立维护
     KV-cache / SSM 状态，避免候选间污染，也避免逐候选串行 forward（num_candidates 倍提速）。
@@ -214,6 +214,7 @@ def _generate_candidates_batch(model, ids, temps, max_length, top_k, rep_penalty
                     eos_penalty=eos_penalty, top_k=top_k, vocab_size=logits[n, -1, :].shape[0],
                     raw_logits=logits[n, -1, :],
                     temperature_applied=_temp_applied,
+                    bos_id=bos_id,
                 )
                 if tok is None:
                     # 低置信提前终止：填 pad 占位保持 batch 对齐并标记完成
@@ -311,12 +312,14 @@ def generate_igmcg(model, vocab, prompt, intuition=None, num_candidates=4,
     pad_id = vocab.pad_idx
     sep_id = getattr(vocab, 'sep_idx', 4)
     eos_id = getattr(vocab, 'eos_idx', 3)
+    bos_id = getattr(vocab, 'bos_idx', None)
 
     temps = [base_temp * (0.75 + 0.6 * k / max(1, num_candidates - 1))
              for k in range(num_candidates)]
     seqs = _generate_candidates_batch(model, ids, temps, max_length, top_k,
                                        repetition_penalty, device, ngram_fn,
                                        ngram_weight, pad_id, sep_id, eos_id,
+                                       bos_id=bos_id,
                                        min_length=min_length, eos_penalty=eos_penalty,
                                        intuition=intuition)
     flus = _fluency_batch(model, seqs, device, pad_id)

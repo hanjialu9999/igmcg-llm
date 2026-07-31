@@ -8,7 +8,7 @@ from torch.utils.checkpoint import checkpoint
 from torch.nn.functional import scaled_dot_product_attention
 from typing import Optional, List, Tuple, Any, Dict, Callable
 
-from models.constants import MASK_FILL_VALUE, ROPE_BASE
+from models.constants import MASK_FILL_VALUE, ROPE_BASE, BOS_IDX
 
 
 from models.norms import RMSNorm, GPASNorm
@@ -1732,6 +1732,7 @@ class TransformerModel(nn.Module):
                 eos_penalty=eos_penalty, top_k=top_k, vocab_size=logits_t.shape[0],
                 raw_logits=logits_t,
                 temperature_applied=getattr(self, 'ngram_fusion_enabled', False),
+                bos_id=BOS_IDX,
             )
 
         with torch.no_grad():

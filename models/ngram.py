@@ -181,10 +181,11 @@ class NGramModel:
             # 性能优化（第三十轮）：原式 `w*p + (1-w)*uni[idx]` 6 算子，改
             # `uni[idx] + w*(p-uni[idx])` 5 算子（结合律，与 R29.5 convex_combine
             # 同模式），省 1 算子/循环。数学等价：w*p+(1-w)*u = u + w*(p-u)。
-            # 性能优化（第三十五轮续）：改用 torch.lerp（fused kernel，支持标量 weight），
-            # 5 算子→1 算子/循环。lerp(start, end, weight) = start + weight*(end-start)。
+            # 第三十五轮曾改用 torch.lerp（fused kernel，1 算子），但 DML 不支持
+            # aten::lerp.Tensor_out → 函数式 lerp 每调用 CPU 回退 + 同步（与 layers.py
+            # R38 修复同根因，此处当时漏修）。R39 回退到 4 算子 mul/sub/add 形式。
             u_idx = uni[idx]
-            base[k - 1, idx] = torch.lerp(u_idx, p, w)
+            base[k - 1, idx] = u_idx + w * (p - u_idx)
         # 逐阶归一化后取 log（每阶独立归一，与逐阶 vec/vec.sum() 完全等价）
         base = torch.log(base / base.sum(dim=-1, keepdim=True) + 1e-10)  # (K-1, V)
         out = torch.empty(V, K, device=device)
@@ -317,9 +318,15 @@ class NGramModel:
         for idx in uncached_idxs:
             ck = ctx_keys[idx]
             v = self._compute_logprob_orders(list(ck), V, device)
-            if len(self._orders_cache) > self._orders_cache_max:
+            # R39 修复：与 matrix 路径共用字节预算记账（此前只查条数上限、不记账也不
+            # 重置——增量生成绕过 512MB 预算（V=5e4×K=10 时 8192 条可达 16GB），且
+            # 陈旧 _orders_cache_bytes 会污染 matrix 路径的预算判断）。
+            if len(self._orders_cache) > self._orders_cache_max or \
+               self._orders_cache_bytes + v.numel() * v.element_size() > self._orders_cache_byte_budget:
                 self._orders_cache.clear()
+                self._orders_cache_bytes = 0
             self._orders_cache[ck] = v.cpu()
+            self._orders_cache_bytes += v.numel() * v.element_size()
             uniq_vecs[idx] = v
         # 3) 向量化填充：stack + index_select 一次性搬回 (B,T,V,K)
         stacked = torch.stack(uniq_vecs, dim=0)  # (U, V, K)

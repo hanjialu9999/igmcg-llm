@@ -172,6 +172,15 @@ def train():
             # 作为下游 chat.py / dialogue_interactive.py 的稳定加载入口，故复制一份固定名。
             import shutil
             shutil.copyfile(saved_path, model_path)
+            # 关键：config 必须一并复制为 best_finetuned_model_config.yaml。
+            # 此前只复制 .pt——load_model 在 sibling config 缺失时回退硬编码默认
+            # （vocab 12000/embd 128/heads 4/layers 2）+ strict=False 静默部分加载，
+            # 微调产物加载后是随机噪声。同步复制保证架构与训练一致。
+            _src_cfg = saved_path.replace('.pt', '_config.yaml')
+            _dst_cfg = model_path.replace('.pt', '_config.yaml')
+            if os.path.exists(_src_cfg):
+                shutil.copyfile(_src_cfg, _dst_cfg)
+                print(f"OK 已同步配置: {_dst_cfg}")
             print(f"OK 已更新最佳权重文件: {model_path}（来源: {saved_path}）")
 
     print("\n🎉 微调任务圆满成功！")

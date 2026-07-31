@@ -667,13 +667,16 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         if memory_kv is not None:
             mk, mv, meta = memory_kv
             mem_cols = mk.size(1)
-            k, v, mem_bias = MemoryBank.inject_memory(
-                q, k, v, mk, mv, meta, self.mask_fill_value)
             # 全上下文检索偏置（阶段3 扩展）：对真实 KV 远端做稀疏检索，注入为注意力正偏置。
             # 由实例方法计算以复用本层的 window/topk 开关（与两路径历史上各自实现同源一致）。
             # 注意：rbias_full 的 Treal 须取"真实 token 数"（= Tkv - mem_cols），且 cache 路径
             # 必须在 past 拼接之后计算（否则 Treal=Tq 与最终掩码宽度 mem_cols+T_past+Tq 不匹配，
             # 增量解码第 2 步起 RuntimeError；且检索语义退化为只覆盖当前 token）。
+            # R39 修复：inject_memory 调用移入 cache/全量分支各自拼接之后（见下）——此前注入在
+            # 拼接之前执行，cache 布局为 [pk | mk | cur]（记忆在中间），present 剥离 mem_cols
+            # 列剥掉的是 past 尾部真实 token，记忆列反而留在缓存（多份记忆副本 + 真实上下文
+            # 永久丢失，parity 残差超注释声称的 0.01-0.03 上界）。现在布局恒为 [mk | pk | cur]，
+            # 剥离的才是真记忆列，与全量路径及窗口掩码的 mem_cols 偏移语义完全一致。
 
         if use_cache:
             # 增量解码：拼接待拼接的 K/V 缓存，仅对当前 token 做注意力
@@ -688,6 +691,10 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
                     pv = self._dequantize_int8(pv, past_kv[3])
                 k = torch.cat([pk, k], dim=2)
                 v = torch.cat([pv, v], dim=2)
+            # R39：记忆注入须在 past 拼接之后（布局 [mk|pk|cur] 才能被 present 剥离正确）
+            if memory_kv is not None:
+                k, v, mem_bias = MemoryBank.inject_memory(
+                    q, k, v, mk, mv, meta, self.mask_fill_value)
             # 全上下文检索：cache 路径须在 past 拼接后计算，Treal = 真实历史长度（Tkv - mem_cols），
             # 与最终掩码宽度 mem_cols + Tkv 一致，且检索覆盖全部历史 token。
             if memory_kv is not None:
@@ -754,6 +761,10 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
             return self.proj(out), present
 
         # —— 非缓存（训练 / 含 SSM 模型全量重算）路径 ——
+        # R39：与 cache 路径一致，注入在"拼接"后执行（全量路径无 past，即原位注入）
+        if memory_kv is not None:
+            k, v, mem_bias = MemoryBank.inject_memory(
+                q, k, v, mk, mv, meta, self.mask_fill_value)
         T = q.size(2)
         Tkv = k.size(2)
         # 统一构造 (1,1,T,Tkv) 注意力掩码：记忆段全 0（全局可检索），

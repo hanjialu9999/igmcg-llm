@@ -237,7 +237,10 @@ class MemoryBank(nn.Module):
         # 记忆查询相似度（每槽点积）：(B,H,Tq,M)，廉价（M 小）
         mlogits = torch.einsum('bhqd,bhmd->bhqm', q, mk_e)
         if meta is not None:
-            # 仅当开启检索/稀疏时才加偏置；否则记忆仅作为全局 KV 参与注意力（不加额外 bias）
+            # 仅当开启检索/稀疏时才加偏置；否则记忆仅作为全局 KV 参与注意力（不加额外 bias）。
+            # R39 修复：此前 mem_bias=mlogits 无条件返回——meta=None（无检索无稀疏）时
+            # 记忆列已在 k_aug 里产生 1×q·mk 点积分，再叠加 mem_bias 即 2× 翻倍，
+            # 与注释语义及"记忆仅作全局 KV"的设计相悖。
             if meta.get('retrieval_gate') is not None:
                 # 可学门控：sigmoid → (0,1) 软增强/抑制记忆召回，受 LM loss 监督
                 # retrieval_gate 是 Parameter，model.to(device) 时已移动，sigmoid 后继承设备
@@ -246,12 +249,18 @@ class MemoryBank(nn.Module):
             if meta.get('sparse_topk', 0) and 0 < meta['sparse_topk'] < mem_cols:
                 k_keep = meta['sparse_topk']
                 # 每查询保留 top-k 记忆槽，余下压到 -inf（可微稀疏，降低无关记忆干扰）
-                kvals, _ = torch.topk(mlogits, k_keep, dim=-1)  # (B,H,Tq,k_keep)
-                thr = kvals[..., -1:]  # 第 k 大的值作为阈值 (B,H,Tq,1)
+                # R39：topk 包 no_grad——thr 只喂布尔比较（比较断链，梯度本就不经
+                # thr 传播），包住可省一次 topk backward 且防 DML 驱动版本差异
+                # （对齐 moe.py 的 no_grad 处理）。
+                with torch.no_grad():
+                    kvals, _ = torch.topk(mlogits, k_keep, dim=-1)  # (B,H,Tq,k_keep)
+                    thr = kvals[..., -1:]  # 第 k 大的值作为阈值 (B,H,Tq,1)
                 # 比较结果继承操作数设备，无需 .to(mlogits.device)
                 drop = (mlogits < thr)
                 mlogits = mlogits.masked_fill(drop, mask_fill)
-        mem_bias = mlogits  # (B,H,Tq,M)，作为 scores 的可加偏置
+            mem_bias = mlogits  # (B,H,Tq,M)，作为 scores 的可加偏置
+        else:
+            mem_bias = None
 
         # 记忆拼到 K/V 之前（记忆在前，窗口/全量在后）；各头共享记忆 K/V
         k_aug = torch.cat([mk_e, k], dim=2)
