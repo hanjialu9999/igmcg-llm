@@ -153,7 +153,8 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
                  global_step=0, curriculum_total_steps=1,
                  igmcg_sel_prob=0.0,
                  skip_batches=0, checkpoint_dir=None, checkpoint_percents=(),
-                 checkpoint_meta=None, initial_eff_step=0):
+                 checkpoint_meta=None, initial_eff_step=0,
+                 controller_active=True):
     """Train one epoch with warmup, gradient accumulation and mixed precision.
 
     - warmup_steps: 预热步数。若 <1 则按"占整个 epoch 有效步数的比例"解释（如 0.1=前 10% 步预热）。
@@ -165,6 +166,8 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
     - checkpoint_meta: dict 含 scaler 等，传给 step checkpoint 保存。
     - initial_eff_step: resume 续训时已完成的累计有效优化步（R38 修复：此前从 0 重计，
       resume 后 warmup/wsd LR 调度从头爬升，与"不中断训练"不等价）。
+    - controller_active: R42 Controller 三阶段训练——False 时本 epoch 强制关闭 Controller
+      （_rt_controller=False，跳过 Controller 前向省算力），用于 Generator warmup 阶段。
     """
     model.train()
     loss_sum = 0.0  # 初始 float，首次 += loss.detach() 后自动提升为 GPU 张量，仅打印时 .item() 同步
@@ -253,6 +256,11 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
                         {k: False for k in cur_keys} if cur_keys else False)
                 else:
                     model.set_enhancements_active(True)
+        # R42: Controller 三阶段训练——controller_active=False 时强制关闭 Controller
+        # （覆盖 enhancement_schedule 的 controller 键，确保 warmup 期整 epoch 关闭）。
+        # 跳过 Controller 前向 = 省完整 2 层 GatedDeltaNet 计算（小模型上 ~40% 算力）。
+        if not controller_active and model.controller_enabled:
+            model._rt_controller = False
 
         # 阶段8.7 IGMCG-SEL：训练期以 igmcg_sel_prob 概率整批强制关闭 IGMCG 引导（igate 归零），
         # 让模型学会"何时依赖 IGMCG、何时靠自身"——否则 use 门控恒开、无自决意义。
@@ -376,10 +384,13 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
     return (loss_sum / loss_count).item() if loss_count else 0.0
 
 
-def validate(model, dataloader, criterion, device):
+def validate(model, dataloader, criterion, device, controller_active=True):
     """Validate model"""
     model.eval()
     model.set_enhancements_active(True)  # 验证用增强开启模式，反映训练所得"开"行为
+    # R42: Controller warmup 期验证也关 Controller（与训练态一致，省前向开销）
+    if not controller_active and model.controller_enabled:
+        model._rt_controller = False
     # GPU 累加 loss，仅在末尾 .item() 同步一次（避免每 batch 的 DML→CPU 同步税）
     loss_sum = torch.zeros(1, device=device)
     loss_count = 0
@@ -726,6 +737,19 @@ def main(config_path='configs/pretrain.yaml', resume=False):
               "其余被忽略。建议只保留一个。")
     total_steps_all = total_batches * config['training']['epochs']
 
+    # R42: Controller 三阶段训练配置
+    # controller_warmup_frac: 前 N 比例的 epoch 关闭 Controller（Generator 独自 warmup，
+    #   省 Controller 前向开销）；之后开启（零初始化信号 → 平滑过渡）。
+    #   三阶段：①warmup_frac 前 Generator-only → ②开启 Controller 联合训练 → ③持续微调。
+    #   默认 0.0 = 从第 1 epoch 就开 Controller（无 warmup，向后兼容）。
+    controller_warmup_frac = float(config['training'].get('controller_warmup_frac', 0.0))
+    _has_controller = getattr(model, 'controller_enabled', False)
+    if controller_warmup_frac > 0 and _has_controller:
+        print(f"  Controller warmup: 前 {controller_warmup_frac:.0%} epochs 关闭 Controller"
+              f"（Generator warmup，省前向开销）→ 之后开启（零初始化信号平滑过渡）")
+    elif _has_controller:
+        print(f"  Controller: 从第 1 epoch 开启（零初始化信号，中性起步）")
+
     # Training loop
     print("\n[Training] Starting training...")
     history = {'train_loss': [], 'best_epoch': 0}
@@ -735,6 +759,14 @@ def main(config_path='configs/pretrain.yaml', resume=False):
     global_step = resume_global_step  # 跨 epoch 累计步数，供课程退火计算训练进度
 
     for epoch in range(start_epoch, config['training']['epochs'] + 1):
+        # R42: Controller 三阶段训练——前 warmup_frac 比例的 epoch 关闭 Controller
+        _ctrl_progress = (epoch - 1) / max(config['training']['epochs'], 1)
+        _ctrl_active = _ctrl_progress >= controller_warmup_frac
+        if _has_controller and controller_warmup_frac > 0:
+            _prev = getattr(model, '_rt_controller', True)
+            if _ctrl_active != _prev and epoch > start_epoch:
+                print(f"  [R42] Epoch {epoch}: Controller {'ON' if _ctrl_active else 'OFF (warmup)'}"
+                      f"（零初始化信号平滑过渡）")
         train_loss = train_epoch(
             model, dataloader, optimizer, criterion, device, epoch,
             warmup_steps=config['training'].get('warmup_steps', 0),
@@ -764,17 +796,19 @@ def main(config_path='configs/pretrain.yaml', resume=False):
             checkpoint_meta={'scaler': scaler, 'best_loss': best_loss},
             # R38: resume 后 LR 调度从已完成的累计步继续（此前 warmup/衰减从头爬升）
             initial_eff_step=resume_skip_batches // grad_accum_steps if epoch == start_epoch else 0,
+            controller_active=_ctrl_active,
         )
         global_step += (total_batches - resume_skip_batches) if epoch == start_epoch else total_batches
         # R39 修复：resume 轮实际只训了 (total_batches - skip_batches) 批却记满
         # total_batches → 课程退火 frac 超前 skip 批，重复 resume 累计漂移。
 
         history['train_loss'].append(train_loss)
-        
+
         # Validation
         val_loss = None
         if val_dataloader is not None:
-            val_loss = validate(model, val_dataloader, criterion, device)
+            val_loss = validate(model, val_dataloader, criterion, device,
+                                controller_active=_ctrl_active)
             print(f"\nEpoch {epoch}/{config['training']['epochs']} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
         else:
             print(f"\nEpoch {epoch}/{config['training']['epochs']} | Train Loss: {train_loss:.4f}")

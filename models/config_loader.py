@@ -70,6 +70,14 @@ def build_model(config: Dict[str, Any], device: Optional[torch.device] = None,
                 "如需全局线性融合，请将对应层改为 'attn'；否则 hybrid 块仅做 attn+ssm。",
                 stacklevel=2,
             )
+    # R42: Controller 配置互斥校验
+    # Controller 的 mem_kv 注入路径依赖 attention mixer（与 AxialLinearAttention 同限制：
+    # hybrid_linear2d 全量训练路径不注入 mem_kv，train/infer 行为分裂）。
+    if mc.get('controller', False) and _mixer in ('linear2d', 'hybrid_linear2d'):
+        raise ValueError(
+            f"controller=True 与 mixer='{_mixer}' 不兼容：AxialLinearAttention 全量训练路径"
+            "不注入记忆（controller_memory_compress 的 mem_kv 无效，train/infer 行为分裂）。"
+            "请改用 attn/attn_linear/gated_delta 系 mixer，或关闭 controller_memory_compress。")
     model = TransformerModel.from_config(model_cfg, ngram_model=ngram_model)
     if device is not None:
         model = model.to(device)

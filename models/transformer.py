@@ -26,6 +26,7 @@ from models.state import BlockState
 from models.gates import (GateConfig, apply_direct, apply_sigmoid_scalar,
                           apply_linear_gate, convex_combine_scalar,
                           convex_combine_linear, apply_correction)
+from models.controller import ControllerModel, ControllerOutput
 
 # 向后兼容：保留原模块级符号的外部可见性（其它模块仍从 models.transformer 导入）
 __all__ = [
@@ -34,7 +35,7 @@ __all__ = [
     "apply_qk_norm_and_temp", "apply_repetition_penalty", "sample_next_token",
     "_decode_one_step", "CharMergeLayer", "BlockState",
     "TransformerBlock", "_parse_layer_plan", "TransformerModel",
-    "GatedDeltaNet", "MoELayer",
+    "GatedDeltaNet", "MoELayer", "ControllerModel", "ControllerOutput",
 ]
 
 
@@ -324,7 +325,8 @@ class TransformerBlock(nn.Module):
                         past_conv_state=ssm_past_conv_state, use_cache=use_cache)
 
     def forward(self, x: torch.Tensor, past_kv: Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]] = None, use_cache: bool = False, start_pos: int = 0, ssm_past_state: Optional[torch.Tensor] = None, ssm_past_conv_state: Optional[torch.Tensor] = None,
-                memory: Optional['MemoryBank'] = None) -> Tuple[torch.Tensor, Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]]]:
+                memory: Optional['MemoryBank'] = None,
+                controller_mem_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]]]:
         present: Optional[Tuple[Optional[Tuple[torch.Tensor, torch.Tensor]], Optional[torch.Tensor], Optional[torch.Tensor]]] = None
         ssm_present_state: Optional[torch.Tensor] = None
         ssm_present_conv_state: Optional[torch.Tensor] = None
@@ -333,6 +335,17 @@ class TransformerBlock(nn.Module):
         if past_kv is not None:
             attn_past_kv = past_kv[0]
         mem_kv = memory.get_kv() if memory is not None else None
+        # R42: 合并 Controller 压缩记忆 mem_kv（只读，无 write）到 MemoryBank 的 mem_kv
+        # 拼到末尾（记忆段在前 + Controller 段在后），attention 一次检索两源。
+        # controller_mem_kv = (mk, mv) 各 (B, M_ctrl, head_dim)；meta 沿用 MemoryBank 的。
+        if controller_mem_kv is not None:
+            mk_c, mv_c = controller_mem_kv
+            if mem_kv is not None:
+                mk, mv, meta = mem_kv
+                # DML 约束：cat 空 tensor dim=0 报错；此处 mk/mv 非空（MemoryBank 有槽），安全
+                mem_kv = (torch.cat([mk, mk_c], dim=1), torch.cat([mv, mv_c], dim=1), meta)
+            else:
+                mem_kv = (mk_c, mv_c, None)
         ckpt = self.training and self.gradient_checkpointing
         # 第十三轮：动态残差门控 highway_gate 优先于静态 residual_gate
         # highway_gate: gate = sigmoid(W·x + b)，逐 token 动态（init b=3 → sigmoid≈0.95）
@@ -599,7 +612,7 @@ class TransformerModel(nn.Module):
     # 可分段 SEL 交替的开关），供 train.py 的 enhancement_schedule 与测试派生，
     # 避免键名清单散落多处漂移。
     ENHANCEMENT_KEYS = ("qk_norm", "attn_temp", "residual_gate", "hybrid_gate",
-                        "layer_film", "highway_gate", "input_highway")
+                        "layer_film", "highway_gate", "input_highway", "controller")
 
     def __init__(self, vocab_size: int, embedding_dim: int, num_heads: int, num_layers: int,
                  hidden_dim: int, max_seq_length: int, dropout: float = 0.0, tie_weights: bool = True,
@@ -687,7 +700,16 @@ class TransformerModel(nn.Module):
                    moe_load_balance_weight: float = 0.01,
                    moe_router_z_loss_weight: float = 0.001,
                    moe_router_noise: float = 0.0,
-                   moe_layers: Optional[List[int]] = None):
+                   moe_layers: Optional[List[int]] = None,
+                   # R42: Controller/Generator 双模型编排
+                   controller: bool = False,
+                   controller_dim: int = 0,
+                   controller_heads: int = 0,
+                   controller_layers: int = 2,
+                   controller_mem_slots: int = 4,
+                   controller_direction: bool = True,
+                   controller_film: bool = True,
+                   controller_memory_compress: bool = True):
         super(TransformerModel, self).__init__()
 
         self.vocab_size = vocab_size
@@ -975,6 +997,29 @@ class TransformerModel(nn.Module):
             self.early_exit_layers = []
         # 训练时辅助损失占位（forward 中重置；None 表示不计算/未启用）
         self._early_exit_aux_loss = None
+        # R42: Controller/Generator 双模型编排——独立 Controller 模型收口决策类功能。
+        # Controller 共享 Generator embedding（省词表参数），用 GatedDeltaNet（线性复杂度
+        # 看全上下文，S 矩阵=压缩记忆）产出 3 类控制信号条件化 Generator：
+        #   ① mem_kv 注入 attention；② FiLM 调制各层输入；③ direction 加到 embedding 输出。
+        # 所有信号投影零初始化 → 中性起步（不干预 Generator，向后兼容）。
+        # opt-in 默认关（controller=False）；启用时 ctrl_dim/heads 默认回退到 gen 值。
+        self.controller_enabled = bool(controller)
+        self._rt_controller = self.controller_enabled  # SEL 交替训练运行时开关
+        # Controller past_kv 缓存（增量解码用；forward 中按 is_fresh 重置）
+        self._controller_past: Optional[List] = None
+        if self.controller_enabled:
+            _ctrl_dim = controller_dim if controller_dim > 0 else embedding_dim
+            _ctrl_heads = controller_heads if controller_heads > 0 else num_heads
+            assert _ctrl_dim % _ctrl_heads == 0, (
+                f"controller_dim ({_ctrl_dim}) must be divisible by controller_heads ({_ctrl_heads})")
+            # 共享 embedding 层引用（在 self.embedding 创建之后；此处 embedding 已存在）
+            self.controller = ControllerModel(
+                gen_dim=embedding_dim, gen_heads=num_heads, gen_layers=num_layers,
+                ctrl_dim=_ctrl_dim, ctrl_heads=_ctrl_heads, ctrl_layers=controller_layers,
+                mem_slots=controller_mem_slots, max_seq_length=rope_max_len,
+                embedding_layer=self.embedding,
+                use_direction=controller_direction, use_film=controller_film,
+                use_memory_compress=controller_memory_compress)
         # 权重初始化（_init_weights 遍历所有 Linear 用 N(0,0.02)，再对 SSM 调 proper_init 覆盖）
         self._init_weights()
         # 专用初始化必须在 _init_weights 之后重新应用（否则被通用 N(0,0.02)/zeros 覆盖）：
@@ -1130,20 +1175,31 @@ class TransformerModel(nn.Module):
             moe_router_z_loss_weight=cfg.moe_router_z_loss_weight,
             moe_router_noise=cfg.moe_router_noise,
             moe_layers=cfg.moe_layers,
+            controller=cfg.controller,
+            controller_dim=cfg.controller_dim,
+            controller_heads=cfg.controller_heads,
+            controller_layers=cfg.controller_layers,
+            controller_mem_slots=cfg.controller_mem_slots,
+            controller_direction=cfg.controller_direction,
+            controller_film=cfg.controller_film,
+            controller_memory_compress=cfg.controller_memory_compress,
         )
 
     def set_enhancements_active(self, spec):
         """运行时开关（按开关粒度）：`spec=True/False` 全开/全关；`spec=dict` 按键更新。
         用于"交替/分段增强"训练（关闭则跳过对应增强，恒等）。"""
-        # 模型级特性（layer_film / input_highway）开关
+        # 模型级特性（layer_film / input_highway / controller）开关
         if isinstance(spec, bool):
             self._rt_layer_film = spec and self.layer_film_enabled
             self._rt_input_highway = spec and self.input_highway_enabled
+            self._rt_controller = spec and self.controller_enabled
         elif isinstance(spec, dict):
             if 'layer_film' in spec:
                 self._rt_layer_film = bool(spec['layer_film']) and self.layer_film_enabled
             if 'input_highway' in spec:
                 self._rt_input_highway = bool(spec['input_highway']) and self.input_highway_enabled
+            if 'controller' in spec:
+                self._rt_controller = bool(spec['controller']) and self.controller_enabled
         # 块级特性（residual_gate/hybrid_gate/highway_gate/qk_norm/attn_temp）开关
         for blk in self.blocks:
             blk.set_enhancements_active(spec)
@@ -1243,6 +1299,10 @@ class TransformerModel(nn.Module):
         return pruned
 
     def _init_weights(self):
+        # R42: embedding 先于 Linear 循环初始化——Controller 共享 embedding 且其额外
+        # Linear 层会在 modules() 遍历时消耗 RNG，先初始化 embedding 保证 controller=True
+        # 与 controller=False 时 Generator 权重逐位一致（中性起步 parity 可测）。
+        nn.init.normal_(self.embedding.weight, 0, 0.02)
         for m in self.modules():
             if isinstance(m, nn.Linear):
                 nn.init.normal_(m.weight, 0, 0.02)
@@ -1251,7 +1311,6 @@ class TransformerModel(nn.Module):
                     # 跳过通用零初始化以保留该设计意图。
                     if not (hasattr(self, 'char_merge') and m is getattr(self.char_merge, 'gate', None)):
                         nn.init.zeros_(m.bias)
-        nn.init.normal_(self.embedding.weight, 0, 0.02)
         # SSM 模块用更专业的初始化覆盖通用初始化
         # R37: isinstance 而非 type(m) is——MambaSSMWithCAST 是子类，type 精确匹配会漏掉，
         # 其 dt_proj.bias=0（非 0.1）且 cast_delta_proj 零初始化设计意图被通用 N(0,0.02) 覆盖。
@@ -1352,6 +1411,10 @@ class TransformerModel(nn.Module):
             if getattr(attn, 'rwkv7_enabled', False):
                 nn.init.zeros_(attn.z_proj.weight)
                 nn.init.constant_(attn.z_proj.bias, -3.0)
+        # R42: Controller 控制信号投影零初始化（中性起步，Controller 不干预 Generator）
+        # 必须在 _init_weights 之后调用（Controller 子模块也已被通用 N(0,0.02) 覆盖）
+        if self.controller_enabled:
+            self.controller._apply_neutral_inits()
 
     def tie_weights(self):
         """重新绑定 output_head 和 embedding 的权重（在 .to(device) 后调用以确保共享生效）。"""
@@ -1436,6 +1499,26 @@ class TransformerModel(nn.Module):
                     if hasattr(blk.attn, '_alibi_dist_cache'):
                         blk.attn._alibi_dist_cache.clear()
             self._cached_x0_proj = None
+            # R42: 新序列首步重置 Controller past_kv 缓存（与 input_highway x0 同理）
+            self._controller_past = None
+        # R42: Controller/Generator 双模型——跑 Controller 产出控制信号条件化 Generator。
+        # _rt_controller=False 时跳过（SEL 交替训练恒等），信号全 None。
+        # Controller 共享 Generator embedding，自己跑 token_ids → 控制信号。
+        # 增量解码：_controller_past 跨步保留（与 block past_key_values 同生命周期）。
+        ctrl_mem_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
+        ctrl_film: Optional[List] = None
+        ctrl_direction: Optional[torch.Tensor] = None
+        if self.controller_enabled and self._rt_controller:
+            ctrl_signals, ctrl_presents = self.controller(
+                src, past_kv=self._controller_past, use_cache=use_cache, start_pos=start_pos)
+            if use_cache:
+                self._controller_past = ctrl_presents
+            ctrl_mem_kv = ctrl_signals.mem_kv
+            ctrl_film = ctrl_signals.film_per_layer
+            ctrl_direction = ctrl_signals.direction
+            # ③ 生成方向偏置加到 embedding 输出（broadcast over T；init=0 中性）
+            if ctrl_direction is not None:
+                x = x + ctrl_direction.unsqueeze(1)
 
         # 第十一轮：跨层稀疏路由——收集每层输出供后续层 top-k 路由（残差注入）。
         # 仅 cross_layer_routing=True 且 num_layers>1 时启用（cross_router 已在 __init__ 创建）。
@@ -1521,6 +1604,14 @@ class TransformerModel(nn.Module):
                 # tanh 限制 gamma∈(-1,1) → x*(1+γ)∈(0, 2x)，防止深层堆叠数值爆炸
                 gamma = torch.tanh(gamma)
                 x = x * (1.0 + gamma) + beta
+            # R42: Controller FiLM 调制——Controller 末层输出经 film_projs[i] 产生 (γ, β)，
+            # 仿射调制 Generator 当前层输入。与 layer_film 独立（来源不同：Controller vs 前层），
+            # 串联叠加（先 layer_film 再 controller_film）。init γ=β=0 → 恒等（中性起步）。
+            # ctrl_film[i] 为 (gamma, beta) 元组或 None（layer 0 / 未启用）。
+            if ctrl_film is not None and i > 0 and ctrl_film[i] is not None:
+                gamma_c, beta_c = ctrl_film[i]  # 各 (B, T, D)
+                gamma_c = torch.tanh(gamma_c)
+                x = x * (1.0 + gamma_c) + beta_c
             # 第十四轮：输入全局高速公路——embedding 输出 x0 经门控注入当前层
             # gate=sigmoid(W·x+b)，init b=-3 → sigmoid≈0.05（弱注入，训练中自决）
             # SEL 交替训练：_rt_input_highway=False 时跳过
@@ -1540,8 +1631,10 @@ class TransformerModel(nn.Module):
             ssm_past_state = ssm_states[i] if use_cache else None
             ssm_past_conv_state = ssm_conv_states[i] if use_cache else None
             # block 内部仍用旧元组接口（TransformerBlock.forward 未改），传入 block_states[i].to_tuple()
+            # R42: ctrl_mem_kv 注入 block（合并到 MemoryBank mem_kv 或单独使用）
             x, present = block(x, block_states[i].to_tuple() if block_states[i] is not None else None,
-                               use_cache, start_pos, ssm_past_state, ssm_past_conv_state, memory)
+                               use_cache, start_pos, ssm_past_state, ssm_past_conv_state, memory,
+                               controller_mem_kv=ctrl_mem_kv)
             presents.append(BlockState.from_tuple(present))
             # R36-6: 累积 MoE 辅助损失（仅 MoE 层 + 训练期；MoELayer.forward 已计算 last_*_loss）
             if (self.moe_enabled and self.training and i in self.moe_layer_set
@@ -1616,11 +1709,13 @@ class TransformerModel(nn.Module):
         return self.output_head(x)
 
     def reset_ngram_state(self) -> None:
-        """集中管理增量解码 n-gram 滚动缓冲（_ngram_last_ids）的重置。
+        """集中管理增量解码跨序列状态的重置（n-gram 滚动缓冲 + Controller past_kv）。
 
         避免调用方（generate.py / model.generate）直接戳实例变量，统一由模型拥有者
         管理状态（INT 后续整合：消除跨模块直接改模型内部状态的隐患）。"""
         self._ngram_last_ids = None
+        # R42: Controller past_kv 跨序列重置（与 n-gram 滚动缓冲同生命周期）
+        self._controller_past = None
 
     def _apply_ngram_fusion(
         self, x: torch.Tensor, src: torch.Tensor,

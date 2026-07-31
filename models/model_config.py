@@ -215,6 +215,20 @@ class ModelConfig:
     moe_router_noise: float = 0.0        # 训练期路由噪声标准差（noisy top-k gating，鼓励探索；0=关）
     moe_layers: Optional[List[int]] = None  # MoE 层索引；None → 全部层
 
+    # R42 新特性：Controller/Generator 双模型编排
+    # 独立 Controller 模型（GatedDeltaNet mixer，线性复杂度看全上下文）产出 3 类控制信号
+    # 条件化 Generator：①压缩记忆 mem_kv 注入 attention；②FiLM 调制各层输入；③生成方向偏置。
+    # 所有控制信号投影零初始化 → 默认不干预（向后兼容），训练中渐进学习。
+    # 详见 AGENT_MEMORY.md §10 / CHANGELOG.md R42 条目。
+    controller: bool = False              # 启用 Controller（opt-in 默认关）
+    controller_dim: int = 0               # Controller 隐藏维；0 → 用 embedding_dim（共享投影更省）
+    controller_heads: int = 0             # Controller 注意力头数；0 → 用 num_heads
+    controller_layers: int = 2            # Controller 层数（轻量决策器，2-3 层足够）
+    controller_mem_slots: int = 4         # 压缩记忆槽数 M（注入 Generator attention 的 mem_kv 行数）
+    controller_direction: bool = True     # 输出③生成方向偏置 (B, D) 加到 embedding 输出
+    controller_film: bool = True          # 输出②FiLM 调制 (γ, β) per-layer 调制 Generator 各层输入
+    controller_memory_compress: bool = True  # 输出①压缩记忆 mem_kv 注入 Generator attention
+
     # n-gram
     ngram_fusion: bool = False
     ngram_gate_scale: float = 1.0
@@ -244,6 +258,18 @@ class ModelConfig:
             assert self.moe_router_noise >= 0.0, f"moe_router_noise must be >= 0, got {self.moe_router_noise}"
             assert self.moe_load_balance_weight >= 0.0, f"moe_load_balance_weight must be >= 0"
             assert self.moe_router_z_loss_weight >= 0.0, f"moe_router_z_loss_weight must be >= 0"
+        # R42: Controller 配置校验
+        if self.controller:
+            assert self.controller_layers >= 1, f"controller_layers must be >= 1, got {self.controller_layers}"
+            assert self.controller_mem_slots >= 1, f"controller_mem_slots must be >= 1, got {self.controller_mem_slots}"
+            _cdim = self.controller_dim if self.controller_dim > 0 else self.embedding_dim
+            _cheads = self.controller_heads if self.controller_heads > 0 else self.num_heads
+            assert _cdim % _cheads == 0, (
+                f"controller_dim ({_cdim}) must be divisible by controller_heads ({_cheads})")
+            # Controller 至少启用一种控制信号（否则空跑浪费算力）
+            assert (self.controller_direction or self.controller_film
+                    or self.controller_memory_compress), (
+                "controller=True 须至少启用一种控制信号（direction/film/memory_compress）")
 
     @classmethod
     def from_dict(cls, mc: Dict[str, Any]) -> ModelConfig:
@@ -355,6 +381,14 @@ class ModelConfig:
             moe_router_z_loss_weight=float(mc.get('moe_router_z_loss_weight', 0.001)),
             moe_router_noise=float(mc.get('moe_router_noise', 0.0)),
             moe_layers=(list(mc.get('moe_layers')) if mc.get('moe_layers') is not None else None),
+            controller=bool(mc.get('controller', False)),
+            controller_dim=int(mc.get('controller_dim', 0)),
+            controller_heads=int(mc.get('controller_heads', 0)),
+            controller_layers=int(mc.get('controller_layers', 2)),
+            controller_mem_slots=int(mc.get('controller_mem_slots', 4)),
+            controller_direction=bool(mc.get('controller_direction', True)),
+            controller_film=bool(mc.get('controller_film', True)),
+            controller_memory_compress=bool(mc.get('controller_memory_compress', True)),
             ngram_fusion=mc.get('ngram_fusion', False),
             ngram_gate_scale=float(mc.get('ngram_gate_scale', 1.0)),
             igmcg=bool(mc.get('igmcg', False)),
