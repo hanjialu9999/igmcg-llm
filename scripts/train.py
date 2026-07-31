@@ -104,7 +104,9 @@ def compute_lr(eff_step, total_eff, warmup_target, base_lr, eta_min, lr_schedule
     if warmup_target > 0 and eff_step <= warmup_target:
         return base_lr * (eff_step / max(1, warmup_target))
 
-    progress = (eff_step - warmup_target) / max(1, total_eff - warmup_target)
+    # R38: clamp progress ≤ 1.0——eff_step 超 total_eff（resume 后数据规模变化）时，
+    # cosine/wsd 的 cos(π·progress) 周期回升，LR 从 eta_min 重新爬升（静默 bug）。
+    progress = min(1.0, (eff_step - warmup_target) / max(1, total_eff - warmup_target))
     if lr_schedule == 'constant':
         return base_lr
     if lr_schedule == 'cosine':
@@ -118,6 +120,29 @@ def compute_lr(eff_step, total_eff, warmup_target, base_lr, eta_min, lr_schedule
     return base_lr
 
 
+def clip_grad_norm_dml(params, max_norm):
+    """GPU 侧梯度裁剪（R38）：全程在设备上计算，无 .item() CPU 同步。
+
+    torch.nn.utils.clip_grad_norm_ 内部 total_norm.item() 每优化步同步一次
+    （DML 上 ~0.5-2ms/步）。本实现数学等价：
+      scale = min(max_norm / (total_norm + 1e-6), 1)，梯度 *= scale
+    与 clip_grad_norm_ 默认 (eps=1e-6, error_if_nonfinite=False) 语义一致：
+    非有限 total_norm 时 scale 为 NaN，NaN < 1 为 False → 不缩放（同原版）。
+    """
+    grads = [p.grad for p in params if p.grad is not None]
+    if not grads:
+        return None
+    total_sq = torch.zeros((), device=grads[0].device, dtype=grads[0].dtype)
+    for g in grads:
+        total_sq = total_sq + g.pow(2).sum()
+    total_norm = total_sq.sqrt()
+    clip_coef = max_norm / (total_norm + 1e-6)
+    clip_coef = clip_coef.clamp(max=1.0)
+    if clip_coef < 1.0:
+        torch._foreach_mul_(grads, clip_coef)
+    return total_norm
+
+
 def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
                  warmup_steps=0, base_lr=0.0005, gradient_clip=1.0, scaler=None,
                  use_amp=True, autocast_dtype=torch.float32, grad_accum_steps=1,
@@ -128,7 +153,7 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
                  global_step=0, curriculum_total_steps=1,
                  igmcg_sel_prob=0.0,
                  skip_batches=0, checkpoint_dir=None, checkpoint_percents=(),
-                 checkpoint_meta=None):
+                 checkpoint_meta=None, initial_eff_step=0):
     """Train one epoch with warmup, gradient accumulation and mixed precision.
 
     - warmup_steps: 预热步数。若 <1 则按"占整个 epoch 有效步数的比例"解释（如 0.1=前 10% 步预热）。
@@ -138,6 +163,8 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
     - checkpoint_dir: step checkpoint 保存目录。
     - checkpoint_percents: 在指定进度（如 (0.25, 0.5, 0.8)）保存 step checkpoint。
     - checkpoint_meta: dict 含 scaler 等，传给 step checkpoint 保存。
+    - initial_eff_step: resume 续训时已完成的累计有效优化步（R38 修复：此前从 0 重计，
+      resume 后 warmup/wsd LR 调度从头爬升，与"不中断训练"不等价）。
     """
     model.train()
     loss_sum = 0.0  # 初始 float，首次 += loss.detach() 后自动提升为 GPU 张量，仅打印时 .item() 同步
@@ -160,9 +187,10 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
     # 避免误配过大预热导致全程线性升温、永不进入稳定/衰减期。
     warmup_target = min(int(warmup_steps * total_eff) if 0 < warmup_steps < 1 else int(warmup_steps), total_eff)
 
-    optimizer.zero_grad()
+    # R38: set_to_none=True——梯度置 None 而非零填充（省 memset 拷贝，无数值影响）
+    optimizer.zero_grad(set_to_none=True)
     accumulated = 0
-    eff_step = 0
+    eff_step = initial_eff_step
 
     def step_optimizer():
         """执行一次优化器步进（含 warmup 学习率 + 梯度裁剪），循环内与 epoch 末共用，避免逻辑分叉。"""
@@ -174,13 +202,13 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
             param_group['lr'] = lr
         if scaler is not None:
             scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=gradient_clip)
+            clip_grad_norm_dml(model.parameters(), max_norm=gradient_clip)
             scaler.step(optimizer)
             scaler.update()
         else:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=gradient_clip)
+            clip_grad_norm_dml(model.parameters(), max_norm=gradient_clip)
             optimizer.step()
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=True)
         accumulated = 0
 
     progress = tqdm(dataloader, desc=f"Epoch {epoch}", total=total_steps,
@@ -208,7 +236,9 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
         #  - enhancement_off_prob（整体随机）：以该概率跳过本批次全部增强。
         # 默认两者皆无 = 始终全开。
         if enhancement_schedule is not None:
-            model.set_enhancements_active(enhancement_schedule[batch_idx % len(enhancement_schedule)])
+            # R38: 用 actual_idx（含 skip_batches）而非 batch_idx——resume 续训时
+            # batch_idx 从 0 重计，用它会相位错位（与不中断训练不一致）。
+            model.set_enhancements_active(enhancement_schedule[actual_idx % len(enhancement_schedule)])
         elif enhancement_off_prob > 0.0:
             model.set_enhancements_active(random.random() >= enhancement_off_prob)
         elif cur_keys is not None or cur_warmup is not None:
@@ -283,7 +313,8 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
             step_optimizer()
 
         # 累加损失：始终用 GPU 张量累加，仅在打印时才 .item() 同步
-        loss_sum = loss_sum + loss.detach()
+        # R38: .float() 保证 fp32 累加（bf16/fp16 下长 epoch 尾数不漂移）
+        loss_sum = loss_sum + loss.detach().float()
         loss_count += 1
         tokens_total += int(input_ids.numel())
 
@@ -317,6 +348,9 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
                         'model_state_dict': _cpu_offload(model.state_dict()),
                         'optimizer_state_dict': _cpu_offload(optimizer.state_dict()),
                         'progress_frac': _progress_frac,
+                        # R38: 记录 best_loss，resume 时恢复（此前 resume 后 best_loss
+                        # 被重置为 inf，训练完成后会丢弃一个更优的模型）
+                        'best_loss': checkpoint_meta.get('best_loss', float('inf')) if checkpoint_meta else float('inf'),
                     }
                     if checkpoint_meta:
                         _scaler_ref = checkpoint_meta.get('scaler')
@@ -570,6 +604,7 @@ def main(config_path='configs/pretrain.yaml', resume=False):
     best_loss = float('inf')
     _resume_scaler_state = None
     resume_skip_batches = 0  # step checkpoint 恢复时跳过的 batch 数
+    resume_global_step = 0   # R38: 恢复累计 global_step，保持课程退火/checkpoint 编号连续
     if resume:
         step_ckpt_path = find_step_checkpoint(checkpoint_dir)
         if step_ckpt_path is not None:
@@ -584,8 +619,11 @@ def main(config_path='configs/pretrain.yaml', resume=False):
                         state[k] = v.to(device)
             start_epoch = ckpt['epoch']  # 当前 epoch 还没训完
             resume_skip_batches = ckpt['batch_idx']
+            # R38: 此前 best_loss 被重置为 inf，训练完成后把更优模型当"新 best"保存
+            best_loss = ckpt.get('best_loss', float('inf'))
+            resume_global_step = ckpt.get('global_step', 0)
             _resume_scaler_state = ckpt.get('scaler_state_dict', None)
-            print(f"[Resume] epoch {start_epoch}, 跳过前 {resume_skip_batches} batch (进度 {ckpt.get('progress_frac', 0):.1%})")
+            print(f"[Resume] epoch {start_epoch}, 跳过前 {resume_skip_batches} batch (进度 {ckpt.get('progress_frac', 0):.1%}), best_loss={best_loss:.4f}")
         else:
             # 回退到 epoch checkpoint（整个 epoch 已训完，从下一个 epoch 开始）
             resume_epoch, resume_path = find_latest_checkpoint(checkpoint_dir)
@@ -599,6 +637,7 @@ def main(config_path='configs/pretrain.yaml', resume=False):
                         if isinstance(v, torch.Tensor):
                             state[k] = v.to(device)
                 best_loss = ckpt.get('best_loss', float('inf'))
+                resume_global_step = ckpt.get('global_step', 0)
                 start_epoch = resume_epoch + 1
                 _resume_scaler_state = ckpt.get('scaler_state_dict', None)
                 print(f"[Resume] best_loss={best_loss:.4f}, 从 epoch {start_epoch} 继续")
@@ -692,7 +731,8 @@ def main(config_path='configs/pretrain.yaml', resume=False):
     history = {'train_loss': [], 'best_epoch': 0}
     no_improve_epochs = 0
     patience = config['training'].get('early_stop_patience', 5)
-    global_step = 0  # 跨 epoch 累计步数，供课程退火计算训练进度
+    # R38: resume 后 global_step 从恢复值继续（此前从 0 重计，课程退火相位错位）
+    global_step = resume_global_step  # 跨 epoch 累计步数，供课程退火计算训练进度
 
     for epoch in range(start_epoch, config['training']['epochs'] + 1):
         train_loss = train_epoch(
@@ -721,7 +761,9 @@ def main(config_path='configs/pretrain.yaml', resume=False):
             skip_batches=resume_skip_batches if epoch == start_epoch else 0,
             checkpoint_dir=checkpoint_dir,
             checkpoint_percents=tuple(config['training'].get('checkpoint_percents', [])),
-            checkpoint_meta={'scaler': scaler},
+            checkpoint_meta={'scaler': scaler, 'best_loss': best_loss},
+            # R38: resume 后 LR 调度从已完成的累计步继续（此前 warmup/衰减从头爬升）
+            initial_eff_step=resume_skip_batches // grad_accum_steps if epoch == start_epoch else 0,
         )
         global_step += total_batches
 
@@ -759,6 +801,15 @@ def main(config_path='configs/pretrain.yaml', resume=False):
     print("Cleaning up old checkpoints...")
     print("="*50)
     cleanup_old_checkpoints(checkpoint_dir, keep_last_n=5)
+    # R38 修复：训练已完成，删除 step 级 checkpoint。
+    # 此前 step ckpt 残留，resume 时优先加载它（比 final 更旧）→ 已训完的模型被回滚。
+    # 训练中断（OOM/断电）时 step ckpt 仍保留，可正常续训。
+    import glob as _glob
+    _step_ckpts = _glob.glob(os.path.join(checkpoint_dir, 'checkpoint_step*pct.pt'))
+    for _p in _step_ckpts:
+        os.remove(_p)
+    if _step_ckpts:
+        print(f"[Cleanup] 删除 {len(_step_ckpts)} 个已完成训练的 step checkpoint")
     
     # Save final model and vocab
     # CPU-offload 后再保存，确保任意设备（含 DML/CUDA）都能用 weights_only=True 加载

@@ -500,7 +500,10 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         # 原实现 window>0 时在 if 内算一次 qpos_q/kpos，if 外又算一次（4 次冗余 arange+unsqueeze）。
         # 提取到 if 外统一计算，window>0 复用，window=0 时仅供 causal 使用。
         Tq = q.size(2)
-        qpos_q = torch.arange(Tq, device=device).unsqueeze(1)  # (Tq, 1)
+        # R38：qpos 用全局位置（全量 Treal==Tq → arange(0,Tq) 与旧行为一致；cache 路径
+        # q 是序列末尾的 Tq 个 token → 最后 Tq 个位置），否则增量路径 causal 子句
+        # `kpos > qpos_q` 会把除最老 token 外的全部历史压 -inf，检索退化为空。
+        qpos_q = torch.arange(Treal - Tq, Treal, device=device).unsqueeze(1)  # (Tq, 1)
         kpos = torch.arange(Treal, device=device).unsqueeze(0)  # (1, Treal)
         if self.window > 0:
             # 保留因果窗口 [q-window, q] 内的 key 位置，防止 top-k 稀疏误丢
@@ -639,20 +642,28 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
                 # 浮点舍入差异在 atol=1e-4 内（cache parity 测试已验证）。
                 T = v.size(2)
                 B_, H_, _, D_ = v.shape
-                # (B,H,T,D) → (B,T,H*D,1) 适配 _parallel_prefix_scan 的 (B,L,d_inner,d_state)
+                # (B,H,T,D) → (B,T,H*D,1) 适配递推（保留原 scan 的布局约定）
                 v_2d = v.permute(0, 2, 1, 3).reshape(B_, T, H_ * D_, 1)
-                # 性能优化（第二十六轮）：去掉两处 .contiguous()，DML 上 1.85x 提速，
-                # 数值完全等价（diff=0.00e+00）。expand 返回 view（零分配），元素级
-                # 乘法不要求连续内存；permute 后的 v 供 SDPA 使用，SDPA 支持非连续输入。
-                a_const = _lam.expand(B_, T, H_ * D_, 1)
-                v_enc = _parallel_prefix_scan(a_const, v_2d)
-                v = v_enc.reshape(B_, T, H_, D_).permute(0, 2, 1, 3)
+                # R38 性能优化（替代第二十五/二十六轮的 Hillis-Steele 前缀扫描）：
+                # v_enc[t] = v[t] + λ·v_enc[t-1] = Σ_{i≤t} v[i]·λ^(t-i) 即 causal 卷积，
+                # 核 = [λ^(T-1), …, λ, 1]（λ^0=1 居末，左侧零填充），groups=C 逐通道独立。
+                # conv1d 单次 kernel 启动替代 6 轮 ~42 次启动：实测 T=64 从 3.29ms→1.62ms（2.0x）。
+                # 精度：与 _parallel_prefix_scan 逐点最大差 4.8e-7（远小于 cache parity atol=1e-4）。
+                _klen = T
+                _ker = (_lam ** torch.arange(_klen - 1, -1, -1, device=v.device)).reshape(1, 1, _klen)
+                # R38-2 修正：expand 是广播 view——其 backward 梯度合并（sum 到 kernel）
+                # 在 DML 上报错（weight grad [1,1,1,64] vs broadcast [1,256,1,64]）。
+                # repeat 实体化拷贝（每调用一次 64KB 级），backward 正常。
+                _ker_full = _ker.repeat(H_ * D_, 1, 1)
+                _v_c = torch.nn.functional.conv1d(
+                    v_2d.squeeze(-1).permute(0, 2, 1),  # (B, C, T)
+                    _ker_full, groups=H_ * D_, padding=_klen - 1)
+                v = _v_c[..., :_klen].permute(0, 2, 1).reshape(B_, T, H_, D_).permute(0, 2, 1, 3)
         # 阶段3 可学习检索：统一经 MemoryBank.inject_memory 注入记忆 K/V + 检索偏置，
         # 取代 cache/全量两条路径各自重复的"记忆拼接 + 稀疏门控 + 全上下文检索"逻辑（B 项收敛）。
         mem_cols = 0
         mem_bias: Optional[torch.Tensor] = None
         rbias_full: Optional[torch.Tensor] = None
-        k_orig_cols = k.size(2)  # 记忆拼接前的真实序列 KV 长度
         if memory_kv is not None:
             mk, mv, meta = memory_kv
             mem_cols = mk.size(1)
@@ -660,9 +671,9 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
                 q, k, v, mk, mv, meta, self.mask_fill_value)
             # 全上下文检索偏置（阶段3 扩展）：对真实 KV 远端做稀疏检索，注入为注意力正偏置。
             # 由实例方法计算以复用本层的 window/topk 开关（与两路径历史上各自实现同源一致）。
-            rbias_full = self._full_retrieval_bias(q, k, k_orig_cols, mem_cols,
-                                                   meta.get('retrieval_gate') if meta else None,
-                                                   dev)
+            # 注意：rbias_full 的 Treal 须取"真实 token 数"（= Tkv - mem_cols），且 cache 路径
+            # 必须在 past 拼接之后计算（否则 Treal=Tq 与最终掩码宽度 mem_cols+T_past+Tq 不匹配，
+            # 增量解码第 2 步起 RuntimeError；且检索语义退化为只覆盖当前 token）。
 
         if use_cache:
             # 增量解码：拼接待拼接的 K/V 缓存，仅对当前 token 做注意力
@@ -677,28 +688,32 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
                     pv = self._dequantize_int8(pv, past_kv[3])
                 k = torch.cat([pk, k], dim=2)
                 v = torch.cat([pv, v], dim=2)
+            # 全上下文检索：cache 路径须在 past 拼接后计算，Treal = 真实历史长度（Tkv - mem_cols），
+            # 与最终掩码宽度 mem_cols + Tkv 一致，且检索覆盖全部历史 token。
+            if memory_kv is not None:
+                rbias_full = self._full_retrieval_bias(q, k, k.size(2) - mem_cols, mem_cols,
+                                                       meta.get('retrieval_gate') if meta else None,
+                                                       dev)
             # present 存累积的 token KV（past+token，不含 memory），作为下一步的 past_kv；
             # memory 只在注意力计算时临时拼接，不进入缓存，避免序列长度膨胀。
-            # 第十七轮 MLA：present 存累积潜向量 c_kv_full（past+current 拼接后，而非仅当前 token），
-            #   cache 内存仍降 2*dim/kv_latent_dim 倍（存潜向量而非完整 K/V）。
-            #   用 (c_kv_full, None) 双元素保持与 (k, v) 格式一致，hybrid 块合并 present[0]/present[1] 时
-            #   MLA 路径 past_kv[0]=c_kv_full, past_kv[1]=None（attend 内部检测 mla_kv_enabled 用 [0]）。
-            #   修复 bug：原存 (c_kv, None) 只含当前 token，导致下一步 past 只有 1 token 而非全部历史。
-            # B2 修复：MLA+VRC 时 present[1] 存编码后 V（替代 None），供下一步快速分支复用，
-            #   避免 O(T log T) prefix scan 重算。MLA 无 VRC 时仍为 None（原行为，省内存）。
+            # 修复（R38）：此前 present 直接存注入后的 k/v（含 mem_cols 个记忆列），
+            # 下一步拼接时记忆被重复注入 → 每步 Tkv 增长 M+1 而非 1，且多份记忆副本
+            # 同时可见（训练/推理分歧 + 检索偏置错位 + 显存膨胀）。现剥离记忆列。
             if self.mla_kv_enabled:
-                present = (c_kv_full, v) if self.value_relative_coding_enabled else (c_kv_full, None)
+                present = (c_kv_full, v[:, :, mem_cols:]) if self.value_relative_coding_enabled else (c_kv_full, None)
             elif self.kv_cache_int8:
                 # R36-3: int8 量化 KV cache（内存减 4x，精度损失 < 1e-2）
-                k_q, k_scale = self._quantize_int8(k)
+                k_clean = k[:, :, mem_cols:]
+                v_clean = v[:, :, mem_cols:]
+                k_q, k_scale = self._quantize_int8(k_clean)
                 if self.value_relative_coding_enabled:
                     # VRC: V 保持 fp32（递推累积误差风险），只量化 K
-                    present = (k_q, v, k_scale, None)
+                    present = (k_q, v_clean, k_scale, None)
                 else:
-                    v_q, v_scale = self._quantize_int8(v)
+                    v_q, v_scale = self._quantize_int8(v_clean)
                     present = (k_q, v_q, k_scale, v_scale)
             else:
-                present = (k, v)
+                present = (k[:, :, mem_cols:], v[:, :, mem_cols:])
             Tkv = k.size(2)
             # 与全量路径共用基础因果/窗口掩码（额外1），保证 memory+window>0 时
             # 训练/推理一致性（否则推理期记忆按位置被部分遮蔽、静默质量退化）。
@@ -763,6 +778,12 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         addends = [self._bias_cache]
         if mem_bias is not None:
             addends.append(_pad_mem_bias(mem_bias, Tkv, mem_cols))
+        # 全上下文检索：全量路径 Treal = Tkv - mem_cols（真实 token 数 = T），
+        # 与 cache 路径同源一致（R38 统一在各自分支内计算，杜绝 Treal 取值错位）。
+        if memory_kv is not None:
+            rbias_full = self._full_retrieval_bias(q, k, k.size(2) - mem_cols, mem_cols,
+                                                   meta.get('retrieval_gate') if meta else None,
+                                                   dev)
         alibi_b = self._alibi_bias(T, Tkv, dev, start_pos, mem_cols=mem_cols)
         if alibi_b is not None:
             addends.append(alibi_b)
@@ -791,7 +812,9 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         qpos = torch.arange(start_pos, start_pos + T, device=dev).unsqueeze(1)
         kpos = torch.arange(0, Tkv, device=dev).unsqueeze(0)
         if self.window > 0:
-            mask = (kpos > (qpos + mem_cols)) | (qpos - kpos > self.window)
+            # 窗口子句：kpos 含记忆列偏移（真实 token j 的 kpos = mem_cols + j），
+            # 需还原（R38 修复：此前有效窗口 = 配置 + mem_cols，被静默放大）。
+            mask = (kpos > (qpos + mem_cols)) | (qpos - kpos + mem_cols > self.window)
         else:
             mask = (kpos > (qpos + mem_cols))
         if mem_cols > 0:

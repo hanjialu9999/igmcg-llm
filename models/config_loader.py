@@ -51,6 +51,14 @@ def build_model(config: Dict[str, Any], device: Optional[torch.device] = None,
     model_cfg = ModelConfig.from_dict(mc)
     # 机制组合校验（需在 ModelConfig 之上额外检查 layer_plan 交互）
     _mixer = mc.get('mixer', 'attn')
+    # R38 修复（B-F4）：AxialLinearAttention 全量训练路径不注入 memory_kv（仅警告后忽略），
+    # 但增量解码路径完整注入 → train/infer 行为分裂（训练从不学记忆，推理却用记忆）。
+    # 在配置层禁止组合，避免静默不一致；需要记忆时用 attn 系 mixer。
+    if _mixer in ('linear2d', 'hybrid_linear2d') and int(mc.get('memory_size', 0)) > 0:
+        raise ValueError(
+            f"mixer='{_mixer}' 与 memory_size>0 不兼容：AxialLinearAttention 全量训练路径"
+            "不注入记忆（train/infer 行为分裂）。请改用 attn/attn_linear 系 mixer，"
+            "或关闭记忆（memory_size: 0）。")
     if _mixer in ('hybrid', 'attn_linear') and mc.get('layer_plan', None) is not None:
         layer_plan = mc.get('layer_plan', None)
         hybrid_blocks = [p for p in layer_plan.replace(',', ' ').split() if p == 'hybrid']

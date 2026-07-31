@@ -65,7 +65,9 @@ def enable_qat(model: nn.Module, bits: int = 8) -> nn.Module:
 
     注意：
         - 调用时机：模型构建 + checkpoint 加载之后、训练开始之前
-        - 步长 _qat_scale 注册为 model 的 Parameter，随 model.to(device) 迁移
+        - 步长 _qat_scale 注册为 model 的 Parameter（R38 修复：创建时即落在模型当前设备上，
+          此前 enable_qat 在 model.to(device) 之后调用时 _qat_scale 留在 CPU——优化器
+          step 里 CPU 参数与 GPU 梯度 mix，clip_grad_norm_ 跨设备报错）
         - 优化器会自动包含 _qat_scale（model.parameters() 遍历到）
         - 如需关闭：调用 disable_qat(model)
     """
@@ -80,7 +82,8 @@ def enable_qat(model: nn.Module, bits: int = 8) -> nn.Module:
         all_w = torch.cat([m.weight.detach().cpu().flatten()
                            for m in model.modules() if isinstance(m, nn.Linear)])
         init_s = (all_w.std() / qmax).clamp(min=1e-6).item()
-    model._qat_scale = nn.Parameter(torch.tensor(init_s))
+    _dev = next(model.parameters()).device
+    model._qat_scale = nn.Parameter(torch.tensor(init_s, device=_dev))
     model._qat_bits = bits
     model._qat_enabled = True
 

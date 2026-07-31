@@ -48,6 +48,10 @@ class NGramModel:
         self._logprob_cache_max = 8192
         self._orders_cache_store: Dict = {}
         self._orders_cache_max = 8192
+        # R38 修复：缓存条目数上限外再加字节预算（大词表时 8192 条 × (V,K) fp32
+        # 可达数 GB CPU 内存，训练增强长跑会悄悄吃掉系统内存）
+        self._orders_cache_bytes = 0
+        self._orders_cache_byte_budget = 512 * 1024 * 1024  # 512MB
 
     def _build(self, corpus_file):
         # errors='replace' 避免脏语料含非法 UTF-8 序列时直接抛 UnicodeDecodeError
@@ -250,9 +254,12 @@ class NGramModel:
         for idx in uncached_idxs:
             ck = ctx_keys[idx]
             v = self._compute_logprob_orders(ck, V, device)  # (V, K) 已在 device
-            if len(self._orders_cache) > self._orders_cache_max:
+            if len(self._orders_cache) > self._orders_cache_max or \
+               self._orders_cache_bytes + v.numel() * v.element_size() > self._orders_cache_byte_budget:
                 self._orders_cache.clear()
+                self._orders_cache_bytes = 0
             self._orders_cache[ck] = v.cpu()
+            self._orders_cache_bytes += v.numel() * v.element_size()
             uniq_vecs[idx] = v
         # 3) 向量化填充：stack 唯一上下文结果为 (U,V,K)，用 index_select 一次性搬回 (B*T,V,K)。
         #    旧路径逐 i 做 mask + fancy index，在 DML 上每次都是 GPU 同步（U 大时极慢）。

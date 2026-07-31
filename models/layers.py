@@ -44,9 +44,13 @@ class CharMergeLayer(nn.Module):
         agg = agg.transpose(1, 2)  # (B, T, D)
         # 门控：当前字符 vs 邻域聚合
         # R33 convex_combine：z*agg + (1-z)*x → x + z*(agg-x)，5 算子→4 算子（与 R29.5 同模式）
-        # R35 优化：改用 torch.addcmul(x, z, agg-x) 融合 mul+add，4→3 算子。DML 1.28x。
-        # R35 续：改用 torch.lerp(x, agg, z) fused kernel，3→1 算子。DML 更优。
+        # R35 优化：addcmul 融合（DML 前向 1.28x），但 addcmul 的 backward 在 DML
+        #   广播路径报错（[1,1,1,64] vs [1,256,1,64]，R38 实测），不可用。
+        # R35 续：torch.lerp fused kernel——DML 不支持 aten::lerp.Tensor_out，
+        #   函数式 torch.lerp 未被 train.py 的 lerp_/_foreach_lerp_ patch 覆盖 → 每层
+        #   每步 CPU 回退 + DML↔CPU 同步（R38 实测 err 警告）。
+        # R38 最终：x + z*(agg-x) 4 算子，mul/sub/add 全 DML 原生，前向/反向均无回退。
         z = torch.sigmoid(self.gate(x))
-        out = torch.lerp(x, agg, z)
+        out = x + z * (agg - x)
         out = self.norm(out)
         return self.drop(out)
