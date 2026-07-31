@@ -120,7 +120,9 @@ class RotaryEmbedding(nn.Module):
         mask = 1.0 - _yarn_linear_ramp_mask(low, high, dim // 2)
         # R33 convex_combine：interp*(1-mask) + extrap*mask → interp + mask*(extrap-interp)，5→4 算子
         # R35 续：改用 torch.lerp fused kernel，4→1 算子。
-        inv_freq = torch.lerp(inv_freq_interpolation, inv_freq_extrapolation, mask)
+        # R39 回退：DML 不支持 aten::lerp.Tensor_out（与 R38 layers.py / R39 ngram.py 同根因），
+        #   函数式 lerp 每调用 CPU 回退 + 同步，且 bf16 autocast 下 weight 与 tensor dtype 不匹配崩溃。
+        inv_freq = inv_freq_interpolation + mask * (inv_freq_extrapolation - inv_freq_interpolation)
         return inv_freq
 
     def _get_cos_sin(self, start_pos: int, seq_len: int, device: torch.device, dtype: torch.dtype, max_len: int = 2048) -> Tuple[torch.Tensor, torch.Tensor]:

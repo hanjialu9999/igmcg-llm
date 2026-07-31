@@ -1563,7 +1563,8 @@ class TransformerModel(nn.Module):
                     _alpha_i = i / max(len(self.blocks) - 1, 1)
                     # R33 convex_combine：α*prev + (1-α)*x0 → x0 + α*(prev-x0)，5→4 算子
                     # R35 续：改用 torch.lerp（支持标量 weight），4→1 算子。
-                    _target = torch.lerp(_dala_x0, _prev_layer_out, _alpha_i)
+                    # R39 回退：DML 不支持 aten::lerp.Tensor_out，CPU 回退；4 算子等价式。
+                    _target = _dala_x0 + _alpha_i * (_prev_layer_out - _dala_x0)
                 else:
                     _target = _prev_layer_out
                 cos_sim = F.cosine_similarity(x, _target, dim=-1).mean()

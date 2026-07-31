@@ -92,13 +92,13 @@ def convex_combine_scalar(param: nn.Parameter, h1: torch.Tensor, h2: torch.Tenso
     改为 `h2 + g*(h1-h2)` 4 算子（sigmoid+sub+mul+add），省 1 算子/调用。
     数学等价（结合律），浮点误差通常 <1e-7。
 
-    性能优化（第三十五轮）：改用 torch.addcmul(h2, g, h1-h2) 融合 mul+add，
-    3 算子→2 算子（sigmoid+sub+addcmul），省 1 算子/调用。DML 实测 1.28x 提速。
-    性能优化（第三十五轮续）：改用 torch.lerp(h2, h1, g) fused kernel，
-    2 算子→1 算子（sigmoid+lerp），省 1 算子/调用。lerp(start, end, w) = start + w*(end-start)。
+    性能优化（第三十五轮）：改用 torch.addcmul / torch.lerp 融合算子。
+    第三十九轮回退：DML 不支持 aten::lerp.Tensor_out → 函数式 lerp 每调用 CPU 回退
+    + 同步（与 layers.py R38 / ngram.py R39 同根因，此处当时漏修）；且 lerp 要求
+    start/end/weight 同 dtype，CPU bf16 autocast 下直接崩溃。回退 4 算子形式。
     """
     g = torch.sigmoid(param)
-    return torch.lerp(h2, h1, g)
+    return h2 + g * (h1 - h2)
 
 
 def convex_combine_linear(linear: nn.Linear, x: torch.Tensor,
@@ -108,10 +108,11 @@ def convex_combine_linear(linear: nn.Linear, x: torch.Tensor,
     用于: hybrid_mix
 
     性能优化（第二十九轮）：同 convex_combine_scalar，5 算子→4 算子。
-    性能优化（第三十五轮）：改用 torch.addcmul 融合 mul+add，4→3 算子。DML 1.28x。
+    第三十九轮：原 torch.addcmul 融合（R35）的 backward 在 DML 不支持（与 R38
+    layers.py 记录同根因），回退 4 算子形式。
     """
     g = torch.sigmoid(linear(x))
-    return torch.addcmul(h2, g, h1 - h2)
+    return h2 + g * (h1 - h2)
 
 
 # ---- 模式 5: correct（线性注意力修正） ----
@@ -121,8 +122,8 @@ def apply_correction(param: nn.Parameter, h: torch.Tensor, lh: torch.Tensor) -> 
 
     用于: correction_gate
 
-    性能优化（第三十五轮）：改用 torch.addcmul(h, cg, lh-h) 融合 mul+add，省 1 算子。DML 1.28x。
-    性能优化（第三十五轮续）：改用 torch.lerp(h, lh, cg) fused kernel，2→1 算子。DML 更优。
+    第三十九轮：原 torch.lerp 融合（R35）在 DML 回退 CPU + bf16 崩溃（同
+    convex_combine_scalar 根因），回退 4 算子形式。
     """
     cg = torch.sigmoid(param)
-    return torch.lerp(h, lh, cg)
+    return h + cg * (lh - h)
