@@ -469,8 +469,16 @@ def main():
     # 构建 n-gram 统计模型（解码期双轨）
     ngram = None
     if args.ngram:
-        print(f"Building n-gram model from {args.ngram_corpus} ...")
-        ngram = NGramModel(vocab, args.ngram_corpus, max_order=10, smoothing=1.0)
+        print(f"Building n-gram model from {args.ngram_corpus} (max_order=3, max_lines=2000, min_count=2) ...")
+        # 解码期 n-gram 只提供局部统计先验，不需要全语料：
+        #   - max_order=3：小语料高阶 n-gram 几乎全是 count=1 唯一序列，无统计意义；
+        #   - max_lines=2000：只统计语料前 2000 行（附近上下文），构建秒级完成；
+        #   - min_count=2：剪掉单次 n-gram（纯 Python dict 存储，全量会吃数 GB 内存）；
+        #   - vocab_size=model.vocab_size：对齐模型词表（8k 语料 vocab.json 仅 9186 词，
+        #     模型 embedding 12000，不传会维度不匹配崩溃）。
+        ngram = NGramModel(vocab, args.ngram_corpus, max_order=3, smoothing=1.0,
+                           min_count=2, max_lines=2000,
+                           vocab_size=getattr(model, 'vocab_size', len(vocab)))
         print(f"n-gram ready (weight={args.ngram_weight})")
     
     # Generation mode

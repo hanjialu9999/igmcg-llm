@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from typing import Dict, List, Optional, Tuple
 
+import time
 import torch
 
 
@@ -27,7 +28,7 @@ class NGramModel:
 
     def __init__(self, vocab, corpus_file, max_order: int = 10, smoothing: float = 1.0,
                  l1: float = 0.1, l2: float = 0.3, l3: float = 0.6, vocab_size: Optional[int] = None,
-                 min_count: int = 1):
+                 min_count: int = 1, max_lines: Optional[int] = None):
         self.vocab = vocab
         self.max_order = max_order
         self.smoothing = smoothing
@@ -35,6 +36,9 @@ class NGramModel:
         # 计数剪枝阈值：单/低频次 n-gram（count < min_count）多为语料噪声，既浪费内存
         # 又拖累泛化；训练/融合默认剪掉（min_count=2），仅保留有统计意义的高频上下文。
         self.min_count = int(max(1, min_count))
+        # max_lines：只统计语料前 N 行（解码期 n-gram 只需局部统计先验，全语料纯浪费
+        # 时间与内存；配合 max_order=3 + min_count=2 将构建开销降到秒级/百 MB 级）。
+        self.max_lines = int(max_lines) if max_lines is not None else None
         # vocab_size 决定统计缓冲维度：默认取 len(vocab)（语料实际覆盖的 token 数），
         # 但融合时需对齐模型词表（可能远大于语料覆盖），故允许显式覆盖。
         self.vocab_size = int(vocab_size) if vocab_size is not None else len(vocab)
@@ -55,8 +59,34 @@ class NGramModel:
 
     def _build(self, corpus_file):
         # errors='replace' 避免脏语料含非法 UTF-8 序列时直接抛 UnicodeDecodeError
+        _lines = 0
+        _t0 = time.time()
         with open(corpus_file, 'r', encoding='utf-8', errors='replace') as f:
             for line in f:
+                _lines += 1
+                if self.max_lines is not None and _lines > self.max_lines:
+                    break
+                if _lines % 5000 == 0:
+                    _mem_mb = 0.0
+                    try:
+                        import ctypes
+                        from ctypes import wintypes
+                        class _PMC(ctypes.Structure):
+                            _fields_ = [('cb', wintypes.DWORD), ('PageFaultCount', wintypes.DWORD),
+                                        ('PeakWorkingSetSize', ctypes.c_size_t), ('WorkingSetSize', ctypes.c_size_t),
+                                        ('QuotaPeakPagedPoolUsage', ctypes.c_size_t), ('QuotaPagedPoolUsage', ctypes.c_size_t),
+                                        ('QuotaPeakNonPagedPoolUsage', ctypes.c_size_t), ('QuotaNonPagedPoolUsage', ctypes.c_size_t),
+                                        ('PagefileUsage', ctypes.c_size_t), ('PeakPagefileUsage', ctypes.c_size_t)]
+                        import os
+                        _h = ctypes.windll.kernel32.OpenProcess(0x0400 | 0x0010, False, os.getpid())
+                        if _h:
+                            _pmc = _PMC(); _pmc.cb = ctypes.sizeof(_PMC)
+                            if ctypes.windll.psapi.GetProcessMemoryInfo(_h, ctypes.byref(_pmc), ctypes.sizeof(_PMC)):
+                                _mem_mb = _pmc.WorkingSetSize / 1048576
+                            ctypes.windll.kernel32.CloseHandle(_h)
+                    except Exception:
+                        pass
+                    print(f"  [ngram build] {_lines} lines, {time.time()-_t0:.1f}s, RSS {_mem_mb:.0f} MB")
                 ids = self.vocab.encode(line, add_special_tokens=False)
                 # 左填充 2 个 pad 保证 context 窗口足够
                 ids = [self.vocab.pad_idx] * 2 + ids
@@ -67,11 +97,13 @@ class NGramModel:
                         if i >= order - 1:
                             ctx = tuple(ids[i - order + 1: i])  # (order-1) 个上下文 token
                             self.ngrams[order][ctx][ids[i]] += 1
+        print(f"  [ngram build] counting done: {_lines} lines, {time.time()-_t0:.1f}s")
         # 预计算（加速解码期每次调用的 logprob_vector）
         V = self.vocab_size
         self.uni_total = sum(self.uni.values()) + self.smoothing * V
         # 各阶上下文总计数（先按 min_count 剪枝低频次计数，降低内存并按住噪声）
         for order in range(2, self.max_order + 1):
+            _before = len(self.ngrams[order])
             for ctx in list(self.ngrams[order].keys()):
                 c = self.ngrams[order][ctx]
                 dead = [t for t, n in c.items() if n < self.min_count]
@@ -79,6 +111,8 @@ class NGramModel:
                     del c[t]
                 if not c:
                     del self.ngrams[order][ctx]
+            print(f"  [ngram build] order {order}: {_before} → {len(self.ngrams[order])} ctx "
+                  f"({100.0 * len(self.ngrams[order]) / max(1, _before):.1f}%)")
         self.ngram_totals = {}
         for order in range(2, self.max_order + 1):
             self.ngram_totals[order] = {
