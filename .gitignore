@@ -69,3 +69,6 @@ Thumbs.db
 
 # opencode agent memory (local only, never commit)
 .opencode/
+
+# Local-only docs (never commit)
+CHANGELOG.md
