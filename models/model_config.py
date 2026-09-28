@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+import warnings
 from dataclasses import dataclass, field
 from typing import Optional, List, Any, Dict
 from models.constants import MASK_FILL_VALUE, ROPE_BASE
@@ -124,6 +126,28 @@ class MemoryConfig:
     def __post_init__(self):
         if self.size > 0:
             assert self.comp_dim > 0, f"memory_comp_dim must be > 0 when memory_size > 0"
+        # M3: 记忆参数组的静默死配置。memory_size=0 时 TransformerModel.memory_enabled=False
+        # （transformer.py:755），连 MemoryBank 都不构建——下列开关在配置里看着生效、
+        # 实际一行代码都不会执行。仅 warn 不 raise（保持旧配置可加载）。
+        if self.size <= 0:
+            _dead = [name for name, on in (
+                ('memory_retrieval', self.retrieval),
+                ('memory_sparse_topk', self.sparse_topk > 0),
+                ('memory_forget', self.forget),
+                ('memory_product_key', self.product_key),
+                ('memory_retrieval_full', self.retrieval_full),
+            ) if on]
+            if _dead:
+                warnings.warn(
+                    f"memory_size=0 时记忆模块不构建，以下配置为死配置（静默无效）：{_dead}",
+                    RuntimeWarning, stacklevel=2)
+        elif self.sparse_topk > 0 and self.sparse_topk >= self.size:
+            # 生效条件是 0 < sparse_topk < mem_cols(=size)（memory.py:249）；
+            # 边界取等/更大时分支不进 → 全槽位保留，与"top-k 稀疏召回"意图相反。
+            warnings.warn(
+                f"memory_sparse_topk={self.sparse_topk} >= memory_size={self.size}，"
+                f"不满足 0 < sparse_topk < mem_cols → 稀疏召回未启用（退化为全槽位稠密）",
+                RuntimeWarning, stacklevel=2)
 
 
 @dataclass
@@ -270,6 +294,28 @@ class ModelConfig:
             assert (self.controller_direction or self.controller_film
                     or self.controller_memory_compress), (
                 "controller=True 须至少启用一种控制信号（direction/film/memory_compress）")
+        # M3: 跨子配置的静默死配置/已知缺陷提示（只 warn 不 raise，旧配置保持可加载）。
+        if 0 < self.memory.size and self.num_layers <= 1:
+            # 读-写流水线在 TransformerBlock.forward 内：每块先 memory.get_kv() 读
+            # （transformer.py:337，消费上一层写入），走完注意力后再 memory.write(x)
+            # （:429）。单层时本块读到的只有 reset() 后的空槽、自己写的那一轮无人消费
+            # → 记忆既不参与前向也不回传梯度，memory_* 全为死参数。
+            warnings.warn(
+                f"memory_size={self.memory.size} 但 num_layers={self.num_layers}："
+                f"记忆按块顺序读-写，单层下写入无下一层消费 → 记忆参数不参与梯度（死参数）",
+                RuntimeWarning, stacklevel=2)
+        if self.attn.alibi:
+            # ALiBi 距离未做 mem_cols 还原（AGENT_MEMORY §11.1 H3）：mixers.py:459-461
+            # 的 dist=(qpos-kpos).abs() 中真实 token j 的 kpos=mem_cols+j，导致距离零点
+            # 前移 mem_cols 个 token。parity 测不出（全量/增量同公式），需重训才修正。
+            _mem_cols = (self.memory.size if self.memory.size > 0 else 0) + (
+                self.controller_mem_slots
+                if (self.controller and self.controller_memory_compress) else 0)
+            if _mem_cols > 0:
+                warnings.warn(
+                    f"alibi=True 且 mem_cols={_mem_cols}>0：ALiBi 距离未做 mem_cols 还原"
+                    f"（已知缺陷 H3，位置先验平移 mem_cols），修正须重训",
+                    RuntimeWarning, stacklevel=2)
 
     @classmethod
     def from_dict(cls, mc: Dict[str, Any]) -> ModelConfig:

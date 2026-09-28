@@ -16,8 +16,8 @@ import torch
 from scripts.generate import load_model
 from models.device import get_device
 
-DEFAULT_MODEL = str(project_root / 'checkpoints_dml' / 'final_model.pt')
-DEFAULT_VOCAB = str(project_root / 'checkpoints_dml' / 'vocab.json')
+DEFAULT_MODEL = str(project_root / 'checkpoints_train_8k_r42' / 'final_model.pt')
+DEFAULT_VOCAB = str(project_root / 'checkpoints_train_8k_r42' / 'vocab.json')
 
 
 def de_space(s):
@@ -25,14 +25,15 @@ def de_space(s):
     return s.replace(' ', '')
 
 
-def chat_generate(model, vocab, prompt, max_length, temperature, top_k, device):
+def chat_generate(model, vocab, prompt, max_length, temperature, top_k, device,
+                  repetition_penalty=2.0):
     tokens = vocab.encode(prompt)
     if tokens and tokens[-1] == vocab.eos_idx:
         tokens = tokens[:-1]
     with torch.no_grad():
         generated = model.generate(tokens, max_length=max_length,
                                    temperature=temperature, top_k=top_k,
-                                   device=device, repetition_penalty=2.0,
+                                   device=device, repetition_penalty=repetition_penalty,
                                    min_length=8, eos_penalty=-5.0)
     new_ids = generated[len(tokens):]
     return vocab.decode(new_ids).strip()
@@ -47,6 +48,8 @@ def main():
     ap.add_argument('--max-length', type=int, default=64, help='总计上下文长度（含输入）')
     ap.add_argument('--temperature', type=float, default=0.7)
     ap.add_argument('--top-k', type=int, default=40)
+    ap.add_argument('--repetition-penalty', type=float, default=2.0,
+                    help='重复惩罚（>1 抑制重复，1.0=关闭）；docs 宣传过该参数，此前缺失')
     args = ap.parse_args()
     
     # 用 get_device 把 'cpu'/'cuda'/'dml'/'auto' 解析为 torch.device 对象
@@ -76,7 +79,8 @@ def main():
                 user = user[:40]
             prompt = f'用户：{user}\n助手：'
             raw = chat_generate(model, vocab, prompt, args.max_length,
-                                args.temperature, args.top_k, device)
+                                args.temperature, args.top_k, device,
+                                args.repetition_penalty)
             clean = de_space(raw)
             print(f'模型> {clean}')
             print(f'     (原文: {raw})\n')

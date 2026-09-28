@@ -1,6 +1,6 @@
 # R42 Controller/Generator 双模型编排训练配置（8000 行）
 # 基于 config_train_8k.yaml + Controller 全信号 + 三阶段训练
-# Controller: 2 层 GatedDeltaNet（线性复杂度），3 类控制信号（mem_kv/FiLM/direction）
+# Controller: 1 层 GatedDeltaNet（线性复杂度，DML 甜点：2 层减速 7x 换 val 仅差 0.013），3 类控制信号（mem_kv/FiLM/direction）
 # 三阶段：前 30% epoch 关 Controller（Generator warmup 省算力）→ 之后开启（零初始化平滑过渡）
 model:
   vocab_size: 12000

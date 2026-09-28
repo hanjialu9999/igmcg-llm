@@ -1,21 +1,28 @@
-# 专用环境：Windows + AMD / Intel 核显或独显，通过 DirectML 使用 GPU
+# 专用环境：Windows + AMD / Intel 显卡（通过 DirectML 使用 GPU）
 #
-# 重要：torch-directml 需要 Python 3.10 / 3.11（不支持更新的 Python 版本），
-# 且会自行拉取兼容的 torch（当前为 torch 2.4.x），因此本文件不再固定 torch 版本。
+# 关键：torch-directml 需要 Python 3.10 / 3.11，不支持更新的 Python 版本。
+# 显卡驱动会拉取对应的 torch，当前为 torch 2.4.x，故此文件不再固定 torch 版本。
 #
-# 创建与使用：
+# 使用方法：
 #   py -3.11 -m venv .amd_venv
 #   .amd_venv\Scripts\activate
 #   pip install -r requirements-amd.txt
 #
-# 之后正常训练/生成即可，device 设为 "auto" 时会自动探测并启用 DirectML：
+# 之后训练/推理即可，device 为 "auto" 时自动探测并启用 DirectML。
 #   python scripts/train.py --config configs/pretrain.yaml
 
 torch-directml
 pyyaml==6.0
 numpy==1.24.3
-tqdm
+tqdm>=4.65.0
 
-# ===== 可选：数据准备脚本依赖（scripts/data/*）=====
-# 拉取 ModelScope 语料 / 读取 parquet 等时才需要，主训练/推理无需安装：
-#   pip install modelscope pandas pyarrow
+# ===== 脚本/工具依赖 =====
+requests>=2.25.0          # scripts/data/fetch_ms_corpus.py
+psutil>=5.9.0             # tools/monitor/monitor_gpu_training.py
+
+# ===== 开发依赖 =====
+pytest>=7.0.0             # 32 个测试文件共用
+
+# ===== 可选：数据准备脚本（scripts/data/*）=====
+# 从 ModelScope 下载 / 读取 parquet 时需要，非训练/推理必装：
+#   pip install modelscope pandas pyarrow datasets huggingface_hub

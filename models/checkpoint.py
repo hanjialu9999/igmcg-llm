@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import warnings
+
 import yaml
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
@@ -72,7 +74,13 @@ def build_ngram_model(vocab, model_config: Dict[str, Any]):
               f"min_count={min_count}，推理对齐训练分布）")
         return model
     except Exception as e:
-        print(f"[n-gram 融合] 重建失败，已跳过：{e}")
+        # M10: 这是配置级静默降级（ngram_fusion=true 却跑纯神经，igmcg 连带失效），
+        # print 会被日志淹没且调用方无法区分"没开"和"开了没生效"，改用 warnings 让
+        # 测试/训练台显式可见根因。
+        warnings.warn(
+            f"ngram_fusion=true 但 n-gram 语料重建失败，本进程降级为纯神经路径"
+            f"（igmcg 一并失效）：{e}",
+            RuntimeWarning, stacklevel=2)
         return None
 
 
@@ -212,7 +220,9 @@ def load_model(model_path, vocab_path, device: 'Union[str, torch.device]' = 'cpu
         try:
             _pruned = model.prune_layers(_pt)
             if _pruned:
-                print(f"[剪枝] 已静态移除 {len(_pruned)} 层（索引 {_pruned}），推理提速生效")
+                # M2: 措辞与实现对齐——只标记跳过，参数未删（详见 prune_layers docstring）
+                print(f"[剪枝] 已标记跳过 {len(_pruned)} 层（索引 {_pruned}），"
+                      f"推理期不执行该层；权重仍保留在 state_dict 中")
         except Exception as e:
             print(f"[warn] 推理期剪枝失败，已跳过：{e}")
     model.eval()

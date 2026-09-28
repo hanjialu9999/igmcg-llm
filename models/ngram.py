@@ -19,7 +19,7 @@ class NGramModel:
     由可学 `ngram_order_logits` 加权。
 
     旧接口 `logprob_vector` / `logprob_matrix`（uni/bi/tri 固定插值）是**生产解码路径**
-    （scripts/generate.py 的 `--ngram` 固定先验、transformer.py:303、_ngram_coherence 评分），
+    （scripts/generate.py 的 `--ngram` 固定先验 ngram_fn、`_ngram_coherence` 评分），
     经 `_vec_for_ctx` 实现**独立顺序嵌套插值**（uni→bi→tri 依次混合），与 orders 路径的
     逐阶独立插值数学上**不等价**（双阶命中时 max abs diff ≈ 1e-3，见 `_vec_for_ctx` 注释）。
     二者语义分离是有意的（固定 CLI 先验 vs 可学融合），故保留 `_vec_for_ctx` 独立实现，
@@ -50,6 +50,11 @@ class NGramModel:
         # 解码期同一上下文会被多个候选反复查询，缓存 logprob 向量避免重复建表计算
         self._logprob_cache: Dict = {}
         self._logprob_cache_max = 8192
+        # 条数上限不足以约束内存：每条 (V,) fp32 = 4V 字节，8192 条 × V=12000 ≈ 393MB，
+        # V=50000 时 ≈1.6GB；与 _orders_cache 同样加字节预算（R40 只修了 orders，
+        # 此处为漏网的 _logprob_cache，2026-09-28 补齐）。
+        self._logprob_cache_bytes = 0
+        self._logprob_cache_byte_budget = 512 * 1024 * 1024  # 512MB
         self._orders_cache_store: Dict = {}
         self._orders_cache_max = 8192
         # R38 修复：缓存条目数上限外再加字节预算（大词表时 8192 条 × (V,K) fp32
@@ -400,7 +405,6 @@ class NGramModel:
         cache_key = (w2, w1)
         if cache_key in self._logprob_cache:
             return self._logprob_cache[cache_key].to(device)
-        ctx_tokens = [c for c in (w2, w1) if c is not None]
         V = self.vocab_size
         # 取 tri/unigram 等价的逐位置 logp：仅用 unigram 兜底 + 高阶叠加，
         # 与旧 _compute_logprob 等价（高阶优先、低阶兜底）。
@@ -431,9 +435,13 @@ class NGramModel:
                     vec[idx] = vec[idx] + w * (p - vec[idx])
         vec = vec / vec.sum()
         vec = torch.log(vec + 1e-10)
-        if len(self._logprob_cache) > self._logprob_cache_max:
+        if len(self._logprob_cache) > self._logprob_cache_max or \
+           self._logprob_cache_bytes + vec.numel() * vec.element_size() > self._logprob_cache_byte_budget:
             self._logprob_cache.clear()
-        self._logprob_cache[cache_key] = vec.cpu()
+            self._logprob_cache_bytes = 0
+        _vc = vec.cpu()
+        self._logprob_cache[cache_key] = _vc
+        self._logprob_cache_bytes += _vc.numel() * _vc.element_size()
         return vec
 
     @property

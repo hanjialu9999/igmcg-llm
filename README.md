@@ -2,7 +2,7 @@
 
 基于 Transformer 的中文 LM 训练 / 推理项目，融合自定义混合架构（注意力 × SSM × IGMCG 直觉引导解码）与统计式 n-gram 双轨解码。目标是在 CPU / AMD iGPU（DirectML）等低资源设备上也能训练并跑出连贯的中文生成。
 
-当前状态（2026-08-01，R41）：全量测试 **936 passed / 2 skipped / 1 xfailed**；DML 训练实测 **7346 tok/s**（12 层，R38 优化后）。
+当前状态（2026-09-28，R42）：全量测试 **998 passed / 2 skipped / 2 xfailed**；DML 训练实测 **7346 tok/s**（12 层，R38 优化后）。
 
 ## 特性
 
@@ -24,6 +24,7 @@
 - **效率类**：SwiGLU w1/w3 合并（fuse_swiglu，省 1 次 GEMM 调用）、KV cache int8 量化（kv_cache_int8，内存 4×，标准 attn 路径有效）、gradient checkpointing 自动禁用（grad_ckpt_auto）、**MoE FFN（moe）**：top-k 路由多专家替换 SwiGLU，含负载均衡 + router z-loss（DML 兼容 dense 实现）、**提前退出（early_exit）**：训练期出口层辅助 CE 损失 + 推理期置信度阈值提前返回（增量解码因 KV cache 一致性不启用）。
 - **跨层协作**：cross_layer_routing（Top-k 稀疏路由）、cross_ssm_transfer、progressive_residual（1/√d 残差衰减）、layer_film（跨层 FiLM）、highway_gate / input_highway（动态残差 / 嵌入门控注入）、layer_contrastive（训练期相邻层 cos_sim 损失）、shared_alibi、DALA 对齐训练（aligned_training）。
 - **解码 / 训练类**：n-gram 融合（ngram_fusion）、IGMCG 多候选解码、QAT 量化感知训练（qat_bits，LSQ-STE）、CharMerge（char_merge）、层跳过（layer_skip）、层共享（share_attn_proj / share_ffn / share_norm）。
+- **双模型编排（R42）**：独立 **Controller**（GatedDeltaNet，`controller` + `controller_dim/heads/layers/mem_slots`，默认 2 层、r42 配置 1 层）与 Generator 共享 embedding，产出 3 类控制信号：①mem_kv 压缩记忆（注入 attention，与 MemoryBank `cat(dim=1)` 合并）②FiLM per-layer 调制 ③direction 方向偏置。信号投影零初始化 → 中性起步，旧权重向后兼容；`controller_warmup_frac` 三阶段训练（前 N% epoch 关 Controller）。与 `mixer=linear2d/hybrid_linear2d` 互斥。
 
 ## 目录结构
 
@@ -41,18 +42,18 @@ scripts/         入口与数据处理
                    train.py        训练主程序 (--config)
                    train_finetune.py  微调训练（QA 两阶段：预训练底座 → 微调，产出 best_finetuned_model.pt）
                    generate.py     生成 API: generate_text / generate_igmcg / NGramModel
-                   chat.py         对话式 CLI (--model / --vocab / --device / --max-length / --temperature / --top-k)
+                   chat.py         对话式 CLI (--model / --vocab / --device / --max-length / --temperature / --top-k / --repetition-penalty)
                    chat_zh.bat     中文 Windows 一键对话启动器
                     merge_data.py, process_data.py, convert_dialogue_to_qa.py, data_manager.py ...
                    data/download_pretrain_data.py, tuning/  (参数扫描)
 configs/         所有 YAML 配置 (pretrain.yaml 为规范默认；config_full_dml.yaml 为 DML 生产配置)
 experiments/     实验 / 诊断 / 一次性脚本（可独立运行，自带路径修正）
 tools/           检查与监控工具 (view_model / compare_epochs / dialogue / dialogue_interactive / monitor/ ...)
-tests/           正式 pytest 单元测试（已纳入 git 跟踪，当前 936 passed / 2 skipped / 1 xfailed）
+tests/           正式 pytest 单元测试（已纳入 git 跟踪，当前 977 passed / 2 skipped / 1 xfailed）
 test/            本地自测沙箱（gitignore，仅本机运行，不入库）
 data/            语料 (pretrain_corpus/) 与数据集 (datasets/)
 logs/            运行日志
-checkpoints/     训练产出（含 final_model.pt / vocab.json；chat / diagnose / tune 使用）
+checkpoints*/    训练产出（如 checkpoints_train_8k_r42/、checkpoints_train_8k_v4/，各含 final_model.pt / vocab.json；chat / diagnose / tune 用 --model 指定）
  archive_unused/  历史归档 (未动)
 ```
 
@@ -191,11 +192,12 @@ score = 1.5 * 连贯度(coh) + 0.15 * 流畅度 + 0.15 * 风格匹配 - 2.5 * �
 
 ## 已知限制 / 注意事项
 
-- **词表**：`vocab.json` 中存在少量 `U+FFFD` 替换字符条目（语料读取 `errors='replace'` 所致），对生成质量影响极小，后续做语料清洗时可一并修复。
+- **词表**：语料读取用 `errors='replace'`（`models/data_utils.py:95`）理论上可能引入 `U+FFFD`；2026-09-28 扫描全部 14 份 `vocab.json` **均未发现**该字符，风险在源头、结论暂不成立，做语料清洗时可一并加固。
 - **DML 精度**：AMD DirectML 不支持 AMP，训练 / 推理在 DML 上均为 fp32；bf16 仅 CPU/CUDA。
-- **数据量**：当前示例模型多在 4000 / 8000 行 × 1 epoch 量级冒烟训练，生成质量偏弱（语法破碎、偶发 `<unk>`）；提升质量需更大语料与更多 epoch。
+- **数据量**：冒烟训练为 4000 / 8000 行量级（`smoke_4000.txt` / `merged_8k.txt`，`config_train_8k*.yaml` 为 **3 epoch**，`pretrain.yaml` 为 1 epoch）；生成质量偏弱（语法破碎、偶发 `<unk>`）源于语料规模，提升需更大语料与更多 epoch。
 - **生成编码**：Windows GBK 终端可能误显中文，建议读取 UTF-8 日志或重定向输出。
 - **早期退出（early_exit）**：增量解码（use_cache=True）不启用提前退出——每层每 token KV 必须完整，提前退出会破坏后续 attention 一致性。
+- **记忆 train/infer divergence（已知，量级 ~0.01-0.03）**：训练每 block 一次写全序列（block-major）、增量解码逐 token 写（token-major），且训练期记忆列不受因果掩码（过去可依赖未来）→ 两条路径 logits 有小偏差。逐 token 因果写已评估但因 14x 开销否决；候选方案=每层独立 MemoryBank。详见 `AGENT_MEMORY.md` §7。
 
 ## 文档索引
 

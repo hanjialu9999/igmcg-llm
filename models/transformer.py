@@ -3,6 +3,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 import math
+import warnings
 import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
 from torch.nn.functional import scaled_dot_product_attention
@@ -727,6 +728,12 @@ class TransformerModel(nn.Module):
         # 模型于每步自决多信 n-gram：自身不确定时 g_t↑（靠统计兜底），有把握时 g_t↓。
         # 默认关（向后兼容、不增参数、不构建统计表）；开启时由调用方传入已构建的 ngram_model。
         self.ngram_fusion_enabled = bool(ngram_fusion) and (ngram_model is not None)
+        # M10: 配置开了 ngram_fusion 但调用方没给出统计表 → 真实生效状态是 False，
+        # 这是"配置与运行时不一致"，静默关会让排查者以为融合在跑。
+        if ngram_fusion and ngram_model is None:
+            warnings.warn(
+                "ngram_fusion=true 但未提供 ngram_model，融合已静默关闭"
+                "（igmcg 依赖融合，一并失效）", RuntimeWarning, stacklevel=2)
         self.ngram_model = ngram_model if self.ngram_fusion_enabled else None
         self.ngram_gate_scale = ngram_gate_scale
         # 阶段8.7 IGMCG 2.0：IGMCG（直觉引导）与 n-gram 融合训练，且由模型自决：
@@ -1219,6 +1226,16 @@ class TransformerModel(nn.Module):
         """运行时开关 n-gram 神经融合（训练全开、推理可按需关）。"""
         self._ngram_fusion_active = bool(active) and self.ngram_fusion_enabled
 
+    @property
+    def temperature_applied(self) -> bool:
+        """单一事实来源：forward 是否已对主干 logits 应用过温度（采样端据此不再除 τ）。
+
+        此前 generate.py:189 用 `enabled and _ngram_fusion_active`、transformer.py:1830/1856
+        只用 `ngram_fusion_enabled`——两式不一致，set_ngram_fusion_active(False) 时
+        model.generate 会错误地认为温度未应用。统一为本属性（与 forward 实际分支
+        `:1700` 同式）。"""
+        return bool(self.ngram_fusion_enabled) and bool(getattr(self, '_ngram_fusion_active', True))
+
     def set_ngram_gate_scale(self, scale: float):
         """推理期总闸：用户在 (0, 1+] 间缩放门控输出（1.0=模型自决，0=拔掉 n-gram）。"""
         self.ngram_gate_scale = float(scale)
@@ -1286,16 +1303,29 @@ class TransformerModel(nn.Module):
         skip_gate 经 straight-through 训练后，推理时把"几乎必跳过"的层直接移除，
         实现真实的推理提速（不止是软正则）。置 threshold<=0 取消剪枝（全保留）。
 
+        实现契约（M2，与代码一致）：本方法**不删除任何参数**，只把命中层的索引记进
+        ``self._pruned_layers``；由 forward 里 `not training and i in _pruned_layers`
+        走 continue 短路（该层不前向、输出=输入）。因此：
+          - 推理确实省算力，但显存/权重体积不变（参数仍在 state_dict 里）；
+          - 被剪层既不写 MemoryBank 也不消费（跳过发生在 block 调用前），
+            与训练期"每层都写"的记忆流水线不对称，改此阈值须回归记忆相关测试。
+
         返回被剪掉的层索引列表。
         """
         self._prune_threshold = float(threshold)
+        # threshold<=0 = 取消剪枝（见 docstring）。sigmoid 恒 >0，原实现会把所有
+        # skip 层记进返回值、却把 _pruned_layers 置空 → 返回值与实际剪枝状态自相矛盾，
+        # 上层据返回值打印的"已跳过 N 层"是误报。提前返回使两者一致（M2）。
+        if threshold <= 0:
+            self._pruned_layers = set()
+            return []
         pruned = []
         for i, blk in enumerate(self.blocks):
             if getattr(blk, 'skip_enabled', False):
                 p = float(torch.sigmoid(blk.skip_gate).item())
                 if p > threshold:
                     pruned.append(i)
-        self._pruned_layers = set(pruned) if threshold > 0 else set()
+        self._pruned_layers = set(pruned)
         return pruned
 
     def _init_weights(self):
@@ -1499,8 +1529,12 @@ class TransformerModel(nn.Module):
                     if hasattr(blk.attn, '_alibi_dist_cache'):
                         blk.attn._alibi_dist_cache.clear()
             self._cached_x0_proj = None
-            # R42: 新序列首步重置 Controller past_kv 缓存（与 input_highway x0 同理）
-            self._controller_past = None
+            # R42 + M9: 新序列首步复位全部跨序列状态（n-gram 滚动缓冲 + Controller
+            # past_kv），统一走 reset_ngram_state()——它就是为"集中管理"而存在的。
+            # 此前 is_fresh 只复位 _controller_past：绕过 generate() 的显式
+            # reset_ngram_state() 直接调 forward(use_cache=True) 的代码，新序列首步
+            # 会把上一序列的 token 尾巴喂进 logprob_orders_incremental（跨序列串扰）。
+            self.reset_ngram_state()
         # R42: Controller/Generator 双模型——跑 Controller 产出控制信号条件化 Generator。
         # _rt_controller=False 时跳过（SEL 交替训练恒等），信号全 None。
         # Controller 共享 Generator embedding，自己跑 token_ids → 控制信号。
@@ -1522,7 +1556,7 @@ class TransformerModel(nn.Module):
 
         # 第十一轮：跨层稀疏路由——收集每层输出供后续层 top-k 路由（残差注入）。
         # 仅 cross_layer_routing=True 且 num_layers>1 时启用（cross_router 已在 __init__ 创建）。
-        prev_outputs: List[torch.Tensor] = [] if self.cross_layer_routing else []
+        prev_outputs: List[torch.Tensor] = []
         # 第十二轮：层间 SSM 状态传递——跟踪前一个 hybrid 块的输出
         prev_hybrid_x: Optional[torch.Tensor] = None
         # 第十四轮：输入全局高速公路——保存 embedding 输出 x0 供每层门控注入
@@ -1696,7 +1730,7 @@ class TransformerModel(nn.Module):
         # 阶段8.1：n-gram 神经融合——z_neural + g_t·ngram_vec。ngram_vec 是固定统计缓冲
         # （.detach() 不引梯度，主干 z_neural 仍吃完整 CE 梯度、不被缩放 → 不塌缩）。
         # g_t=sigmoid(h_t·W_g) 逐位置自决多信 n-gram，且随 use_cache 增量解码逐 token 计算也一致
-        # （前向每步传入当前序列，logprob_matrix 按位置上下文查表，与全量路径共享同一张表）。
+        # （前向每步传入当前序列，logprob_orders_* 按位置上下文查表，与全量路径共享同一张表）。
         if self.ngram_fusion_enabled and getattr(self, '_ngram_fusion_active', True):
             fused = self._apply_ngram_fusion(
                 x, src, use_cache, past_key_values,
@@ -1827,7 +1861,7 @@ class TransformerModel(nn.Module):
                 generated_len=len(generated) - len(token_ids), min_length=min_length,
                 eos_penalty=eos_penalty, top_k=top_k, vocab_size=logits_t.shape[0],
                 raw_logits=logits_t,
-                temperature_applied=getattr(self, 'ngram_fusion_enabled', False),
+                temperature_applied=self.temperature_applied,
                 bos_id=BOS_IDX,
             )
 
@@ -1853,5 +1887,5 @@ class TransformerModel(nn.Module):
                 past, logits, cur_pos = _decode_one_step(
                     self, next_token, past, cur_pos, device=device, use_cache=True,
                     temperature=temperature,
-                    temperature_applied=getattr(self, 'ngram_fusion_enabled', False))
+                    temperature_applied=self.temperature_applied)
         return generated

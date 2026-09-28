@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """R42 回归测试：Controller/Generator 双模型编排。
 
 R42 架构（详见 AGENT_MEMORY.md §10）：
@@ -23,6 +23,7 @@ import time
 import pytest
 import torch
 import torch.nn as nn
+from torch.utils.data import DataLoader, Dataset
 
 # 提前导入 torch_directml 注册 privateuseone 后端：pytest 默认的 assertion
 # rewriting 模式会干扰 DML autograd engine 的 device_ready_queues_ 初始化（致
@@ -465,3 +466,345 @@ def test_r42_controller_generate():
                         temperature=0.8, top_k=10)
     assert isinstance(tokens, list)
     assert len(tokens) >= 3  # 至少返回 prompt
+
+
+# ============================================================
+# 12. 三阶段训练 controller_active 参数（train.py R42 新增逻辑）
+# ============================================================
+# 覆盖缺口：R42 在 scripts/train.py 的 train_epoch/validate 新增 controller_active
+# 参数，main() 中按 controller_warmup_frac 计算 _ctrl_active 切换点。该逻辑
+# 决定 warmup 期是否跳过 Controller 前向——若失效会导致：
+#   ① warmup 期 Controller 仍跑（浪费 ~40% 算力）；
+#   ② 早期梯度经零初始化信号回流污染 Generator warmup；
+#   ③ enhancement_schedule 设 controller=True 时无法被 warmup 覆盖。
+# 上述路径在 R42 提交中无任何单元测试覆盖，本章节补齐。
+
+class _TinyTrainDS(Dataset):
+    """超小数据集：4 条样本，每条 8 tokens，专供 train_epoch/validate 单元测试。"""
+    def __len__(self):
+        return 4
+
+    def __getitem__(self, i):
+        x = torch.randint(0, 50, (8,))
+        return {'input_ids': x, 'target_ids': x}
+
+
+def _run_train_epoch(m, controller_active=True, enhancement_schedule=None):
+    """跑一个 train_epoch（2 batch），可观察调用后 model._rt_controller 状态。"""
+    from scripts.train import train_epoch
+    train_epoch(
+        m, DataLoader(_TinyTrainDS(), batch_size=2),
+        torch.optim.AdamW(m.parameters(), lr=1e-3),
+        torch.nn.CrossEntropyLoss(), 'cpu', 1,
+        show_progress=False, grad_accum_steps=1, use_amp=False,
+        controller_active=controller_active,
+        enhancement_schedule=enhancement_schedule)
+
+
+def test_r42_train_epoch_controller_active_false_forces_off():
+    """controller_active=False 时 _rt_controller 被强制关闭（覆盖 train.py:262-263）。
+
+    train_epoch 内部会先调 set_enhancements_active(True) 把 _rt_controller 设为 True，
+    随后 controller_active=False 分支应再次强制设为 False。若该分支失效，warmup 期
+    Controller 会跑前向（浪费算力 + 早期梯度污染 Generator warmup）。
+    """
+    m = _build()
+    m.train()
+    _run_train_epoch(m, controller_active=False)
+    assert m._rt_controller is False, (
+        "controller_active=False 应强制 _rt_controller=False（覆盖 set_enhancements_active）")
+
+
+def test_r42_train_epoch_controller_active_true_keeps_on():
+    """controller_active=True 时 Controller 正常开启（正向 case）。"""
+    m = _build()
+    m.train()
+    _run_train_epoch(m, controller_active=True)
+    assert m._rt_controller is True, (
+        "controller_active=True 应保持 _rt_controller=True")
+
+
+def test_r42_train_epoch_controller_active_overrides_schedule():
+    """controller_active=False 覆盖 enhancement_schedule 的 controller=True 键。
+
+    train.py:260 注释明确："覆盖 enhancement_schedule 的 controller 键，确保 warmup
+    期整 epoch 关闭"。若该覆盖失效，SEL 交替训练设 controller=True 时 warmup 期
+    Controller 仍会被强制开启，违背三阶段训练设计意图。
+    """
+    m = _build()
+    m.train()
+    _run_train_epoch(m, controller_active=False,
+                     enhancement_schedule=[{'controller': True}])
+    assert m._rt_controller is False, (
+        "controller_active=False 应覆盖 enhancement_schedule 的 controller=True")
+
+
+def test_r42_train_epoch_controller_active_false_no_controller_model():
+    """controller_active=False 对 controller=False 模型无副作用（无 controller 子模块）。"""
+    m = _build_off()  # controller=False
+    m.train()
+    # 不应因 controller_active=False 报错（model.controller_enabled=False 跳过分支）
+    _run_train_epoch(m, controller_active=False)
+    assert not m.controller_enabled
+    # controller=False 模型无 _rt_controller 属性应为 False（set_enhancements_active 设）
+    assert m._rt_controller is False
+
+
+def test_r42_validate_controller_active_false_forces_off():
+    """validate controller_active=False 时 _rt_controller 被强制关闭（覆盖 train.py:390-391）。
+
+    validate 先调 set_enhancements_active(True)，随后 controller_active=False 分支
+    应强制关闭。warmup 期验证也跳过 Controller 前向，与训练态一致省开销。
+    """
+    from scripts.train import validate
+    m = _build()
+    m.eval()
+    validate(m, DataLoader(_TinyTrainDS(), batch_size=2),
+             torch.nn.CrossEntropyLoss(), 'cpu', controller_active=False)
+    assert m._rt_controller is False, (
+        "validate controller_active=False 应强制 _rt_controller=False")
+
+
+def test_r42_validate_controller_active_true_keeps_on():
+    """validate controller_active=True 时 Controller 正常开启（正向 case）。"""
+    from scripts.train import validate
+    m = _build()
+    m.eval()
+    validate(m, DataLoader(_TinyTrainDS(), batch_size=2),
+             torch.nn.CrossEntropyLoss(), 'cpu', controller_active=True)
+    assert m._rt_controller is True
+
+
+# ============================================================
+# 13. 三阶段训练 warmup 切换点公式（train.py:763-764）
+# ============================================================
+
+@pytest.mark.parametrize("epochs,warmup_frac,epoch,expected", [
+    # epochs=10, warmup_frac=0.3（与 config_train_8k_r42.yaml 一致）
+    (10, 0.3, 1, False),    # progress=0.0 < 0.3 → OFF (warmup)
+    (10, 0.3, 3, False),    # progress=0.2 < 0.3 → OFF (warmup)
+    (10, 0.3, 4, True),     # progress=0.3 >= 0.3 → ON（边界 >=）
+    (10, 0.3, 10, True),    # progress=0.9 >= 0.3 → ON
+    # warmup_frac=0 → 从第 1 epoch 就 ON（向后兼容无 warmup）
+    (10, 0.0, 1, True),
+    # epochs=5, warmup_frac=0.5
+    (5, 0.5, 2, False),     # progress=0.2 < 0.5
+    (5, 0.5, 3, False),     # progress=0.4 < 0.5
+    (5, 0.5, 4, True),      # progress=0.6 >= 0.5
+    # epochs=1 + warmup_frac=0.5：progress=0.0 < 0.5 → 整 epoch OFF
+    # （公式语义：单 epoch 训练 + warmup_frac>0 → 整 epoch 关 Controller；
+    #  当前实现锁定此行为，避免 warmup_frac 配错导致单 epoch 训练完全跳过）
+    (1, 0.5, 1, False),
+])
+def test_r42_warmup_switch_point_formula(epochs, warmup_frac, epoch, expected):
+    """三阶段训练 warmup 切换点：直接测 train.py 生产函数 controller_warmup_active。
+
+    覆盖 main() 训练循环每 epoch 的切换逻辑（该公式已提取为模块级函数
+    controller_warmup_active，测试直接调用生产代码——若公式被改动，如 >= 改 >、
+    分子 off-by-one，本测试立即失败）。该值决定每个 epoch 调 train_epoch/validate
+    时传的 controller_active：错判 OFF → 白白浪费已付的 Controller 算力；
+    错判 ON → warmup 期梯度经信号回流污染 Generator。
+    边界 case：epoch=1 时 progress=0；epoch=epochs 时 progress=(epochs-1)/epochs。
+    """
+    from scripts.train import controller_warmup_active
+    active = controller_warmup_active(epoch, epochs, warmup_frac)
+    progress = (epoch - 1) / max(epochs, 1)
+    assert active == expected, (
+        f"epochs={epochs} warmup_frac={warmup_frac} epoch={epoch}: "
+        f"progress={progress:.3f} → active={active}（预期 {expected}）")
+
+
+# ============================================================
+# 14. Controller 跨序列状态重置（transformer.py reset_ngram_state）
+# ============================================================
+
+def test_r42_reset_ngram_state_clears_controller_past():
+    """reset_ngram_state() 重置 _controller_past（跨序列生成状态隔离）。
+
+    覆盖 transformer.py 的 reset_ngram_state R42 新增分支——若不重置，跨序列
+    生成会用上一序列的 Controller past_kv cache → 输出错乱（与 n-gram 滚动缓冲
+    同生命周期管理）。generate.py 在每次新序列生成前应调此方法。
+    """
+    m = _build(seq=32)
+    m.eval()
+    x = torch.randint(0, 50, (2, 6))
+    with torch.no_grad():
+        # use_cache=True 让 Controller 填充 _controller_past
+        m(x, use_cache=True)
+    assert m._controller_past is not None, (
+        "use_cache=True 前向后 _controller_past 应被填充")
+    # 跨序列重置
+    m.reset_ngram_state()
+    assert m._controller_past is None, (
+        "reset_ngram_state 后 _controller_past 应为 None")
+
+
+def test_r42_controller_past_isolated_across_sequences():
+    """跨序列生成：reset_ngram_state 后新序列不依赖上一序列的 Controller cache。
+
+    若 cache 未重置，第二序列第一步会用第一序列末尾的 S 状态 → mem_kv/direction
+    受污染。验证：两序列分别用 reset 后独立前向，输出与首次序列前向一致。
+    """
+    m = _build(seq=32)
+    m.eval()
+    seq1 = torch.randint(0, 50, (1, 5))
+    seq2 = torch.randint(0, 50, (1, 5))
+    with torch.no_grad():
+        # 序列 1：fresh 前向
+        m.reset_ngram_state()
+        y1_first = m(seq1, use_cache=False)
+        # 序列 2：未 reset → 复用 seq1 的 cache（错误路径）
+        # 序列 2：reset 后 fresh 前向（正确路径）
+        m.reset_ngram_state()
+        y2_reset = m(seq2, use_cache=False)
+        # 再跑一次 seq1 验证确定性（reset 后两次同输入应同输出）
+        m.reset_ngram_state()
+        y1_again = m(seq1, use_cache=False)
+    assert torch.equal(y1_first, y1_again), (
+        "reset 后两次同序列前向应逐位一致（确定性）")
+    # y2 与 y1 不同（不同输入；若 cache 污染会让 y2 受 y1 残留影响，但仍可能不同）
+    # 关键断言：reset 后 y2 不为 None 且 shape 正确
+    assert y2_reset.shape == (1, 5, 50)
+
+
+def test_r42_fresh_cached_decode_resets_stale_controller_past():
+    """新序列缓存解码首步自动清 _controller_past 残留（transformer.py is_fresh 守卫）。
+
+    覆盖 transformer.py:1502-1503（R42）：use_cache=True 且 past_key_values 全 None
+    （新序列起点）时自动置 _controller_past=None——防"上次 generate() 残留"。
+    上面的 isolated_across_sequences 测的是显式 reset_ngram_state + use_cache=False
+    路径；本测试锚定 use_cache=True 的自动守卫（generate.py 连续两次生成间若未
+    显式 reset，这是最后一道防线）。
+    行为级断言：跑过序列 A 后直接跑序列 B（past=None），输出应与 fresh 模型
+    跑 B 逐位一致——若守卫失效，B 首步会复用 A 的 Controller past_kv，
+    mem_kv/direction/FiLM 被上一序列状态污染（静默输出错乱）。
+    """
+    torch.manual_seed(0)
+    m = _build(seq=32)
+    m.eval()
+    seq_a = torch.randint(0, 50, (1, 6))
+    seq_b = torch.randint(0, 50, (1, 5))
+    with torch.no_grad():
+        # 基准：fresh 模型（_controller_past=None）直接跑 B
+        y_b_fresh, _ = m(seq_b, use_cache=True)   # use_cache=True 返回 (logits, past)
+        # 残留场景：先跑 A 填充 _controller_past，再不 reset 直接跑 B
+        m(seq_a, use_cache=True)
+        assert m._controller_past is not None, "A 前向后 _controller_past 应被填充"
+        y_b_after_a, _ = m(seq_b, use_cache=True)  # past=None → is_fresh → 守卫清残留
+        assert m._controller_past is not None, "B 前向后 _controller_past 应为 B 的新 cache"
+    assert torch.allclose(y_b_fresh, y_b_after_a, atol=1e-5), (
+        "跑过 A 后直接跑 B 应与 fresh 跑 B 一致（is_fresh 守卫自动清 _controller_past 残留）；"
+        "不一致说明上一序列的 Controller 状态泄漏进了新序列")
+
+
+# ============================================================
+# 15. set_enhancements_active dict spec 的 controller 键（transformer.py）
+# ============================================================
+
+def test_r42_set_enhancements_active_dict_controller_key():
+    """set_enhancements_active dict spec 含 'controller' 键时正确切换。
+
+    覆盖 transformer.py set_enhancements_active 的 dict 分支 R42 新增 'controller'
+    键处理。SEL 交替训练用 dict spec 精细控制各增强；若该键处理被破坏，SEL 训练
+    controller 切换会失效（无法独立开关 Controller）。
+    """
+    m = _build()
+    m.eval()
+    # dict spec: controller=False
+    m.set_enhancements_active({'controller': False})
+    assert m._rt_controller is False, "dict {'controller': False} 应关闭 Controller"
+    # dict spec: controller=True
+    m.set_enhancements_active({'controller': True})
+    assert m._rt_controller is True, "dict {'controller': True} 应开启 Controller"
+    # dict spec 不含 controller 键：_rt_controller 保持现状（不被其他键干扰）
+    m.set_enhancements_active({'layer_film': False})
+    assert m._rt_controller is True, "dict 不含 controller 键时 _rt_controller 应保持不变"
+
+
+def test_r42_set_enhancements_active_dict_controller_key_off_model():
+    """controller=False 模型：dict spec 的 controller 键不应开启（守门）。"""
+    m = _build_off()
+    m.eval()
+    # controller=False 模型，即使 dict 设 controller=True 也应保持 False（model.controller_enabled=False）
+    m.set_enhancements_active({'controller': True})
+    assert m._rt_controller is False, (
+        "controller=False 模型不应被 dict {'controller': True} 开启（守门）")
+
+
+# ============================================================
+# 16. 已知缺陷登记（H1）：direction 信号增量解码语义断裂
+# ============================================================
+
+def _rand_signal_projections(m, seed=1234):
+    """把零初始化的信号投影改为随机非零——否则 parity 测试在零权重下恒过（空转）。"""
+    g = torch.Generator().manual_seed(seed)
+    with torch.no_grad():
+        m.controller.direction_proj.weight.copy_(
+            torch.randn(m.controller.direction_proj.weight.shape, generator=g) * 0.1)
+        if m.controller.direction_proj.bias is not None:
+            m.controller.direction_proj.bias.zero_()
+        for proj in m.controller.film_projs:
+            if isinstance(proj, nn.Linear):
+                proj.weight.copy_(torch.randn(proj.weight.shape, generator=g) * 0.05)
+
+
+@pytest.mark.xfail(reason="H1 已知限制（AGENT_MEMORY §11.1）：direction 的 x.mean(dim=1) "
+                          "训练期覆盖整段、推理第 2 步起只覆盖 1 token → 增量不等价；"
+                          "修复需重训，未实施", strict=False)
+def test_r42_direction_incremental_parity_known_gap():
+    """登记 H1：信号投影非零时，全量 vs 逐 token 的 direction 路径不等价。
+
+    现有 test_r42_cache_parity 因信号零初始化而恒过（测不出 direction 分量）；
+    本测试显式放开 direction_proj 后预期 fail（xfail），若某天变 pass 说明 H1 已修，
+    应移除 xfail 并在 AGENT_MEMORY §11.1 打勾。
+    """
+    m = _build(seq=32)
+    m.eval()
+    _rand_signal_projections(m)
+    x = torch.randint(0, 50, (2, 6))
+    with torch.no_grad():
+        y_full = m(x)
+        y_first, past = m(x[:, :3], use_cache=True)
+        ys = [y_first]
+        cur_past = past
+        for t in range(3, 6):
+            y_t, cur_past = m(x[:, t:t+1], past_key_values=cur_past, use_cache=True)
+            ys.append(y_t)
+        y_inc = torch.cat(ys, dim=1)
+    diff = (y_full - y_inc).abs().max().item()
+    assert diff < 1e-4, f"H1 direction 增量 parity diff={diff}"
+
+
+# ============================================================
+# 17. L1 回归：temperature<=0 走贪心（不崩溃）
+# ============================================================
+
+def test_r42_sample_greedy_nonpositive_temperature():
+    """temperature<=0 应走 argmax 贪心而非 0 除崩溃（README '0=贪心' 语义）。
+
+    修复前：logits/0.0 → inf/nan → softmax 全 nan → torch.multinomial RuntimeError。
+    """
+    from models.sampling import sample_next_token
+    logits = torch.tensor([0.1, 5.0, -1.0, 2.0, 0.0])
+    for tau in (0.0, -1.0):
+        tok = sample_next_token(
+            logits.clone(), temperature=tau, repetition_penalty=1.0,
+            generated_ids=[], ngram_fn=None, ngram_weight=0.0, device='cpu',
+            pad_id=4, sep_id=-1, eos_id=3, generated_len=10, min_length=1,
+            eos_penalty=0.0, top_k=0, vocab_size=5)
+        assert tok == 1, f"temperature={tau} 应 argmax 取最大 logit 的 idx 1，实际 {tok}"
+
+
+def test_r42_sample_does_not_mutate_raw_logits():
+    """L9：全 -inf 回退分支不得就地改写调用方 logits（应 clone）。"""
+    from models.sampling import sample_next_token
+    logits = torch.zeros(5)
+    raw = torch.tensor([3.0, 1.0, 0.0, 0.0, 0.0])
+    raw_before = raw.clone()
+    # pad/sep/eos 屏蔽到全 -inf 触发回退分支
+    sample_next_token(
+        logits, temperature=1.0, repetition_penalty=1.0, generated_ids=[],
+        ngram_fn=None, ngram_weight=0.0, device='cpu', pad_id=4, sep_id=3,
+        eos_id=0, generated_len=0, min_length=10, eos_penalty=0.0,
+        top_k=0, vocab_size=5, raw_logits=raw, temperature_applied=True)
+    assert torch.equal(raw, raw_before), "回退分支就地修改了 raw_logits（应 clone）"

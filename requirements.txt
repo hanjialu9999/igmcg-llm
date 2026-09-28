@@ -1,18 +1,25 @@
-# 注意：本文件用于非 DML 环境（CPU / CUDA）。
-# 若使用 AMD/Intel 核显 + DirectML，请改用 requirements-amd.txt
-# （torch-directml 会自行拉取兼容的 torch；.amd_venv 实测为 torch 2.4.1）。
-# 本项目主测试环境为 torch 2.4.1，故上界放宽到 <2.5。
+# 注意：此文件用于非 DML 环境（CPU / CUDA）
+# 如果使用 AMD/Intel 显卡 + DirectML，请改用 requirements-amd.txt
+# 不带 torch-directml 时，项目运行基础为 torch，.amd_venv 实际为 torch 2.4.1，
+# 本项目测试基线为 torch 2.4.1，向上兼容可放宽至 <2.5。
 torch>=2.0,<2.5
 pyyaml==6.0
 numpy==1.24.3
 tqdm>=4.65.0
 
-# ===== 可选：AMD / Intel 核显加速（Windows）=====
-# 安装 torch-directml 后，程序会自动通过 DirectML 使用核显/独显；
-# 无需任何代码改动（device 设为 "auto" 即可），但需注意：
-# torch-directml 需要 Python 3.10 / 3.11（不支持更新的 Python 版本）
+# ===== 脚本/工具依赖 =====
+requests>=2.25.0          # scripts/data/fetch_ms_corpus.py
+psutil>=5.9.0             # tools/monitor/monitor_gpu_training.py
+
+# ===== 开发依赖 =====
+pytest>=7.0.0             # 32 个测试文件共用
+
+# ===== 可选：AMD / Intel 显卡加速（Windows）=====
+# 安装 torch-directml 后，代码会自动通过 DirectML 使用核显/集显，
+# 无需任何代码改动，device 为 "auto" 即可，其他注意：
+# torch-directml 需要 Python 3.10 / 3.11，不支持更新的 Python 版本。
 #   pip install torch-directml
 
-# ===== 可选：数据准备脚本依赖（scripts/data/*）=====
-# 拉取 ModelScope 语料 / 读取 parquet 等时才需要，主训练/推理无需安装：
-#   pip install modelscope pandas pyarrow
+# ===== 可选：数据准备脚本（scripts/data/*）=====
+# 从 ModelScope 下载 / 读取 parquet 时需要，非训练/推理必装：
+#   pip install modelscope pandas pyarrow datasets huggingface_hub

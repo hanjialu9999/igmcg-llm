@@ -127,7 +127,10 @@ def clip_grad_norm_dml(params, max_norm):
     （DML 上 ~0.5-2ms/步）。本实现数学等价：
       scale = min(max_norm / (total_norm + 1e-6), 1)，梯度 *= scale
     与 clip_grad_norm_ 默认 (eps=1e-6, error_if_nonfinite=False) 语义一致：
-    非有限 total_norm 时 scale 为 NaN，NaN < 1 为 False → 不缩放（同原版）。
+    非有限 total_norm 时 clip_coef 为 NaN，NaN<1.0 为 False → where 取 1.0 不缩放（同原版）。
+
+    注：原实现在此写 `if clip_coef < 1.0`——bool(0-dim tensor) 触发隐式 .item()
+    同步，恰好抵消本函数存在的意义；改用 torch.where 在设备侧选 scale，消除该同步。
     """
     grads = [p.grad for p in params if p.grad is not None]
     if not grads:
@@ -137,9 +140,9 @@ def clip_grad_norm_dml(params, max_norm):
         total_sq = total_sq + g.pow(2).sum()
     total_norm = total_sq.sqrt()
     clip_coef = max_norm / (total_norm + 1e-6)
-    clip_coef = clip_coef.clamp(max=1.0)
-    if clip_coef < 1.0:
-        torch._foreach_mul_(grads, clip_coef)
+    # clip_coef >= 1.0（含 NaN）→ scale=1.0 不缩放；<1.0 → 用 clip_coef 缩放
+    scale = torch.where(clip_coef < 1.0, clip_coef, torch.ones_like(clip_coef))
+    torch._foreach_mul_(grads, scale)
     return total_norm
 
 
@@ -258,7 +261,7 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
                     model.set_enhancements_active(True)
         # R42: Controller 三阶段训练——controller_active=False 时强制关闭 Controller
         # （覆盖 enhancement_schedule 的 controller 键，确保 warmup 期整 epoch 关闭）。
-        # 跳过 Controller 前向 = 省完整 2 层 GatedDeltaNet 计算（小模型上 ~40% 算力）。
+        # 跳过 Controller 前向 = 省完整 GatedDeltaNet 计算（层数=controller_layers，当前配置 1 层）。
         if not controller_active and model.controller_enabled:
             model._rt_controller = False
 
@@ -415,7 +418,16 @@ def validate(model, dataloader, criterion, device, controller_active=True):
     return (loss_sum / max(1, loss_count)).item()
 
 
+def controller_warmup_active(epoch, total_epochs, warmup_frac):
+    """R42: Controller 三阶段训练切换点——前 warmup_frac 比例 epoch 关闭 Controller。
 
+    进度 = (epoch-1)/max(total_epochs,1)（epoch 从 1 计），进度 >= warmup_frac 时
+    开启 Controller。边界语义：epoch=1 时进度为 0（warmup_frac>0 则首 epoch 必关）；
+    warmup_frac=0 从第 1 epoch 即开（向后兼容无 warmup 配置）。提取为模块级函数
+    供单元测试直接锚定（main() 循环内公式改动——如 >= 改 >、分子 off-by-one——
+    会导致 warmup 期算力浪费或 Controller 从未开启，需回归保护）。
+    """
+    return (epoch - 1) / max(total_epochs, 1) >= warmup_frac
 
 
 @cli_guard
@@ -760,8 +772,8 @@ def main(config_path='configs/pretrain.yaml', resume=False):
 
     for epoch in range(start_epoch, config['training']['epochs'] + 1):
         # R42: Controller 三阶段训练——前 warmup_frac 比例的 epoch 关闭 Controller
-        _ctrl_progress = (epoch - 1) / max(config['training']['epochs'], 1)
-        _ctrl_active = _ctrl_progress >= controller_warmup_frac
+        _ctrl_active = controller_warmup_active(
+            epoch, config['training']['epochs'], controller_warmup_frac)
         if _has_controller and controller_warmup_frac > 0:
             _prev = getattr(model, '_rt_controller', True)
             if _ctrl_active != _prev and epoch > start_epoch:

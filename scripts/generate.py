@@ -18,10 +18,9 @@ AMP_CTX = contextlib.nullcontext()
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from models.transformer import TransformerModel, apply_repetition_penalty, sample_next_token, _decode_one_step
-from models.config_loader import load_vocab
+from models.transformer import TransformerModel, sample_next_token, _decode_one_step
 from models.device import get_device, apply_cpu_threads
-from models.checkpoint import load_model, safe_torch_load
+from models.checkpoint import load_model
 from models.ngram import NGramModel
 from models.utils import cli_guard
 
@@ -187,8 +186,7 @@ def _generate_candidates_batch(model, ids, temps, max_length, top_k, rep_penalty
         # 阶段8.9：各候选温度可能不同，批量前向以 (N,) 温度张量传入，forward 内对主干
         # logits 逐候选做 log_softmax(z_n/τ_n)；n-gram 先验不被温度缩放。
         _temps = torch.tensor(temps, dtype=torch.float32, device=device)
-        _temp_applied = getattr(model, 'ngram_fusion_enabled', False) and \
-            getattr(model, '_ngram_fusion_active', True)
+        _temp_applied = model.temperature_applied
         # 初始前向：所有候选共享同一输入，得到 batched past（batch 维 = N）
         inp = torch.tensor([ids] * N, dtype=torch.long, device=device)
         with AMP_CTX:
@@ -314,8 +312,10 @@ def generate_igmcg(model, vocab, prompt, intuition=None, num_candidates=4,
     eos_id = getattr(vocab, 'eos_idx', 3)
     bos_id = getattr(vocab, 'bos_idx', None)
 
-    temps = [base_temp * (0.75 + 0.6 * k / max(1, num_candidates - 1))
-             for k in range(num_candidates)]
+    # N==1 时不缩放（原 0.75+0.6*k/max(1,0) 公式在 N=1 时把温度静默降为 0.75x）
+    temps = [base_temp] if num_candidates <= 1 else [
+        base_temp * (0.75 + 0.6 * k / (num_candidates - 1))
+        for k in range(num_candidates)]
     seqs = _generate_candidates_batch(model, ids, temps, max_length, top_k,
                                        repetition_penalty, device, ngram_fn,
                                        ngram_weight, pad_id, sep_id, eos_id,
@@ -387,7 +387,7 @@ def main():
     parser.add_argument('--max-length', type=int, default=30,
                         help='Maximum length of generated text')
     parser.add_argument('--temperature', type=float, default=0.8,
-                        help='Sampling temperature (0.5-1.5)')
+                        help='Sampling temperature (0.5-1.5; 0=greedy argmax)')
     parser.add_argument('--top-k', type=int, default=50,
                         help='Top-k sampling')
     parser.add_argument('--repetition-penalty', type=float, default=1.4,

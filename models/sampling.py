@@ -46,8 +46,14 @@ def sample_next_token(logits_t: torch.Tensor, *, temperature: float,
 
     `temperature_applied`：当上游已对主干 logits 应用过温度（n-gram 融合路径，forward 内
     log_softmax(z/τ)），此处不再整体除以 τ（否则会错误缩放 n-gram 先验）。此时若提供了
-    未温度化的 raw_logits，回退分支仍用 raw_logits/τ 以恢复正确主干分布。"""
-    lt = logits_t.clone() if temperature_applied else logits_t / temperature
+    未温度化的 raw_logits，回退分支仍用 raw_logits/τ 以恢复正确主干分布。
+
+    `temperature<=0` = 贪心（README:145 承诺语义）：不做除法（避免 0 除出 inf/nan →
+    softmax 全 nan → multinomial RuntimeError，实测崩溃），掩码/惩罚处理后直接 argmax。
+    注意 ngram_fusion 路径 forward 内对 τ 有 max(0.01,τ) clamp（transformer.py:1761），
+    本函数是采样端的对应守卫，两条路径行为才一致。"""
+    greedy = temperature <= 0
+    lt = logits_t.clone() if (temperature_applied or greedy) else logits_t / temperature
     apply_repetition_penalty(lt, generated_ids, repetition_penalty, device)
     if ngram_fn is not None and ngram_weight != 0.0:
         lt = lt + ngram_weight * ngram_fn(generated_ids, device)
@@ -68,12 +74,15 @@ def sample_next_token(logits_t: torch.Tensor, *, temperature: float,
         # top_k/惩罚后无候选）的极端边界，放弃已处理分布、用原始温度分布仅屏蔽 pad
         # 以产出合法 token 避免崩溃。raw_logits 为未被惩罚污染的前向原始 logits。
         rb = (raw_logits if raw_logits is not None else logits_t)
-        if not temperature_applied:
+        rb = rb.clone()          # L9：不就地改写调用方张量（raw_logits/logits_t）
+        if not temperature_applied and not greedy:
             rb = rb / temperature
         rb[pad_id] = float('-inf')
         if bos_id is not None:
             rb[bos_id] = float('-inf')
         lt = rb
+    if greedy:
+        return torch.argmax(lt).item()
     probs = torch.softmax(lt, dim=-1)
     if probs.max() < 0.01:
         return None
