@@ -1,0 +1,126 @@
+{
+  "meta": {
+    "created": "2026-09-28 19:41:17",
+    "config": "configs/config_train_8k_r42.yaml",
+    "model": "checkpoints_train_8k_r42/final_model.pt",
+    "model_sha256_16": "623b626f66d6c8f6",
+    "vocab": "checkpoints_train_8k_r42/vocab.json",
+    "device": "cpu",
+    "torch": "2.4.1+cpu",
+    "seed": 42,
+    "batch_size": 24,
+    "max_seqs": 0,
+    "val_sequences": 800,
+    "modes": [
+      "tf",
+      "prefix",
+      "incremental"
+    ],
+    "n_params": 6756101,
+    "pad_idx": 0,
+    "total_seconds": 499.15
+  },
+  "ppl": {
+    "tf": {
+      "nll_sum": 238638.018066,
+      "tokens": 51130,
+      "loss": 4.66728,
+      "ppl": 106.407902,
+      "elapsed_s": 13.49
+    },
+    "prefix": {
+      "nll_sum": 270525.255756,
+      "tokens": 51130,
+      "loss": 5.29093,
+      "ppl": 198.527989,
+      "elapsed_s": 411.87
+    },
+    "incremental": {
+      "nll_sum": 538185.272736,
+      "tokens": 51130,
+      "loss": 10.525822,
+      "ppl": 37265.449154,
+      "elapsed_s": 43.28
+    }
+  },
+  "diff": {
+    "tf_minus_prefix_loss": -0.62365,
+    "tf_over_prefix_ppl": 0.535984,
+    "prefix_minus_incremental_loss": -5.234892,
+    "tf_minus_incremental_loss": -5.858542
+  },
+  "generation": [
+    {
+      "prompt": "今天天气真好，我们去",
+      "mode": "sample",
+      "seed": 42,
+      "text": "今天天气真好，我们去去去去了了了了的的的的的的的生生生生生生活活活活躍躍躍躍躍躍"
+    },
+    {
+      "prompt": "今天天气真好，我们去",
+      "mode": "greedy",
+      "seed": 42,
+      "text": "今天天气真好，我们去年年年年年年少少少少多多多多多多大大大大大大量量量量量量量数"
+    },
+    {
+      "prompt": "人工智能的未来是",
+      "mode": "sample",
+      "seed": 42,
+      "text": "人工智能的未来是生生生生生生生在在式式式式式式式柜柜柜柜柜箱箱箱箱箱油油油油"
+    },
+    {
+      "prompt": "人工智能的未来是",
+      "mode": "greedy",
+      "seed": 42,
+      "text": "人工智能的未来是人人人人人民民民民民眾眾眾眾眾眾群群群群体体体体体体育育育育"
+    },
+    {
+      "prompt": "Hello, how are you",
+      "mode": "sample",
+      "seed": 42,
+      "text": "hello,howareyoustttvv(((((（（（））））是是是是是是都都都都都都"
+    },
+    {
+      "prompt": "Hello, how are you",
+      "mode": "greedy",
+      "seed": 42,
+      "text": "hello,howareyoussssttttiiiaapppppccccnnnnggdd"
+    },
+    {
+      "prompt": "The weather is",
+      "mode": "sample",
+      "seed": 42,
+      "text": "theweatherissokgvv(((((（（（））））是是是是是是都都都都都都"
+    },
+    {
+      "prompt": "The weather is",
+      "mode": "greedy",
+      "seed": 42,
+      "text": "theweatherisooonnnnggllldddmmmvvvpppppcccc"
+    },
+    {
+      "prompt": "I love",
+      "mode": "sample",
+      "seed": 42,
+      "text": "ilovestttvv(((((（（（））））是是是是是是都都都都都都"
+    },
+    {
+      "prompt": "I love",
+      "mode": "greedy",
+      "seed": 42,
+      "text": "iloverrrnnnnwwwwwhhhhttttaaaiieeeoo"
+    },
+    {
+      "prompt": "Machine learning",
+      "mode": "sample",
+      "seed": 42,
+      "text": "machinelearningbokssstttttwwwwww((（（））））”””””"
+    },
+    {
+      "prompt": "Machine learning",
+      "mode": "greedy",
+      "seed": 42,
+      "text": "machinelearningooouusssstttttpppppvvvmm.....、"
+    }
+  ]
+}

@@ -44,9 +44,66 @@ def generate_text(model, vocab, prompt, max_length=30, temperature=0.8,
     return text.strip()
 
 
+# ---------------------------------------------------------------------------
+# H4：采样参数按分支缺省（接线前这些值散落在 4 个分支里硬编码，CLI 参数在其中
+# 3 个分支被静默忽略，导致基准/复现时生成参数不可控）。
+# 约定：argparse 侧用 SUPPRESS 表示"命令行未显式指定"，于是回落到本表的历史值 →
+# 不传参时每条分支的输出与接线前逐字一致。
+# ---------------------------------------------------------------------------
+_GEN_DEFAULTS = {
+    # 分支：max_length / temperature / top_k / repetition_penalty
+    'prompt':       {'max_length': 30, 'temperature': 0.8, 'top_k': 50, 'repetition_penalty': 1.4},
+    'prompt_igmcg': {'max_length': 30, 'temperature': 0.8, 'top_k': 50, 'repetition_penalty': 2.0},
+    'interactive':  {'max_length': 20, 'temperature': None, 'top_k': 50, 'repetition_penalty': 2.0},
+    'example':      {'max_length': 20, 'temperature': 0.8, 'top_k': 50, 'repetition_penalty': 2.0},
+}
+_MIN_LENGTH_DEFAULT = 3
+_EOS_PENALTY_DEFAULT = -5.0
+# interactive 历史行为：一条 prompt 跑两个温度（0.7 / 0.9）各出一段
+_INTERACTIVE_TEMPS = [0.7, 0.9]
+
+
+def _opt(args, name):
+    """取可选 CLI 参数：未传时 argparse 用 SUPPRESS 不建属性 → 返回 None。"""
+    return getattr(args, name, None)
+
+
+def _resolve_gen_args(args, branch):
+    """按分支解析采样参数（H4）。
+
+    未显式传参的项回落到 _GEN_DEFAULTS[branch] 的历史硬编码值，保证"不传参
+    输出逐字一致"；显式传了就用传入值。temperature 对 interactive 分支返回
+    None 表示"走双温度"，由 _interactive_temps() 决定。
+    """
+    d = _GEN_DEFAULTS[branch]
+    picked = {}
+    for key in ('max_length', 'temperature', 'top_k', 'repetition_penalty'):
+        v = _opt(args, key)
+        picked[key] = d[key] if v is None else v
+    picked['min_length'] = (_MIN_LENGTH_DEFAULT if _opt(args, 'min_length') is None
+                            else _opt(args, 'min_length'))
+    picked['eos_penalty'] = (_EOS_PENALTY_DEFAULT if _opt(args, 'eos_penalty') is None
+                             else _opt(args, 'eos_penalty'))
+    return picked
+
+
+def _interactive_temps(args):
+    """interactive 分支温度序列：不传 --temperature 保持历史双温度 [0.7, 0.9]，
+    传了才退化为单温度（用户拍板的 H4 修法）。"""
+    t = _opt(args, 'temperature')
+    return [t] if t is not None else list(_INTERACTIVE_TEMPS)
+
+
 def interactive_mode(model, vocab, device='cpu', ngram=None, ngram_weight=0.0,
-                      igmcg=False, intuition=None, candidates=5):
-    """Interactive text generation（可选 n-gram / IGMCG 联合解码）"""
+                     igmcg=False, intuition=None, candidates=5,
+                     temps=None, max_length=20, top_k=50,
+                     repetition_penalty=2.0, min_length=3, eos_penalty=-5.0):
+    """Interactive text generation（可选 n-gram / IGMCG 联合解码）
+
+    默认值即 H4 接线前的硬编码值（temps=[0.7,0.9]、max_length=20、top_k=50、
+    repetition_penalty=2.0、min_length=3、eos_penalty=-5.0）——不传参行为不变。"""
+    if temps is None:
+        temps = list(_INTERACTIVE_TEMPS)
     print("\n" + "="*50)
     print("Text Generation with AI Model")
     print("="*50)
@@ -66,25 +123,26 @@ def interactive_mode(model, vocab, device='cpu', ngram=None, ngram_weight=0.0,
         
         # Generate with different parameters
         print("\nGenerating...")
-        temp_values = [0.7, 0.9]
         
-        for temp in temp_values:
+        for temp in temps:
             if igmcg:
                 generated, cands = generate_igmcg(
-                    model, vocab, prompt, max_length=20, base_temp=temp,
-                    top_k=50, device=device, num_candidates=candidates,
+                    model, vocab, prompt, max_length=max_length, base_temp=temp,
+                    top_k=top_k, device=device, num_candidates=candidates,
                     intuition=intuition, ngram_fn=(ngram.logprob_vector if ngram else None),
                     ngram_weight=ngram_weight,
-                    min_length=3,
-                    eos_penalty=-5.0)
+                    repetition_penalty=repetition_penalty,
+                    min_length=min_length,
+                    eos_penalty=eos_penalty)
                 score = cands[0]['score'] if cands else 0.0
                 print(f"[IGMCG T={temp}]: {generated}  (score={score:.3f})\n")
             else:
-                generated = generate_text(model, vocab, prompt, max_length=20, 
-                                          temperature=temp, top_k=50, device=device,
+                generated = generate_text(model, vocab, prompt, max_length=max_length, 
+                                          temperature=temp, top_k=top_k, device=device,
                                           ngram=ngram, ngram_weight=ngram_weight,
-                                          min_length=3,
-                                          eos_penalty=-5.0)
+                                          repetition_penalty=repetition_penalty,
+                                          min_length=min_length,
+                                          eos_penalty=eos_penalty)
                 print(f"[Temperature {temp}]: {generated}\n")
         
         print("-"*50)
@@ -384,14 +442,20 @@ def main():
                         help='Text prompt for generation')
     parser.add_argument('--prompt-file', type=str, default=None,
                         help='Path to a UTF-8 file containing the prompt (avoids console GBK encoding issues with Chinese)')
-    parser.add_argument('--max-length', type=int, default=30,
-                        help='Maximum length of generated text')
-    parser.add_argument('--temperature', type=float, default=0.8,
-                        help='Sampling temperature (0.5-1.5; 0=greedy argmax)')
-    parser.add_argument('--top-k', type=int, default=50,
-                        help='Top-k sampling')
-    parser.add_argument('--repetition-penalty', type=float, default=1.4,
-                        help='重复惩罚值（>1 抑制重复，1.0=关闭）')
+    parser.add_argument('--max-length', type=int, default=argparse.SUPPRESS,
+                        help='生成 token 上限。缺省按分支：prompt=30，interactive/示例=20')
+    parser.add_argument('--temperature', type=float, default=argparse.SUPPRESS,
+                        help='采样温度（0=greedy argmax）。缺省 prompt/示例=0.8；'
+                             'interactive 不传时保持双温度 0.7/0.9，传了才用单温度')
+    parser.add_argument('--top-k', type=int, default=argparse.SUPPRESS,
+                        help='Top-k 采样。缺省=50（4 个分支一致）')
+    parser.add_argument('--repetition-penalty', type=float, default=argparse.SUPPRESS,
+                        help='重复惩罚（>1 抑制重复，1.0=关闭）。缺省 prompt=1.4，'
+                             'igmcg/interactive/示例=2.0（H4 接线前各分支实际生效值）')
+    parser.add_argument('--min-length', type=int, default=argparse.SUPPRESS,
+                        help='最短生成长度（低于此不判 EOS）。缺省=3（H4 接线前硬编码值）')
+    parser.add_argument('--eos-penalty', type=float, default=argparse.SUPPRESS,
+                        help='EOS 惩罚（负值抑制提前结束）。缺省=-5.0（H4 接线前硬编码值）')
     parser.add_argument('--device', type=str, default='auto',
                         help='Device to use: auto (detect) / cuda / cpu / dml')
     parser.add_argument('--cpu-threads', type=int, default=4,
@@ -492,19 +556,27 @@ def main():
     intuition = [float(x) for x in args.intuition.split(',')]
     assert len(intuition) == 7, "直觉向量需 7 维"
 
+    # H4：按分支解析采样参数（未显式传参 → 该分支历史硬编码值，输出逐字一致）
     if args.interactive:
+        _g = _resolve_gen_args(args, 'interactive')
         interactive_mode(model, vocab, device, ngram=ngram, ngram_weight=args.ngram_weight,
-                         igmcg=use_igmcg, intuition=intuition, candidates=args.igmcg_candidates)
+                         igmcg=use_igmcg, intuition=intuition, candidates=args.igmcg_candidates,
+                         temps=_interactive_temps(args),
+                         max_length=_g['max_length'], top_k=_g['top_k'],
+                         repetition_penalty=_g['repetition_penalty'],
+                         min_length=_g['min_length'], eos_penalty=_g['eos_penalty'])
     elif prompt:
         if use_igmcg:
+            _g = _resolve_gen_args(args, 'prompt_igmcg')
             generated, cands = generate_igmcg(
-                model, vocab, prompt, max_length=args.max_length,
-                base_temp=args.temperature, top_k=args.top_k, device=device,
+                model, vocab, prompt, max_length=_g['max_length'],
+                base_temp=_g['temperature'], top_k=_g['top_k'], device=device,
                 num_candidates=args.igmcg_candidates, intuition=intuition,
                 ngram_fn=(ngram.logprob_vector if ngram else None),
                 ngram_weight=args.ngram_weight,
-                min_length=3,
-                eos_penalty=-5.0,
+                repetition_penalty=_g['repetition_penalty'],
+                min_length=_g['min_length'],
+                eos_penalty=_g['eos_penalty'],
                 coh_w=args.igmcg_coh_w,
                 flu_w=args.igmcg_flu_w,
                 style_w=args.igmcg_style_w,
@@ -513,15 +585,16 @@ def main():
             gen_info = (f"\n  [IGMCG候选={len(cands)}, 最优分={best['score']:.3f}, 重复度={best['rep']:.3f}]"
                         if best else "")
         else:
+            _g = _resolve_gen_args(args, 'prompt')
             generated = generate_text(model, vocab, prompt,
-                                       max_length=args.max_length,
-                                       temperature=args.temperature,
-                                       top_k=args.top_k,
+                                       max_length=_g['max_length'],
+                                       temperature=_g['temperature'],
+                                       top_k=_g['top_k'],
                                        device=device,
                                        ngram=ngram, ngram_weight=args.ngram_weight,
-                                       min_length=3,
-                                       eos_penalty=-5.0,
-                                       repetition_penalty=args.repetition_penalty)
+                                       min_length=_g['min_length'],
+                                       eos_penalty=_g['eos_penalty'],
+                                       repetition_penalty=_g['repetition_penalty'])
             gen_info = ""
         # 同时写 UTF-8 结果文件，方便中文查看（控制台可能是 GBK）
         out_path = os.path.join('logs', 'generation_output.txt')
@@ -539,16 +612,18 @@ def main():
             "I love",
             "Machine learning"
         ]
+        _g = _resolve_gen_args(args, 'example')
         print("\nGenerating text for example prompts:\n")
         for prompt in examples:
             generated = generate_text(model, vocab, prompt, 
-                                      max_length=20,
-                                      temperature=0.8,
-                                      top_k=50,
+                                      max_length=_g['max_length'],
+                                      temperature=_g['temperature'],
+                                      top_k=_g['top_k'],
                                       device=device,
                                       ngram=ngram, ngram_weight=args.ngram_weight,
-                                      min_length=3,
-                                      eos_penalty=-5.0)
+                                      min_length=_g['min_length'],
+                                      eos_penalty=_g['eos_penalty'],
+                                      repetition_penalty=_g['repetition_penalty'])
             print(f"Prompt: {prompt}")
             print(f"Generated: {generated}\n")
 

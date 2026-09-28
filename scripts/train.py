@@ -388,15 +388,27 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
 
 
 def validate(model, dataloader, criterion, device, controller_active=True):
-    """Validate model"""
+    """Validate model
+
+    返回 (val_loss, val_loss_tok) 两个口径：
+      val_loss      —— 旧口径（历史曲线用）：先算每 batch 的 per-token 平均 CE，
+                       再把各 batch 等权平均。batch 间有效 token 数不等（变长 pad、
+                       末尾短批）时，短批被过度代表，得到的不是全数据集逐 token 均值。
+      val_loss_tok  —— M11 新口径：loss * 本批有效 token 数累加 / 总有效 token 数，
+                       即真正的全数据集逐 token 加权均值；best/early-stop 用它。
+    两口径同时返回并各自记录，历史曲线仍可与旧日志逐点对比。
+    """
     model.eval()
     model.set_enhancements_active(True)  # 验证用增强开启模式，反映训练所得"开"行为
     # R42: Controller warmup 期验证也关 Controller（与训练态一致，省前向开销）
     if not controller_active and model.controller_enabled:
         model._rt_controller = False
     # GPU 累加 loss，仅在末尾 .item() 同步一次（避免每 batch 的 DML→CPU 同步税）
-    loss_sum = torch.zeros(1, device=device)
+    loss_sum = torch.zeros(1, device=device)     # 旧口径分子
     loss_count = 0
+    tok_sum = torch.zeros(1, device=device)      # M11 新口径分子
+    tok_count = 0
+    _ignore_index = getattr(criterion, 'ignore_index', None)
 
     with torch.no_grad():
         for batch in dataloader:
@@ -415,7 +427,18 @@ def validate(model, dataloader, criterion, device, controller_active=True):
             loss_sum = loss_sum + loss.detach()
             loss_count += 1
 
-    return (loss_sum / max(1, loss_count)).item()
+            # M11: 有效 token 数（criterion 忽略的 pad 不计入权重）
+            if _ignore_index is None:
+                n_valid = int(target_ids.numel())
+            else:
+                n_valid = int((target_ids != _ignore_index).sum().item())
+            if n_valid > 0:
+                tok_sum = tok_sum + loss.detach() * n_valid
+                tok_count += n_valid
+
+    legacy = (loss_sum / max(1, loss_count)).item()
+    weighted = (tok_sum / max(1, tok_count)).item()
+    return legacy, weighted
 
 
 def controller_warmup_active(epoch, total_epochs, warmup_frac):
@@ -817,17 +840,19 @@ def main(config_path='configs/pretrain.yaml', resume=False):
         history['train_loss'].append(train_loss)
 
         # Validation
-        val_loss = None
+        val_loss = None          # 旧口径：batch 等权平均，仅记录（历史曲线可比）
+        val_loss_tok = None      # M11：全数据集逐 token 加权，best/early-stop 用
         if val_dataloader is not None:
-            val_loss = validate(model, val_dataloader, criterion, device,
-                                controller_active=_ctrl_active)
-            print(f"\nEpoch {epoch}/{config['training']['epochs']} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
+            val_loss, val_loss_tok = validate(model, val_dataloader, criterion, device,
+                                              controller_active=_ctrl_active)
+            print(f"\nEpoch {epoch}/{config['training']['epochs']} | Train Loss: {train_loss:.4f} "
+                  f"| Val Loss: {val_loss:.4f} | Val(token加权): {val_loss_tok:.4f}")
         else:
             print(f"\nEpoch {epoch}/{config['training']['epochs']} | Train Loss: {train_loss:.4f}")
         print(f"Learning rate: {optimizer.param_groups[0]['lr']:.6f}")
         
-        # Use val loss for best/early stopping if available, otherwise train loss
-        epoch_loss = val_loss if val_loss is not None else train_loss
+        # M11: best/early-stop 依据改为逐 token 加权 val loss（旧口径 val_loss 只入 history）
+        epoch_loss = val_loss_tok if val_loss_tok is not None else train_loss
         if epoch_loss < best_loss:
             best_loss = epoch_loss
             history['best_epoch'] = epoch

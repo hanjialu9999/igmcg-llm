@@ -73,3 +73,6 @@ Thumbs.db
 
 # Local-only docs (never commit)
 CHANGELOG.md
+
+# 基准/剖析的原始 console 输出与被取代的 pilot 结果（2026-09-28 挪入，正式 JSON 仍提交）
+baselines/_archive/
