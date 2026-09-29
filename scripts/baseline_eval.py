@@ -46,6 +46,10 @@ DEFAULT_PROMPTS = [
     'The weather is',
     'I love',
     'Machine learning',
+    # 追加（2026-09-28）：前 6 条全是"续写"起头，缺最基础的"自我介绍"句式，
+    # 字符级模型在此处最容易露馅（称呼 + 冒号 + 名字的固定搭配）。追加在末尾，
+    # 保持前 6 条索引不变，与既有 baselines/r42_baseline*.json 可逐条对齐。
+    '我叫',
 ]
 # 生成参数写死在 JSON 里（与 H4 的 prompt 分支缺省一致），避免"基准没记参数"这种低级返工
 GEN_PARAMS = {

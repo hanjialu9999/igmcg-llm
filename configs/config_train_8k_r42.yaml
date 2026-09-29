@@ -72,6 +72,9 @@ training:
   lr_schedule: "wsd"
   wsd_decay_frac: 0.1
   compile: false
+  # 两个小提速开关（2026-09-29，默认关 = 保持既有数值路径）
+  use_foreach_norm_clip: false   # 梯度总范数改 torch._foreach_norm（实测 7.15→2.17 ms/步）
+  use_foreach_optimizer: false   # AdamW 显式 foreach=True（DML 默认已探测到；单张量路径慢 28%）
   # R42: 三阶段训练——前 30% epoch 关 Controller（Generator warmup），之后开启
   controller_warmup_frac: 0.3
 

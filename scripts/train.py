@@ -120,7 +120,7 @@ def compute_lr(eff_step, total_eff, warmup_target, base_lr, eta_min, lr_schedule
     return base_lr
 
 
-def clip_grad_norm_dml(params, max_norm):
+def clip_grad_norm_dml(params, max_norm, foreach_norm=False):
     """GPU 侧梯度裁剪（R38）：全程在设备上计算，无 .item() CPU 同步。
 
     torch.nn.utils.clip_grad_norm_ 内部 total_norm.item() 每优化步同步一次
@@ -131,19 +131,28 @@ def clip_grad_norm_dml(params, max_norm):
 
     注：原实现在此写 `if clip_coef < 1.0`——bool(0-dim tensor) 触发隐式 .item()
     同步，恰好抵消本函数存在的意义；改用 torch.where 在设备侧选 scale，消除该同步。
+
+    foreach_norm=True（config 开关 training.use_foreach_norm_clip，默认关）：
+    总范数改用 torch._foreach_norm 一次算完 87 个梯度的 L2，再堆叠归约，
+    省掉逐梯度 pow(2).sum() 的 Python 循环（87×3 次 dispatch → 4 次）。
+    实测 7.15ms → 2.17ms（省 ~5ms/步）；fp32 累加顺序不同，范数相对差 ~2e-7。
     """
     grads = [p.grad for p in params if p.grad is not None]
     if not grads:
         return None
-    total_sq = torch.zeros((), device=grads[0].device, dtype=grads[0].dtype)
-    for g in grads:
-        total_sq = total_sq + g.pow(2).sum()
-    total_norm = total_sq.sqrt()
+    if foreach_norm:
+        total_norm = torch.stack(torch._foreach_norm(grads)).pow(2).sum().sqrt()
+    else:
+        total_sq = torch.zeros((), device=grads[0].device, dtype=grads[0].dtype)
+        for g in grads:
+            total_sq = total_sq + g.pow(2).sum()
+        total_norm = total_sq.sqrt()
     clip_coef = max_norm / (total_norm + 1e-6)
     # clip_coef >= 1.0（含 NaN）→ scale=1.0 不缩放；<1.0 → 用 clip_coef 缩放
     scale = torch.where(clip_coef < 1.0, clip_coef, torch.ones_like(clip_coef))
     torch._foreach_mul_(grads, scale)
     return total_norm
+
 
 
 def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
@@ -157,7 +166,7 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
                  igmcg_sel_prob=0.0,
                  skip_batches=0, checkpoint_dir=None, checkpoint_percents=(),
                  checkpoint_meta=None, initial_eff_step=0,
-                 controller_active=True):
+                 controller_active=True, use_foreach_norm_clip=False):
     """Train one epoch with warmup, gradient accumulation and mixed precision.
 
     - warmup_steps: 预热步数。若 <1 则按"占整个 epoch 有效步数的比例"解释（如 0.1=前 10% 步预热）。
@@ -171,6 +180,8 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
       resume 后 warmup/wsd LR 调度从头爬升，与"不中断训练"不等价）。
     - controller_active: R42 Controller 三阶段训练——False 时本 epoch 强制关闭 Controller
       （_rt_controller=False，跳过 Controller 前向省算力），用于 Generator warmup 阶段。
+    - use_foreach_norm_clip: 梯度总范数改用 torch._foreach_norm（config
+      training.use_foreach_norm_clip，默认关），省 ~5ms/步的 Python 循环。
     """
     model.train()
     loss_sum = 0.0  # 初始 float，首次 += loss.detach() 后自动提升为 GPU 张量，仅打印时 .item() 同步
@@ -208,11 +219,13 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
             param_group['lr'] = lr
         if scaler is not None:
             scaler.unscale_(optimizer)
-            clip_grad_norm_dml(model.parameters(), max_norm=gradient_clip)
+            clip_grad_norm_dml(model.parameters(), max_norm=gradient_clip,
+                               foreach_norm=use_foreach_norm_clip)
             scaler.step(optimizer)
             scaler.update()
         else:
-            clip_grad_norm_dml(model.parameters(), max_norm=gradient_clip)
+            clip_grad_norm_dml(model.parameters(), max_norm=gradient_clip,
+                               foreach_norm=use_foreach_norm_clip)
             optimizer.step()
         optimizer.zero_grad(set_to_none=True)
         accumulated = 0
@@ -583,6 +596,12 @@ def main(config_path='configs/pretrain.yaml', resume=False):
     )
     # 优化器工厂：支持 DML 友好的 SGD（避免 AdamW 的 CPU lerp 回退税）
     # 配置键：training.optimizer ∈ {adamw(默认), sgd, adam}；sgd 另读 training.momentum(默认0.9)
+    def _foreach_flag(cfg):
+        """config 开关 training.use_foreach_optimizer（默认关）：
+        True → 显式传 foreach=True 钉死多张量快路径；False → None（torch 默认自动探测）。
+        DML 实测自动探测已选 foreach（62.0ms/步），单张量路径 86.2ms/步（慢 28%）。"""
+        return True if bool(cfg['training'].get('use_foreach_optimizer', False)) else None
+
     opt_name = str(config['training'].get('optimizer', 'adamw')).lower()
     # DML 兼容：AdamW/Adam 内部用 torch._foreach_lerp_ 更新 exp_avg，
     # aten::lerp.Scalar_out 不支持 DML，每步回退 CPU + DML↔CPU 数据搬运（严重性能杀手，
@@ -628,6 +647,7 @@ def main(config_path='configs/pretrain.yaml', resume=False):
             weight_decay=config['training']['weight_decay'],
             betas=(0.9, 0.999),
             eps=1e-8,
+            foreach=_foreach_flag(config),
         )
         print(f"Optimizer: Adam(lr={config['training']['learning_rate']})")
     else:
@@ -637,8 +657,10 @@ def main(config_path='configs/pretrain.yaml', resume=False):
             weight_decay=config['training']['weight_decay'],
             betas=(0.9, 0.999),
             eps=1e-8,
+            foreach=_foreach_flag(config),
         )
-        print(f"Optimizer: AdamW(lr={config['training']['learning_rate']})")
+        print(f"Optimizer: AdamW(lr={config['training']['learning_rate']})  "
+              f"[foreach={'True' if _foreach_flag(config) else '默认(None)'}]")
 
     # 调度基准 lr 须与优化器实际初始 lr 一致：SGD 用 sgd_learning_rate，否则用 learning_rate
     opt_base_lr = (float(config['training'].get('sgd_learning_rate', config['training']['learning_rate']))
@@ -832,6 +854,7 @@ def main(config_path='configs/pretrain.yaml', resume=False):
             # R38: resume 后 LR 调度从已完成的累计步继续（此前 warmup/衰减从头爬升）
             initial_eff_step=resume_skip_batches // grad_accum_steps if epoch == start_epoch else 0,
             controller_active=_ctrl_active,
+            use_foreach_norm_clip=bool(config['training'].get('use_foreach_norm_clip', False)),
         )
         global_step += (total_batches - resume_skip_batches) if epoch == start_epoch else total_batches
         # R39 修复：resume 轮实际只训了 (total_batches - skip_batches) 批却记满
