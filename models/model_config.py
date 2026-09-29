@@ -192,6 +192,10 @@ class ModelConfig:
     char_merge: bool = False
     char_merge_kernel: int = 3
     char_merge_dropout: float = 0.0
+    # 第二处训推不一致的修复开关：开启 CharMergeLayer 跨步滚动缓冲，
+    # 逐 token 用最近 pad 个真实输入替代 F.pad 零填充。默认关 = 旧码逐位一致
+    # （r42 config 不动）。只改读取路径，**不需要重训**。
+    char_merge_incremental_buffer: bool = False
 
     # 共享
     share_attn_proj: bool = False
@@ -395,6 +399,7 @@ class ModelConfig:
             char_merge=mc.get('char_merge', False),
             char_merge_kernel=mc.get('char_merge_kernel', 3),
             char_merge_dropout=mc.get('char_merge_dropout', 0.0),
+            char_merge_incremental_buffer=bool(mc.get('char_merge_incremental_buffer', False)),
             share_attn_proj=mc.get('share_attn_proj', False),
             share_ffn=mc.get('share_ffn', False),
             share_norm=mc.get('share_norm', False),

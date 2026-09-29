@@ -637,6 +637,7 @@ class TransformerModel(nn.Module):
                     hybrid_single_gate: bool = False,
                     char_merge: bool = False, char_merge_kernel: int = 3,
                     char_merge_dropout: float = 0.0,
+                    char_merge_incremental_buffer: bool = False,
                     memory_size: int = 0, memory_comp_dim: int = 32,
                     memory_retrieval: bool = False, memory_sparse_topk: int = 0,
                     memory_forget: bool = False, memory_product_key: bool = False,
@@ -773,7 +774,8 @@ class TransformerModel(nn.Module):
         if char_merge:
             self.char_merge = CharMergeLayer(
                 embedding_dim, kernel_size=char_merge_kernel,
-                dropout=char_merge_dropout)
+                dropout=char_merge_dropout,
+                incremental_buffer=char_merge_incremental_buffer)
         ssm_kwargs = dict(
             d_state=ssm_d_state,
             d_inner_factor=ssm_d_inner_factor,
@@ -1109,6 +1111,7 @@ class TransformerModel(nn.Module):
             char_merge=cfg.char_merge,
             char_merge_kernel=cfg.char_merge_kernel,
             char_merge_dropout=cfg.char_merge_dropout,
+            char_merge_incremental_buffer=cfg.char_merge_incremental_buffer,
             memory_size=cfg.memory.size,
             memory_comp_dim=cfg.memory.comp_dim,
             memory_retrieval=cfg.memory.retrieval,
@@ -1477,9 +1480,6 @@ class TransformerModel(nn.Module):
         # 早退（推理 eval+use_cache=False）不需要 targets，仅检查置信度阈值。
         x = self.embedding(src) * math.sqrt(self.embedding_dim)
         x = self.drop(x)
-        # 学习型分词：字符级序列融合为词表示（门控卷积，受 LM loss 监督）
-        if self.char_merge_enabled:
-            x = self.char_merge(x)
         if past_key_values is None:
             past_key_values = [None] * len(self.blocks)
         # 将旧元组包装为 BlockState（向后兼容：from_tuple 处理 None 和旧格式）
@@ -1535,6 +1535,17 @@ class TransformerModel(nn.Module):
             # reset_ngram_state() 直接调 forward(use_cache=True) 的代码，新序列首步
             # 会把上一序列的 token 尾巴喂进 logprob_orders_incremental（跨序列串扰）。
             self.reset_ngram_state()
+        # 学习型分词：字符级序列融合为词表示（门控卷积，受 LM loss 监督）。
+        # 位置刻意放在上面 is_fresh 块**之后**：CharMerge 开启增量滚动缓冲时持有
+        # 跨步状态，必须先由 reset_ngram_state() 清空（新序列起点），再吃本步输入。
+        # 若像旧码那样排在 embedding 之后立刻调用，is_fresh 里那次复位会把刚积累
+        # 的前 pad 个历史抹掉 → 第 1、2 个 token 的卷积窗口退回 [0,0,x_t]
+        # （实测 logits max diff ≈ 4e-2，且只在前 pad 步出现，kernel=3 → pad=2）。
+        # 关掉缓冲时该层无状态，此调用前后移对结果**逐位无影响**。
+        # 前后两处之间只有 memory.reset / attn 缓存清理 / reset_ngram_state()，
+        # 三者都只读 x 的 shape、dtype、device，不改 x 的值，故等价。
+        if self.char_merge_enabled:
+            x = self.char_merge(x)
         # R42: Controller/Generator 双模型——跑 Controller 产出控制信号条件化 Generator。
         # _rt_controller=False 时跳过（SEL 交替训练恒等），信号全 None。
         # Controller 共享 Generator embedding，自己跑 token_ids → 控制信号。
@@ -1750,6 +1761,10 @@ class TransformerModel(nn.Module):
         self._ngram_last_ids = None
         # R42: Controller past_kv 跨序列重置（与 n-gram 滚动缓冲同生命周期）
         self._controller_past = None
+        # 第四批: CharMerge 增量滚动缓冲同生命周期复位——新一次生成开头（generate()
+        # 开头的这行调用）与 n-gram/Controller 状态一起丢掉上一序列尾巴。
+        if self.char_merge_enabled:
+            self.char_merge.reset_buffer()
 
     def _apply_ngram_fusion(
         self, x: torch.Tensor, src: torch.Tensor,
