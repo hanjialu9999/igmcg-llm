@@ -205,11 +205,12 @@ def setup(config, device, controller_on):
         torch.Tensor.lerp_ = lambda self, end, weight: self.mul_(1 - weight).add_(end * weight)
 
     criterion = nn.CrossEntropyLoss(ignore_index=vocab.pad_idx)
-    _fe = True if bool(config['training'].get('use_foreach_optimizer', False)) else None
+    # 优化器不传 foreach：torch 默认 foreach=None = 自动探测，DML 已选中快路径
+    # （2026-09-29 撤掉 use_foreach_optimizer 开关，取证见 scripts/train.py 注释）
     optimizer = torch.optim.AdamW(model.parameters(),
                                   lr=config['training']['learning_rate'],
                                   weight_decay=config['training']['weight_decay'],
-                                  betas=(0.9, 0.999), eps=1e-8, foreach=_fe)
+                                  betas=(0.9, 0.999), eps=1e-8)
     return device, model, loader, criterion, optimizer, vocab
 
 
@@ -326,15 +327,11 @@ def main():
     ap.add_argument('--out', default='baselines/r42_profile_50steps.json')
     ap.add_argument('--foreach-clip', choices=['on', 'off'], default=None,
                     help='覆盖 config training.use_foreach_norm_clip（梯度总范数走 _foreach_norm）')
-    ap.add_argument('--foreach-opt', choices=['on', 'off'], default=None,
-                    help='覆盖 config training.use_foreach_optimizer（AdamW 显式 foreach=True）')
     args = ap.parse_args()
 
     config = load_config(args.config)
     if args.foreach_clip is not None:
         config['training']['use_foreach_norm_clip'] = (args.foreach_clip == 'on')
-    if args.foreach_opt is not None:
-        config['training']['use_foreach_optimizer'] = (args.foreach_opt == 'on')
     device, model, loader, criterion, optimizer, vocab = setup(
         config, args.device, args.controller == 'on')
     n_params = sum(p.numel() for p in model.parameters())
@@ -373,7 +370,6 @@ def main():
         'config': args.config, 'device': str(device), 'n_params': n_params,
         'steps': args.steps, 'controller': args.controller,
         'use_foreach_norm_clip': bool(config['training'].get('use_foreach_norm_clip', False)),
-        'use_foreach_optimizer': bool(config['training'].get('use_foreach_optimizer', False)),
         'batch_size': config['training']['batch_size'],
         'max_seq_length': config['data']['max_seq_length'],
         'tok_per_step': tok_per_step,

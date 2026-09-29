@@ -596,11 +596,9 @@ def main(config_path='configs/pretrain.yaml', resume=False):
     )
     # 优化器工厂：支持 DML 友好的 SGD（避免 AdamW 的 CPU lerp 回退税）
     # 配置键：training.optimizer ∈ {adamw(默认), sgd, adam}；sgd 另读 training.momentum(默认0.9)
-    def _foreach_flag(cfg):
-        """config 开关 training.use_foreach_optimizer（默认关）：
-        True → 显式传 foreach=True 钉死多张量快路径；False → None（torch 默认自动探测）。
-        DML 实测自动探测已选 foreach（62.0ms/步），单张量路径 86.2ms/步（慢 28%）。"""
-        return True if bool(cfg['training'].get('use_foreach_optimizer', False)) else None
+    # （2026-09-29 撤掉 use_foreach_optimizer 开关：torch.optim.AdamW/Adam 的 foreach 默认值
+    #  就是 None，DML 自动探测已选 foreach 快路径，显式 False 反而慢 40%——开关只有坏处没有好处。
+    #  实测取证见第四轮汇报：defaults/param_groups 全等 + 同梯度 10 步权重逐位相等。）
 
     opt_name = str(config['training'].get('optimizer', 'adamw')).lower()
     # DML 兼容：AdamW/Adam 内部用 torch._foreach_lerp_ 更新 exp_avg，
@@ -647,7 +645,6 @@ def main(config_path='configs/pretrain.yaml', resume=False):
             weight_decay=config['training']['weight_decay'],
             betas=(0.9, 0.999),
             eps=1e-8,
-            foreach=_foreach_flag(config),
         )
         print(f"Optimizer: Adam(lr={config['training']['learning_rate']})")
     else:
@@ -657,10 +654,8 @@ def main(config_path='configs/pretrain.yaml', resume=False):
             weight_decay=config['training']['weight_decay'],
             betas=(0.9, 0.999),
             eps=1e-8,
-            foreach=_foreach_flag(config),
         )
-        print(f"Optimizer: AdamW(lr={config['training']['learning_rate']})  "
-              f"[foreach={'True' if _foreach_flag(config) else '默认(None)'}]")
+        print(f"Optimizer: AdamW(lr={config['training']['learning_rate']})")
 
     # 调度基准 lr 须与优化器实际初始 lr 一致：SGD 用 sgd_learning_rate，否则用 learning_rate
     opt_base_lr = (float(config['training'].get('sgd_learning_rate', config['training']['learning_rate']))
