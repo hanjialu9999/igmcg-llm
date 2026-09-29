@@ -64,7 +64,7 @@
         │
         ▼
   embedding (B,T,256) ×√256 → dropout                 transformer.py:1478-1480
-  → CharMergeLayer (B,T,256)                          transformer.py:1481-1482 / layers.py:36-56
+  → CharMergeLayer (B,T,256)                          transformer.py:1548 / layers.py:36-56
         │
         ├─► Controller 分支（r42 on, transformer.py:1545-1555）
         │     共享同一 embedding (B,T,256)             transformer.py:1027 / controller.py:104
@@ -106,7 +106,7 @@ prompt ids → prefill forward(past=None, use_cache=True)        transformer.py:
 | ⚠DIFF | 与训练路径的差异 | 文件:行 |
 |---|---|---|
 | ⚠DIFF-1 长度 | 训练整段 T=64；推理每步 **T=1**（首步 T=prompt 长） | `train.py:248` vs `sampling.py:106` |
-| ⚠DIFF-2 **char_merge** | **已知第二处训推不一致**：`F.pad(x_t,(self.pad,0))` 在 T=1 时只左补 2 个零，窗口退化为 `[0,0,x_t]`，**模块内没有任何跨步滚动状态** | `layers.py:41-42`、根因 `layers.py:22-34` |
+| ⚠DIFF-2 **char_merge** | **第二处训推不一致（第四轮已修，开关默认关）**：`F.pad(x_t,(self.pad,0))` 在 T=1 时只左补 2 个零，窗口退化为 `[0,0,x_t]`，模块内无跨步滚动状态。修法：`char_merge.incremental_buffer=true` 时每步结果 `cat` 进 `_cm_buffer`，再按 kernel 长度切回窗口（等价于把窗口在时间轴上滚动），并把调用点**移到 `is_fresh` 复位块之后**，保证新序列先 `reset_buffer()` | `layers.py:41-42`、根因 `layers.py:22-34`；修 `layers.py` + `transformer.py:1548` |
 | ⚠DIFF-3 **direction** | **H1**：训练 `x.mean(dim=1)` 覆盖整段；推理第 2 步起 T=1，均值只剩当前 token → 语义断裂 | `controller.py:240-241` |
 | ⚠DIFF-4 Controller 缓存 | `_controller_past`（k/v/S/z）跨步保留，内部强制 `use_cache=True`；`is_fresh` 时 `reset_ngram_state()` 清 | `transformer.py:1546-1549`、`controller.py:207-208`、`:1745-1752` |
 | ⚠DIFF-5 记忆列 | r42 MemoryBank 关（`memory_size` 未配→0），但 `mem_cols=4` 来自 Controller `mem_slots`，**恒不施加因果遮蔽** | `transformer.py:338,342-349`、`mixers.py:831-832` |
@@ -115,6 +115,8 @@ prompt ids → prefill forward(past=None, use_cache=True)        transformer.py:
 | ⚠DIFF-8 VRC | 增量 `v += λ·cached_last`；全量用 conv1d 递推，cache 存编码后 V 保 parity | `mixers.py:617-661` |
 | ⚠DIFF-9 首步复位 | `is_fresh` 清 `_bias_key/_cached_T/_alibi_dist_cache/_cached_x0_proj` + `reset_ngram_state()` | `transformer.py:1513,1524-1537` |
 | ⚠DIFF-10 early-exit | early-exit 仅 `not use_cache` 生效；剪枝 `continue` 仅 eval | `transformer.py:1623,1719-1728` |
+
+> **⚠ 测量口径（第四轮实测）**：三口径 ppl **只在 CPU 上可比**。同一份 r42 checkpoint 在 DirectML 上 `tf`/`prefix` 与 CPU 系统性不同（direction off / 24 序列：CPU `tf=prefix=6.7058`，DML `tf=6.4490`、`prefix=6.4954`），而 **`incremental` 两端逐位一致**（cmb off `6.7103`、cmb on `6.7058`）。已 `git worktree` checkout `3f9c5ef`（第四轮改动之前的 `models/`+`scripts/`）在 DML 复跑 24 序列 direction off，得**逐位相同**的 `6.4490/6.4954/6.7103` → 确证 DML 的 `tf≠prefix`（T>1 整段前向泄漏）**先于第四轮改动存在**，与本修复无关（**OUT_OF_SCOPE**，另记）。故凡报 ppl 一律取 CPU；DML 只用于计时与生成。
 
 ---
 
@@ -126,7 +128,7 @@ prompt ids → prefill forward(past=None, use_cache=True)        transformer.py:
 | 模块 | 文件:行 | 设计意图 | 输入→输出 | 参数量（占比） | 状态/缓存（存什么·何时清） | config 开关 = r42 | 三口径贡献 | 已知问题 |
 |---|---|---|---|---|---|---|---|---|
 | **Embedding** | `transformer.py:769`（×√d `:1478`） | 字符→向量 | (B,T)→(B,T,256) | 3,072,000（45.47%） | 无 | `vocab_size=12000`、`embedding_dim=256` | 未单独测 | 死参数见 §8 |
-| **CharMergeLayer** | `layers.py:9-56`（根因 `:41-42`） | 深度可分离**因果**卷积取邻域 + sigmoid 门控插值，替代静态 BPE；开销≈注意力 1~2%（文档声明，无实测） | (B,T,D)→(B,T,D) | 66,816（0.99%） | **无跨步滚动状态**（`:22-34` 只建 conv/gate/norm/drop） | `char_merge=true`、`kernel=3`、`dropout=0.0`（yaml:30-32） | `prefix−incremental` 原样 **−0.5343** → 关 char_merge 后 **−0.0001**（≈0.53 nats 全由它贡献） | **§11.8 任务 A**（无 H 编号）；**未修** |
+| **CharMergeLayer** | `layers.py:9-64`（根因 `:41-42`） | 深度可分离**因果**卷积取邻域 + sigmoid 门控插值，替代静态 BPE；开销≈注意力 1~2%（文档声明，无实测） | (B,T,D)→(B,T,D) | 66,816（0.99%） | 默认无跨步滚动状态（`:22-34` 只建 conv/gate/norm/drop）；开 `incremental_buffer` 时新增 `_cm_buffer` + `reset_buffer()`（`:15,60-64`） | `char_merge=true`、`kernel=3`、`dropout=0.0`（yaml:30-32）；`char_merge_incremental_buffer` 代码默认 **false** | `prefix−incremental` 原样 **−0.5343** → 关 char_merge 后 **−0.0001**；**开缓冲后 CPU 24 序列 `6.7058`、800 序列 `6.877422` 与 tf/prefix 完全相等（gap = 0.000000）** | **§11.8 任务 A → 已修**（开关默认关，需显式开启） |
 | **注意力 QKV/投影** | `mixers.py:268-269,540-542,810` | 因果自注意力 | (B,T,256)→(B,T,256) | 3 层级 qkv 196,608 + proj 65,536 / 层 | KV cache（增量） | `mixer='attn'`、`share_attn_proj=false` | — | — |
 | **QK-Norm + 温度** | `mixers.py:338-349` | 训练稳定 | 标量/head 维 | qk_norm 32 + log_temp 8 / 层 | 无 | `qk_norm=true`、`attn_temp=true`、`head_temp=true`（head_temp 依赖 attn_temp，**无校验**） | — | E3-9 |
 | **RoPE + 层内拆半** | `rope.py:32,54`、`mixers.py:557-568` | 旋转位置；前半头 RoPE、后半 NoPE | rot_dim 16/32 | 0 | 缓存 `_cached_T`，`is_fresh` 清 | `rope_dim_fraction=0.5`、`yarn_scale=2.0`、`rope_max_len=4096`、`intra_hybrid_rope=true/ratio=0.5` | — | `yarn_orig_max_seq_length=0` 实际 `or 2048`（E3-3） |
@@ -356,7 +358,7 @@ prompt ids → prefill forward(past=None, use_cache=True)        transformer.py:
 | tf 口径会掉 | 4.6673 → 5.2951（**0.62 nats 是作弊分**） |
 | incremental 口径关掉反而**少** 4.68 nats 退化 | 10.4623 → 5.7829 |
 | 条件化由 mem_kv + FiLM 继续承担 | 两者因果合计 **1.46 nats** |
-| 剩下的 0.53 nats 增量差归 char_merge | 须单独修（§11.8 A） |
+| 剩下的 0.53 nats 增量差归 char_merge | **已修**（`char_merge_incremental_buffer`）：G1 `gap +0.529219` → G2 `+0.000052`；ctrl=off 口径 24 序列 `−0.0045 → 0`、800 序列 `−0.002340 → 0.000000`（§11.8 A → §11.10） |
 
 **推测**：泄漏与真实增益耦合，现有证据无法区分 direction 那 0.62 里有多少是真本事。
 
@@ -420,7 +422,7 @@ prompt ids → prefill forward(past=None, use_cache=True)        transformer.py:
 | `gradient_checkpointing` | true | **false** ⚠ | 反向重算 | `transformer.py:1042`，与 `grad_ckpt_auto` 联动 |
 | `layer_plan` | None（全 attn） | `"attn,attn,attn,attn"` ⚠等价 | 每层 block 类型 | 与 mixer 组合警告 `config_loader.py:62-72` |
 | `rope_max_len` | None→64 | **4096** ⚠ | 位置编码容量 | 回退 `model_config.py:275-276` |
-| `char_merge` | false | **true** ⚠ | CharMergeLayer | 无（根因 `layers.py:41-42` 未修） |
+| `char_merge` | false | **true** ⚠ | CharMergeLayer | 已修：需配 `char_merge_incremental_buffer=true`（r42 **未配**） |
 | `tie_weights` | true | true | head/embedding 共享 | — |
 | `fuse_swiglu` | false | **true** ⚠ | SwiGLU w13 合并 | — |
 | `yarn_scale` | 1.0 | **2.0** ⚠ | YaRN 外推倍数 | `rope.py:62` |
@@ -443,7 +445,7 @@ prompt ids → prefill forward(past=None, use_cache=True)        transformer.py:
 | `ngram_fusion` | false | 未配→false | 统计先验融合 | 开但无 model → warning `transformer.py:733-736` |
 | `igmcg` | false | 未配→false | 直觉引导多候选 | **依赖 ngram_fusion** `transformer.py:744` |
 | `memory_size` | 0 | 未配→0 | 记忆槽总数 | =0 时其余 memory 键=死配置 warning `:132-143` |
-| **【计划中】** `char_merge_incremental_buffer` | — | — | 本轮新增：CharMerge 增量滚动缓冲 | 全仓 0 命中，**尚未实现** |
+| `char_merge_incremental_buffer` | **false** | 未配→**false** | 第四轮新增：CharMerge 增量滚动缓冲（T=1 时把结果 `cat` 进 `_cm_buffer` 再按 kernel 切窗，替代左补零） | `layers.py:15,44-57,60-64`、`model_config.py`、调用点 `transformer.py:1548`、`reset_ngram_state()` 清缓冲；**非 config 键，也可运行时 `model.char_merge.incremental_buffer = True` 直开** |
 | `gated_delta_channel_wise` | false | 未配 | KDA 逐通道衰减 | ⚠ **`from_dict` 漏读 → 配置键静默失效** `model_config.py:333-365` |
 
 ### A.2 `training` 段（**确定**）
@@ -536,7 +538,7 @@ prompt ids → prefill forward(past=None, use_cache=True)        transformer.py:
 | **N4** | 数据头截断吞 **92.22%** | `data_utils.py:44-45`（审查原标 `:41` 是循环头，**行号已漂**） | ❌ 未改（见 §4.4） |
 | **N5** | Controller 慢 3.0×（11,264 dispatch、92.3% host 簿记） | `mixers.py:1265` 逐 t 循环 | ❌ 未改 |
 | **T4** | parity 测试零初始化恒通过（空转） | `controller.py:149-158` | ❌ 测试缺陷未改 |
-| **char_merge** | **第二处训推不一致**：`F.pad` 左补零、T=1 缺滚动状态 | `layers.py:41-42` | ❌ **本轮任务 A**（无 H 编号） |
+| **char_merge** | 第二处训推不一致：`F.pad` 左补零、T=1 缺滚动状态 | `layers.py:41-42`（修 `layers.py` + `transformer.py:1548`） | ✅ **已修**（开关 `char_merge_incremental_buffer`，代码默认 false、r42 未配；CPU 实测 `prefix−incremental` 24 序列 −0.0045→0、800 序列 −0.002340→**0.000000**） |
 
 ---
 

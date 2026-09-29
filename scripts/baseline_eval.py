@@ -188,6 +188,10 @@ def main():
     ap.add_argument('--controller', choices=['on', 'off'], default='on',
                     help='Controller 开关。off=与 validate 的 controller_active=False 同一条路，'
                          '用来把"H2 泄漏"和"Controller 增量退化"两个效应拆开')
+    ap.add_argument('--char-merge-buffer', choices=['on', 'off'], default='off',
+                    help='CharMerge 增量滚动缓冲开关（char_merge_incremental_buffer）。'
+                         '默认 off = r42 原行为，逐位可比；on=读取路径改用真实前 pad 个输入，'
+                         '不重训。只改层内运行时开关，不动 config/checkpoint。')
     ap.add_argument('--out', default='baselines/r42_baseline.json')
     ap.add_argument('--no-gen', action='store_true', help='跳过生成基准')
     args = ap.parse_args()
@@ -214,6 +218,12 @@ def main():
         # 必须在 set_enhancements_active 之后设：后者会把 _rt_controller 重置为 True
         model._rt_controller = ctrl_on
     print(f'      Controller = {"on" if ctrl_on else "off"}')
+    cmb_on = args.char_merge_buffer == 'on'
+    if getattr(model, 'char_merge_enabled', False):
+        # 运行时切层内开关：r42 config 不加此键（默认 off），故走这里临时开
+        model.char_merge.incremental_buffer = cmb_on
+        model.char_merge.reset_buffer()   # 换开关后丢掉上一次跑残留的尾巴
+    print(f'      CharMerge 增量缓冲 = {"on" if cmb_on else "off"}')
     ignore_index = vocab.pad_idx
 
     print('[2/4] 加载 val 集（复刻训练期划分）')
@@ -265,6 +275,7 @@ def main():
             'val_sequences': len(val_dataset),
             'modes': modes,
             'controller': args.controller,
+            'char_merge_incremental_buffer': cmb_on,
             'n_params': n_params,
             'pad_idx': int(ignore_index),
             'total_seconds': None,

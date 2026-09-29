@@ -44,7 +44,7 @@
 **结论**
 1. **H2（mem_cols 恒放行 + 整段写入）在 r42 上实测泄漏 ≈ 0.0035–0.0042 nats（占总泄漏 0.7%）**——结构性真风险，当前权重下数值近中性（`mem_proj` 零初始化训练后仍近乎惰性）。
 2. **99.3% 的泄漏来自 H1**：`controller.py:240` `x.mean(dim=1)` 是整段均值，非因果。
-3. 增量路径崩坏（prefix→incremental 差 5.21 nats）中 **direction 占 4.67 nats（90%）**，film+mem 合计 0.53 nats，非 Controller 的增量边界 **0.0045 nats ≈ 0**（说明 KV cache + char_merge 的增量实现是正确的）。
+3. 增量路径崩坏（prefix→incremental 差 5.21 nats）中 **direction 占 4.67 nats（90%）**，film+mem 合计 0.53 nats，非 Controller 的增量边界 **0.0045 nats ≈ 0**。<s>（说明 KV cache + char_merge 的增量实现是正确的）</s> **⚠ 2026-09-29 推翻**：char_merge 增量实现**不正确**，根因 `models/layers.py:42`（T=1 只左补零、无跨步滚动状态），第二处训推不一致。0.0045 只是 **ctrl=off** 口径下的残差，ctrl=on+direction off 时同一项是 **0.5343**。**2026-09-30 已修**：`char_merge_incremental_buffer`（默认关），CPU 实测 `prefix−incremental` → **0.000000**，见 `docs/ARCHITECTURE.md` §2.2 ⚠DIFF-2 与 §11.10。
 4. r42 未启用 MemoryBank → **H2 在 MemoryBank 配置上的真实量级尚未测**（见 §3-A）。
 
 ## 3. 方案（三层，按优先级）

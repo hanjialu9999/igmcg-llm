@@ -110,12 +110,16 @@ def test_incremental_equals_tf_without_char_merge():
 
 
 def test_char_merge_layer_has_no_incremental_state():
-    """已知结构性局限（新发现问题，本轮不修，按红线只记录）：
+    """默认配置（`incremental_buffer=False`）下的结构性局限，按红线只记录不修：
 
     CharMergeLayer 是 kernel=3 的因果卷积，只在整段前向里拿到左侧 2 个 token；
     KV 缓存增量解码每步只喂 1 个 token → 卷积窗口退化为 [0, 0, x_t]，与整段
     前向同一位置的窗口 [x_{t-2}, x_{t-1}, x_t] 不同。因此"全量前向 ppl"与
     "增量推理 ppl"之间天然存在由该层带来的差值，读基准时必须把它和 H2 泄漏区分开。
+
+    第四轮已给出可选修法：把 layer 切到 `incremental_buffer=True`（滚动缓冲，
+    `_cm_buffer`）后逐步喂法与整段前向一致，见 `tests/test_charmerge_buffer.py`。
+    本测试锁住**默认关**时的原行为，防止开关默认值被悄悄改动。
     """
     from models.layers import CharMergeLayer
     torch.manual_seed(3)
