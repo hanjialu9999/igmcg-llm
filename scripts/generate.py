@@ -486,6 +486,10 @@ def main():
                         help='IGMCG 流畅度权重')
     parser.add_argument('--igmcg-style-w', type=float, default=0.15,
                         help='IGMCG 风格匹配权重')
+    parser.add_argument('--char-merge-buffer', choices=['on', 'off'], default='on',
+                        help='CharMerge 增量滚动缓冲（char_merge_incremental_buffer）。'
+                             '生成入口默认 on = 修好的读取路径；off = r42 旧码零填充行为。'
+                             '只切层内运行时开关，config/checkpoint 不动')
     parser.add_argument('--igmcg-rep-w', type=float, default=2.5,
                         help='IGMCG 重复惩罚权重')
     
@@ -507,6 +511,16 @@ def main():
     model, vocab = load_model(args.model, args.vocab, device=device, quantize=args.quantize, compile_model=args.compile)
     print(f"Model loaded successfully!")
     print(f"Vocabulary size: {len(vocab)}")
+
+    # CharMerge 增量滚动缓冲：生成入口默认开（读取路径已修好），并打印实际生效值。
+    # 必须在 load_model 之后、任何一次前向之前设：load_model 从 config 读的是
+    # r42 的 False（该键不在 r42 config 里 → 走默认 False = 旧码行为），
+    # 这里按 CLI 覆盖成 on，再把上次运行残留的尾巴清掉。
+    cmb_on = args.char_merge_buffer == 'on'
+    if getattr(model, 'char_merge_enabled', False):
+        model.char_merge.incremental_buffer = cmb_on
+        model.char_merge.reset_buffer()
+    print(f"CharMerge 增量缓冲 = {'on' if cmb_on else 'off'}")
 
     # 推理精度：bf16 在支持的 CPU/CUDA 上约 1.5~1.8x 提速，且质量基本无损（此机实测困惑度更优）
     # 注意：torch 2.4.1 无 torch.cpu.get_cpu_capability()（该 API 在更新版本才存在），
@@ -600,6 +614,7 @@ def main():
         out_path = os.path.join('logs', 'generation_output.txt')
         os.makedirs('logs', exist_ok=True)
         with open(out_path, 'w', encoding='utf-8') as of:
+            of.write(f"char_merge_incremental_buffer = {cmb_on}\n")
             of.write(f"Prompt: {prompt}\nGenerated: {generated}\n")
         print(f"\nPrompt: {prompt}")
         print(f"Generated: {generated}{gen_info}\n")

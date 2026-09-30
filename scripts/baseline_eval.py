@@ -186,8 +186,13 @@ def main():
     ap.add_argument('--batch-size', type=int, default=0, help='0=用 config 的 batch_size')
     ap.add_argument('--seed', type=int, default=42)
     ap.add_argument('--controller', choices=['on', 'off'], default='on',
-                    help='Controller 开关。off=与 validate 的 controller_active=False 同一条路，'
-                         '用来把"H2 泄漏"和"Controller 增量退化"两个效应拆开')
+                    help='Controller 总开关。off=与 validate 的 controller_active=False 同一条路'
+                         '（三信号 mem/film/direction **全关**），用来把"H2 泄漏"和'
+                         '"Controller 增量退化"两个效应拆开')
+    ap.add_argument('--direction', choices=['on', 'off'], default='on',
+                    help='Controller 的 direction 信号③开关（model.controller.use_direction），'
+                         '与 --controller **独立**：--controller off 会把 mem/film 一起关掉，'
+                         '本开关只关 direction、film/mem 仍在（= 第三轮"关 direction"消融的设法）')
     ap.add_argument('--char-merge-buffer', choices=['on', 'off'], default='off',
                     help='CharMerge 增量滚动缓冲开关（char_merge_incremental_buffer）。'
                          '默认 off = r42 原行为，逐位可比；on=读取路径改用真实前 pad 个输入，'
@@ -217,7 +222,14 @@ def main():
     if getattr(model, 'controller_enabled', False):
         # 必须在 set_enhancements_active 之后设：后者会把 _rt_controller 重置为 True
         model._rt_controller = ctrl_on
-    print(f'      Controller = {"on" if ctrl_on else "off"}')
+    dir_on = args.direction == 'on'
+    if getattr(model, 'controller', None) is not None:
+        # set_enhancements_active 不碰 use_direction（它只管 _rt_layer_film/_input_highway/
+        # _rt_controller 三个模型级开关），所以这里按需覆盖；Controller 总关时本开关无效果，
+        # 但仍照实记录，避免把"总关"误读成"只关 direction"。
+        model.controller.use_direction = dir_on
+    print(f'      Controller = {"on" if ctrl_on else "off"}'
+          f' / direction = {"on" if dir_on else "off"}')
     cmb_on = args.char_merge_buffer == 'on'
     if getattr(model, 'char_merge_enabled', False):
         # 运行时切层内开关：r42 config 不加此键（默认 off），故走这里临时开
@@ -275,6 +287,7 @@ def main():
             'val_sequences': len(val_dataset),
             'modes': modes,
             'controller': args.controller,
+            'controller_direction': dir_on,
             'char_merge_incremental_buffer': cmb_on,
             'n_params': n_params,
             'pad_idx': int(ignore_index),
