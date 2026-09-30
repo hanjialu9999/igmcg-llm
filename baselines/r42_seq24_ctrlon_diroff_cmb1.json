@@ -1,0 +1,141 @@
+{
+  "meta": {
+    "created": "2026-09-30 12:43:54",
+    "config": "configs/config_train_8k_r42.yaml",
+    "model": "checkpoints_train_8k_r42/final_model.pt",
+    "model_sha256_16": "623b626f66d6c8f6",
+    "vocab": "checkpoints_train_8k_r42/vocab.json",
+    "device": "cpu",
+    "torch": "2.4.1+cpu",
+    "seed": 42,
+    "batch_size": 24,
+    "max_seqs": 24,
+    "val_sequences": 24,
+    "modes": [
+      "tf",
+      "prefix",
+      "incremental"
+    ],
+    "controller": "on",
+    "controller_direction": false,
+    "char_merge_incremental_buffer": true,
+    "n_params": 6756101,
+    "pad_idx": 0,
+    "total_seconds": 34.81
+  },
+  "ppl": {
+    "tf": {
+      "nll_sum": 8056.41748,
+      "tokens": 1536,
+      "loss": 5.245063,
+      "ppl": 189.627849,
+      "elapsed_s": 0.38
+    },
+    "prefix": {
+      "nll_sum": 8061.88446,
+      "tokens": 1536,
+      "loss": 5.248623,
+      "ppl": 190.303981,
+      "elapsed_s": 10.66
+    },
+    "incremental": {
+      "nll_sum": 8061.783783,
+      "tokens": 1536,
+      "loss": 5.248557,
+      "ppl": 190.291508,
+      "elapsed_s": 1.1
+    }
+  },
+  "diff": {
+    "tf_minus_prefix_loss": -0.00356,
+    "tf_over_prefix_ppl": 0.996447,
+    "prefix_minus_incremental_loss": 6.6e-05,
+    "tf_minus_incremental_loss": -0.003494
+  },
+  "generation": [
+    {
+      "prompt": "今天天气真好，我们去",
+      "mode": "sample",
+      "seed": 42,
+      "text": "今天天气真好，我们去年后，他关于北京集团“中央空调技術是否正常的情况下一条业内开"
+    },
+    {
+      "prompt": "今天天气真好，我们去",
+      "mode": "greedy",
+      "seed": 42,
+      "text": "今天天气真好，我们去年的美国。1、你是否正常的重要组成部分享到：2020年3月1"
+    },
+    {
+      "prompt": "人工智能的未来是",
+      "mode": "sample",
+      "seed": 42,
+      "text": "人工智能的未来是1760vo(在今天安全问题为什么没有过多的情况，一位很简单"
+    },
+    {
+      "prompt": "人工智能的未来是",
+      "mode": "greedy",
+      "seed": 42,
+      "text": "人工智能的未来是一个新型的地方，在这次上演了《关于中国共产党第二次会议。20"
+    },
+    {
+      "prompt": "Hello, how are you",
+      "mode": "sample",
+      "seed": 42,
+      "text": "hello,howareyoust）是中国旗下，希望为10个人来说是一个实际防爆”的同时，"
+    },
+    {
+      "prompt": "Hello, how are you",
+      "mode": "greedy",
+      "seed": 42,
+      "text": "hello,howareyous，但是我们的生活中心。2019年3月26日下午，在这个时候"
+    },
+    {
+      "prompt": "The weather is",
+      "mode": "sample",
+      "seed": 42,
+      "text": "theweatheris13），本文摘要：2018-06-13点击量：自然剧院第二屆"
+    },
+    {
+      "prompt": "The weather is",
+      "mode": "greedy",
+      "seed": 42,
+      "text": "theweatherissondmy10:32点击数：为什么是美国的一个人类型，在中"
+    },
+    {
+      "prompt": "I love",
+      "mode": "sample",
+      "seed": 42,
+      "text": "ilovest）是中国旗下，希望为10.6年4月24日，王蓓与德国内最"
+    },
+    {
+      "prompt": "I love",
+      "mode": "greedy",
+      "seed": 42,
+      "text": "iloverstapp是一款非常重要的，但是我们可以通过了解决者：首页"
+    },
+    {
+      "prompt": "Machine learning",
+      "mode": "sample",
+      "seed": 42,
+      "text": "machinelearning13），本文摘要：2018-06-13点击量：第二季度中心之"
+    },
+    {
+      "prompt": "Machine learning",
+      "mode": "greedy",
+      "seed": 42,
+      "text": "machinelearningous，但是我们的生活中心。2、在线观看地址：1.08元，其"
+    },
+    {
+      "prompt": "我叫",
+      "mode": "sample",
+      "seed": 42,
+      "text": "我叫中国手机本身影響，希望为10.6年4月24日，王蓓与德国内最"
+    },
+    {
+      "prompt": "我叫",
+      "mode": "greedy",
+      "seed": 42,
+      "text": "我叫“小叶紫檀、侗族和膳食工作室内，但是一个新的生命。2019年"
+    }
+  ]
+}

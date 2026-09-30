@@ -1,0 +1,141 @@
+{
+  "meta": {
+    "created": "2026-09-30 12:43:13",
+    "config": "configs/config_train_8k_r42.yaml",
+    "model": "checkpoints_train_8k_r42/final_model.pt",
+    "model_sha256_16": "623b626f66d6c8f6",
+    "vocab": "checkpoints_train_8k_r42/vocab.json",
+    "device": "cpu",
+    "torch": "2.4.1+cpu",
+    "seed": 42,
+    "batch_size": 24,
+    "max_seqs": 24,
+    "val_sequences": 24,
+    "modes": [
+      "tf",
+      "prefix",
+      "incremental"
+    ],
+    "controller": "on",
+    "controller_direction": false,
+    "char_merge_incremental_buffer": false,
+    "n_params": 6756101,
+    "pad_idx": 0,
+    "total_seconds": 36.82
+  },
+  "ppl": {
+    "tf": {
+      "nll_sum": 8056.41748,
+      "tokens": 1536,
+      "loss": 5.245063,
+      "ppl": 189.627849,
+      "elapsed_s": 1.45
+    },
+    "prefix": {
+      "nll_sum": 8061.88446,
+      "tokens": 1536,
+      "loss": 5.248623,
+      "ppl": 190.303981,
+      "elapsed_s": 10.33
+    },
+    "incremental": {
+      "nll_sum": 8882.538834,
+      "tokens": 1536,
+      "loss": 5.782903,
+      "ppl": 324.700392,
+      "elapsed_s": 1.07
+    }
+  },
+  "diff": {
+    "tf_minus_prefix_loss": -0.00356,
+    "tf_over_prefix_ppl": 0.996447,
+    "prefix_minus_incremental_loss": -0.53428,
+    "tf_minus_incremental_loss": -0.53784
+  },
+  "generation": [
+    {
+      "prompt": "今天天气真好，我们去",
+      "mode": "sample",
+      "seed": 42,
+      "text": "今天天气真好，我们去年7.0vetobaprimadnk是一个实现在外媒体验室内"
+    },
+    {
+      "prompt": "今天天气真好，我们去",
+      "mode": "greedy",
+      "seed": 42,
+      "text": "今天天气真好，我们去年代表示柜和俄罗里面上的一个人民族、侗族的小编辑：10.co"
+    },
+    {
+      "prompt": "人工智能的未来是",
+      "mode": "sample",
+      "seed": 42,
+      "text": "人工智能的未来是17.0vedos203月前往市场(sapiponecyim"
+    },
+    {
+      "prompt": "人工智能的未来是",
+      "mode": "greedy",
+      "seed": 42,
+      "text": "人工智能的未来是一个月份有限制作者：10.conerapithomavsed"
+    },
+    {
+      "prompt": "Hello, how are you",
+      "mode": "sample",
+      "seed": 42,
+      "text": "hello,howareyoust）为本文章作者是“不知识产品牌，在北地盘价格栅的日本身份"
+    },
+    {
+      "prompt": "Hello, how are you",
+      "mode": "greedy",
+      "seed": 42,
+      "text": "hello,howareyousinbapmitpckdmv10.3.602098月份有限"
+    },
+    {
+      "prompt": "The weather is",
+      "mode": "sample",
+      "seed": 42,
+      "text": "theweatheris17.0vonbbonccmadlk是一个实现在外媒体验室内"
+    },
+    {
+      "prompt": "The weather is",
+      "mode": "greedy",
+      "seed": 42,
+      "text": "theweatherissonbupomavikydconglaprbu10.3.6"
+    },
+    {
+      "prompt": "I love",
+      "mode": "sample",
+      "seed": 42,
+      "text": "ilovesokavedbbrgrcmaph.30460203.199"
+    },
+    {
+      "prompt": "I love",
+      "mode": "greedy",
+      "seed": 42,
+      "text": "iloveraponbusthamedcokyfingrbustple"
+    },
+    {
+      "prompt": "Machine learning",
+      "mode": "sample",
+      "seed": 42,
+      "text": "machinelearning17.0vodob203月前往市场(sporpov3.6个人"
+    },
+    {
+      "prompt": "Machine learning",
+      "mode": "greedy",
+      "seed": 42,
+      "text": "machinelearningokustpobydmv10.3.602098月份有限制作者"
+    },
+    {
+      "prompt": "我叫",
+      "mode": "sample",
+      "seed": 42,
+      "text": "我叫中心底了一切割机，希望为10.cokiporabercyim"
+    },
+    {
+      "prompt": "我叫",
+      "mode": "greedy",
+      "seed": 42,
+      "text": "我叫“小编辑：10.conerapithomavsedublik"
+    }
+  ]
+}
