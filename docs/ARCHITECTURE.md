@@ -128,11 +128,18 @@ prompt ids → prefill forward(past=None, use_cache=True)        transformer.py:
 | ⚠DIFF-5 记忆列 | r42 MemoryBank 关（`memory_size` 未配→0），但 `mem_cols=4` 来自 Controller `mem_slots`，**恒不施加因果遮蔽** | `transformer.py:338,342-349`、`mixers.py:831-832` |
 | ⚠DIFF-6 KV 累积 | 每步 `torch.cat` 累积 → O(L²)；`present=(k,v)` 已剥离 mem_cols | `mixers.py:692-693,723` |
 | ⚠DIFF-7 掩码/ALiBi | 增量每步重建 base_mask+alibi，训练侧走 `_bias_cache` 复用；**两条路径同公式 → parity 测不出 H3** | `mixers.py:729,744` vs `:774-785` |
-| ⚠DIFF-8 VRC | 增量 `v += λ·cached_last`；全量用 conv1d 递推，cache 存编码后 V 保 parity | `mixers.py:617-661` |
+| ⚠DIFF-8 VRC | 增量 `v += λ·cached_last`；全量用 conv1d 递推，cache 存编码后 V 保 parity；**全量核的构造方式有 DirectML broadcast bug（N6，已修，开关 `value_relative_safe_pow`）** | `mixers.py:617-661`（核构造 `:687-690`，新核 `_vrc_decay_kernel` `:44-76`） |
 | ⚠DIFF-9 首步复位 | `is_fresh` 清 `_bias_key/_cached_T/_alibi_dist_cache/_cached_x0_proj` + `reset_ngram_state()` | `transformer.py:1513,1524-1537` |
 | ⚠DIFF-10 early-exit | early-exit 仅 `not use_cache` 生效；剪枝 `continue` 仅 eval | `transformer.py:1623,1719-1728` |
 
-> **⚠ 测量口径（第四轮实测）**：三口径 ppl **只在 CPU 上可比**。同一份 r42 checkpoint 在 DirectML 上 `tf`/`prefix` 与 CPU 系统性不同（direction off / 24 序列：CPU `tf=prefix=6.7058`，DML `tf=6.4490`、`prefix=6.4954`），而 **`incremental` 两端逐位一致**（cmb off `6.7103`、cmb on `6.7058`）。已 `git worktree` checkout `3f9c5ef`（第四轮改动之前的 `models/`+`scripts/`）在 DML 复跑 24 序列 direction off，得**逐位相同**的 `6.4490/6.4954/6.7103` → 确证 DML 的 `tf≠prefix`（T>1 整段前向泄漏）**先于第四轮改动存在**，与本修复无关（**OUT_OF_SCOPE**，另记）。故凡报 ppl 一律取 CPU；DML 只用于计时与生成。
+> **⚠ 测量口径（第四轮实测，第七轮根因更正）**：三口径 ppl **只在 CPU 上可比**（DML 只用于计时与生成）。同一份 r42 checkpoint 在 DirectML 上曾与 CPU 系统性不同（direction off / 24 序列：CPU `tf=prefix=6.7058`，DML `tf=6.4490`、`prefix=6.4954`），而 **`incremental` 两端逐位一致**（cmb off `6.7103`、cmb on `6.7058`）。
+> **第七轮已定根因：不是"T>1 整段前向泄漏"，而是 N6（VRC 卷积核的 DirectML `base**exp` broadcast bug）**。证据（同一 checkpoint、同 24 序列、`--controller off --direction off --char-merge-buffer off`，只切 `--value-relative-safe-pow`）：开关 **off** → DML `tf=6.4490 / prefix=6.4954 / incremental=6.7103`；开关 **on** → DML `tf=6.7058 / prefix=6.7058 / incremental=6.7103`，**与 CPU 三项全部相同、`tf−prefix=0`**；CPU 开 on/off **完全无变化**（`value_rel_lambda` 4 层实测 = **0**，故两种核在 CPU 上 bitwise 等价），DML 上开与关的 logits max\|Δ\| = **0.5858**。
+> 早先 `git worktree` checkout `3f9c5ef`（第四轮改动之前）在 DML 复跑得逐位相同的 `6.4490/6.4954/6.7103`，**只**能证明"该差异与第四轮改动无关"，**不能**推出"泄漏先于第四轮存在"—— 该解读在此更正（**OUT_OF_SCOPE 但已结案**）。
+> **⚠ 附带口径事实**：`baseline_eval.py` 的模型由 **checkpoint 内置 config** 构建，`--config` **只影响数据/训练段，不影响模型架构**；故模型级开关（如 `--value-relative-safe-pow`）必须在加载后显式施加，写进 `--config` yaml 是无效的（第七轮实测踩过）。
+
+> **⚠ DirectML VRC 卷积核（N6，2026-09-30 实测，已修）**：原核构造 `_lam.view(1,1,1,1) ** arange(T-1,-1,-1)`（`mixers.py:690` 旧写法）在 DirectML 上有两个 broadcast bug——(1) base 广播成 rank≥2 形状时，kernel 实际只算 `base[0]**exp[0]` 再广播到全张量（恒常数）：λ=0 时 DML 核全 0，λ=0.3/−0.7 时全 1，与 CPU 的 `[λ^(T-1),…,λ,1]` 最大差 **1.0**；(2) 0-dim/(1,) base 的 `0.0 ** 0` 在 DML 返回 **nan**（CPU 返回 1.0）。后果：VRC 全量路径在 DML 上结果恒错（4 层 T=64 真模型前向 max\|Δ\| **0.196**（λ=0）/ **0.208**（λ=0.3）），且 `d(kernel)/dλ` 在 DML 上 = **0.0**（CPU = 1.0）→ **λ 永远学不动（自锁）**；λ=0.3 时 DML 梯度只有 0.0357。修法：`value_relative_safe_pow=true`（代码默认 **false**、r42 未配 → 默认完全走旧路径字节不变）时改用纯连乘 `_vrc_decay_kernel`（倍增法 O(log T)），只用 IEEE 乘法 → DML/CPU 逐位一致（λ∈{0,0.3,1,−0.7} × T∈{8,64} 全部 `torch.equal`），λ=0 梯度两侧均 = **1.0**；开时 4 层 T=64 真模型 DML vs CPU max\|Δ\| **0.196 → 9.5e-7**，关时 >1e-2（测试反向守住 bug 不被无声修掉）。附带实测：本机 DML 上 `torch.full(..., device=dml)` 本身也坏（抛 GBK `参数错误。` 的 `UnicodeDecodeError`），DML 侧构造标量一律用 `torch.tensor(...).reshape(shape)`；`torch.cumprod` 在 DML 回退 CPU 且 λ=−0.7 梯度非逐位，弃用。证据：`tests/test_value_relative_safe_pow.py`（9 个测试函数 / 42 用例）、`Temp\opencode\pow_matrix*.py`。
+>
+> **⚠ 全仓 `**` 扫描结论（第七轮，16 项 DML↔CPU）**：`models/`+`scripts/` 里所有 `**` 出现点分类后，**只有 `mixers.py:692` 的 VRC 核是结构性错误（N6）**；`rope.py:65/117/118`（float**tensor）、`memory.py:151/154`、`moe.py:125`（tensor**int）、`mixers.py:317`（纯 python）**全部只差 ≤1 ulp 舍入噪声**，不是 bug。唯一额外陷阱是 `memory.py:151` 的 `0**0`（DML nan / CPU 1.0）→ 记 **N7**（r42 不构建 MemoryBank，不执行）。诊断脚本 `scripts/_diag_vrc_conv_dml.py` 曾用同款坏表达式造核（行 35），**已改用 `_vrc_decay_kernel`**，其 docstring 里"嫌疑锁定 conv1d"的结论一并更正为"conv1d 无罪"。
 
 ---
 
@@ -273,6 +280,7 @@ prompt ids → prefill forward(past=None, use_cache=True)        transformer.py:
 | 默认示例 | `generate.py:607-628` | 无 `--prompt` 且无 `--interactive` | 4 条硬编码 prompt 循环 |
 | n-gram 构建 | `generate.py:535-546` | `--ngram` | `NGramModel(max_order=3, max_lines=2000, min_count=2)` |
 | 量化/编译/精度 | `generate.py:516,518,524-531` | 显式 CLI | bf16/fp32 AMP 上下文 |
+| 生成入口开关 | `generate.py:504-510`（arg）→ `:538-549`（施加，`load_model` 之后、首次前向之前） | `--char-merge-buffer`（默认 **on**）、`--controller-direction`（默认 **off**） | 都只切运行时开关，config/checkpoint 不动；实际生效值打印到 stdout 并写进 `logs/generation_output.txt` meta（`:643-644`）；`chat.py:53-66` 同款 `--controller-direction` |
 
 ### 5.2 `model.generate` 与采样层（**确定**）
 
@@ -303,7 +311,7 @@ prompt ids → prefill forward(past=None, use_cache=True)        transformer.py:
 | `is_fresh` 额外清 | `transformer.py:1524-1537` | attn `_bias_key`/`_cached_T`/`_alibi_dist_cache`、`_cached_x0_proj`、再调 `reset_ngram_state()`（**M9 修复点**） |
 | **batch 变化** | `transformer.py:1767-1771` | `_ngram_last_ids.shape[0] != src.shape[0]` → 用 pad 重建滚动缓冲；**batch 相同而序列不同靠 `is_fresh` 清**（M9 成因） |
 | 批量候选开头 | `generate.py:241-252` | `no_grad` + `model.reset_ngram_state()` + 首次 `forward(past=None, temperature=(N,))` |
-| 三口径之间 | `baseline_eval.py:211-229` | `set_enhancements_active(True)` → 再设 `_rt_controller`（**顺序不能反**）；每 mode 前 `zero_grad()` |
+| 三口径之间 | `baseline_eval.py:211-230` | `set_enhancements_active(True)` → 再设 `_rt_controller`（`--controller`）→ 再设 `use_direction`（`--direction`，**顺序不能反**：前两者都被前者覆盖/不覆盖要显式给）；每 mode 前 `zero_grad()` |
 | 三口径输入构造 | tf `baseline_eval.py:108-119`（整批一次前向）／prefix `:122-136`（逐 t 前缀，O(T²)）／incremental `:139-155`（`use_cache=True` 逐 token） | `DEFAULT_PROMPTS` 7 条见 `baseline_eval.py:42-53` |
 
 ### 5.4 `GEN_PARAMS`（生成基准，**确定**）
@@ -423,7 +431,7 @@ prompt ids → prefill forward(past=None, use_cache=True)        transformer.py:
 
 ## 附录 A 配置开关索引（默认值 ≠ r42 取值，或本轮/上轮新增）
 
-> 全部 116 个 schema 字段 + 44 个 training/data 字段的完整清单见 `models/model_config.py`（字段声明行 12-264）与 `configs/config_train_8k_r42.yaml`；本表只列**需要关注**的行。
+> 全部 117 个 schema 字段 + 44 个 training/data 字段的完整清单见 `models/model_config.py`（字段声明行 12-265）与 `configs/config_train_8k_r42.yaml`；本表只列**需要关注**的行。
 
 ### A.1 `model` 段（**确定**）
 
@@ -449,6 +457,7 @@ prompt ids → prefill forward(past=None, use_cache=True)        transformer.py:
 | `rope_dim_fraction` | 1.0 | **0.5** ⚠ | Partial RoPE 占比 | — |
 | `head_temp` | false | **true** ⚠ | per-head 可学温度 | 需 `attn_temp=true`，**否则静默失效、无校验** `mixers.py:347` |
 | `value_relative_coding` | false | **true** ⚠ | `v += tanh(λ)·v_{t-1}` | — |
+| `value_relative_safe_pow` | **false** | 未配→**false** | 第七轮新增：VRC 卷积核改纯连乘构造（倍增法），修 DirectML `base ** exp` broadcast bug（N6）。开时 DML/CPU 核与 λ 梯度逐位一致 | `model_config.py:60`、解析 `:361`、传参 `transformer.py:684/811/1170`、开关 `mixers.py:384,687-690`、核 `_vrc_decay_kernel` `mixers.py:44-76`；**r42 不配 = 走旧 pow 路径，字节不变** |
 | `intra_hybrid_rope` | false | **true** ⚠ | 层内 head 拆半 RoPE/NoPE | 需 `alibi=true`、禁 `use_mla_kv`、仅 attn/attn_linear `model_config.py:88-106` |
 | `intra_hybrid_ratio` | 0.5 | 0.5 | NoPE head 占比 | (0,1) 开区间 `:104-106` |
 | `gpas` | false | **true** ⚠ | LN 后可学 α | — |
@@ -553,6 +562,9 @@ prompt ids → prefill forward(past=None, use_cache=True)        transformer.py:
 | **N3** | `reset_ngram_state` 漏 4 类状态 | `transformer.py:1524-1531` | ❌ 未改 |
 | **N4** | 数据头截断吞 **92.22%** | `data_utils.py:44-45`（审查原标 `:41` 是循环头，**行号已漂**） | ❌ 未改（见 §4.4） |
 | **N5** | Controller 慢 3.0×（11,264 dispatch、92.3% host 簿记） | `mixers.py:1265` 逐 t 循环 | ❌ 未改 |
+| **N6** | DirectML `base ** exp` broadcast 两 bug（rank≥2 base 恒常数、0-dim `0**0` 返 nan）→ VRC 全量核 DML 恒错 + λ 梯度 DML=0.0 自锁；**并导致此前被误判为"整段前向泄漏"的 DML `tf≠prefix`（0.2568 nats）** | 旧 `mixers.py:690`；修 `_vrc_decay_kernel` `mixers.py:44-76` + 开关 `:384,687-690`、CLI `baseline_eval.py --value-relative-safe-pow` | ✅ **已修**（开关 `value_relative_safe_pow`，代码默认 false、r42 未配；开时核/梯度 DML↔CPU 逐位，4 层 T=64 前向 max\|Δ\| 0.196→9.5e-7；**24 序列 ctrl/direction/cmb 全 off：DML `6.4490/6.4954` → `6.7058/6.7058` = CPU**） |
+| **N7** | `memory.py:151` 的 `f_vec ** (T-1-t)` 遇**底数恰为 0 且指数含 0 位**时 DML 返 **nan**（CPU 返 1.0）；其余输入只差 ≤1 ulp | `memory.py:151` | ❌ **未改（记录待定）**：r42 `memory_size=0` → MemoryBank 不构建，路径不执行；需 gate 恰为 0 才触发。同根因同 N6(2) |
+| **T5** | DML `**` 全仓扫描（第二跳）：`rope.py:65/117/118`、`memory.py:151/154`、`moe.py:125`、`mixers.py:317` 全部 ≤1 ulp（5.96e-08 / 4.77e-07 / 1.95e-03@10000），**非 bug** | `Temp\opencode\pow_scan2.py` | ✅ 已复核（16 项，DML↔CPU） |
 | **T4** | parity 测试零初始化恒通过（空转） | `controller.py:149-158` | ❌ 测试缺陷未改 |
 | **char_merge** | 第二处训推不一致：`F.pad` 左补零、T=1 缺滚动状态 | `layers.py:41-42`（修 `layers.py` + `transformer.py:1548`） | ✅ **已修**（开关 `char_merge_incremental_buffer`，代码默认 false、r42 未配；CPU 实测 `prefix−incremental` 24 序列 −0.0045→0、800 序列 −0.002340→**0.000000**） |
 

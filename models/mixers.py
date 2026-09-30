@@ -41,6 +41,36 @@ def _pad_mem_bias(mem_bias: torch.Tensor, Tkv: int, mem_cols: int) -> torch.Tens
     return torch.nn.functional.pad(mem_bias, (0, Tkv - mem_cols))
 
 
+def _vrc_decay_kernel(lam: torch.Tensor, klen: int) -> torch.Tensor:
+    """构造 VRC 卷积核 [λ^(klen-1), λ^(klen-2), …, λ, 1]（纯连乘，不走 pow）。
+
+    lam 须为 numel==1 的张量（0-dim 或 (1,)），返回 (klen,) float32。
+    倍增法 O(log klen) 轮：v=[λ] 起反复 v=cat(v, v[-1:]*v)，取前 klen-1 项，
+    前置 1 后翻转（λ^0 落末位，配 conv1d 左零填充的 causal 约定）。
+
+    为什么不用 `_lam ** arange`（R40 修复，value_relative_safe_pow=True 分支）：
+    DirectML 的 `base ** exp` broadcast kernel 有两个已实测 bug（DML vs CPU，
+    λ∈{0,0.3,1,-0.7,0.99}，T∈{8,64}）：
+      1. base 广播成 rank≥2 形状（原代码 view(1,1,1,1)）时，DML 只取 base[0]
+         并把 `base[0] ** exp[0]` 广播到全张量 → 恒常数（max|Δ| 达 1.0）；
+      2. 0-dim / (1,) base 在 `0.0 ** 0`（指数 0 位）返回 nan（CPU 返回 1.0）。
+    纯乘法只用 IEEE round-to-nearest 的乘，DML 与 CPU 逐位一致；反向同理，
+    λ=0 时 d(kernel.sum)/dλ = 1.0（pow 构造在 DML 上得 0.0 或 nan，自锁）。
+    代价：T=64 实测 0.73ms/次（顺序连乘 1.91ms），CPU 0.08ms。
+    注意与 CPU 旧 pow 路径的差异为 ~1e-8 量级（舍入次序不同），远小于
+    cache parity atol=1e-4；默认开关关闭时完全走旧路径，字节不变。"""
+    if lam.numel() != 1:
+        raise ValueError(f'_vrc_decay_kernel 期望标量 λ，收到 shape={tuple(lam.shape)}')
+    v = lam.reshape(1)
+    n = 1
+    while n < klen - 1:
+        v = torch.cat([v, v[-1:] * v])
+        n = v.numel()
+    v = v[:klen - 1]
+    one = torch.ones(1, dtype=v.dtype, device=v.device)
+    return torch.cat([one, v]).flip(0)
+
+
 def _parallel_prefix_scan(
     a: torch.Tensor, b: torch.Tensor,
     past_state: Optional[torch.Tensor] = None,
@@ -245,6 +275,7 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
                  dim_wise_rope: bool = False,
                  head_temp: bool = False,
                  value_relative_coding: bool = False,
+                 value_relative_safe_pow: bool = False,
                  intra_hybrid_rope: bool = False,
                  intra_hybrid_ratio: float = 0.5,
                  alibi_learnable: bool = False,
@@ -348,6 +379,9 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         if attn_temp:
             self.log_temp = nn.Parameter(torch.zeros(num_heads if head_temp else 1))
         self.value_relative_coding_enabled = value_relative_coding
+        # R40：VRC 卷积核改用纯连乘构造（绕开 DirectML `base ** exp` broadcast bug）。
+        # 默认 False = 保持 r42 旧行为字节不变；True 时 DML/CPU kernel 逐位一致。
+        self.value_relative_safe_pow = value_relative_safe_pow
         if value_relative_coding:
             # tanh 限制 λ∈(-1,1)，init 0 → v 不变；cache 存原始 v 保证 train/infer parity
             self.value_rel_lambda = nn.Parameter(torch.zeros(1))
@@ -650,7 +684,12 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
                 # conv1d 单次 kernel 启动替代 6 轮 ~42 次启动：实测 T=64 从 3.29ms→1.62ms（2.0x）。
                 # 精度：与 _parallel_prefix_scan 逐点最大差 4.8e-7（远小于 cache parity atol=1e-4）。
                 _klen = T
-                _ker = (_lam ** torch.arange(_klen - 1, -1, -1, device=v.device)).reshape(1, 1, _klen)
+                if self.value_relative_safe_pow:
+                    # R40 修复：纯连乘构造，绕开 DML `base ** exp` 的两个 broadcast bug
+                    # （rank≥2 base 恒常数、0**0 返 nan）。DML 与 CPU 逐位一致，梯度亦然。
+                    _ker = _vrc_decay_kernel(_lam.reshape(()), _klen).reshape(1, 1, _klen)
+                else:
+                    _ker = (_lam ** torch.arange(_klen - 1, -1, -1, device=v.device)).reshape(1, 1, _klen)
                 # R38-2 修正：expand 是广播 view——其 backward 梯度合并（sum 到 kernel）
                 # 在 DML 上报错（weight grad [1,1,1,64] vs broadcast [1,256,1,64]）。
                 # repeat 实体化拷贝（每调用一次 64KB 级），backward 正常。

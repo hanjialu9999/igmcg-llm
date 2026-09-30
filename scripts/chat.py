@@ -13,7 +13,7 @@ except Exception:
     pass
 
 import torch
-from scripts.generate import load_model
+from scripts.generate import load_model, apply_controller_direction
 from models.device import get_device
 
 DEFAULT_MODEL = str(project_root / 'checkpoints_train_8k_r42' / 'final_model.pt')
@@ -50,6 +50,9 @@ def main():
     ap.add_argument('--top-k', type=int, default=40)
     ap.add_argument('--repetition-penalty', type=float, default=2.0,
                     help='重复惩罚（>1 抑制重复，1.0=关闭）；docs 宣传过该参数，此前缺失')
+    ap.add_argument('--controller-direction', choices=['on', 'off'], default='off',
+                    help='Controller 的 direction 信号③开关；生成入口默认 off（与 generate.py 一致），'
+                         '只切运行时开关，model_config 默认值与 checkpoint 不动')
     args = ap.parse_args()
     
     # 用 get_device 把 'cpu'/'cuda'/'dml'/'auto' 解析为 torch.device 对象
@@ -58,6 +61,9 @@ def main():
     print('加载模型中…')
     model, vocab = load_model(args.model, args.vocab, device=device)
     model.eval()
+    dir_on = apply_controller_direction(model, args.controller_direction == 'on')
+    print(f"Controller direction = {'on' if dir_on else 'off'}"
+          f"（--controller-direction {args.controller_direction}）")
     print('模型已加载。在「你> 」后输入中文即可对话（输入 exit / quit 退出）。')
     print('提示：这是基础语言模型（非聊天微调），它做的是「续写」而非真正理解；上下文仅 64 字。\n')
 

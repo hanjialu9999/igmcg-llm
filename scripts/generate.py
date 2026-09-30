@@ -425,6 +425,21 @@ def generate_igmcg(model, vocab, prompt, intuition=None, num_candidates=4,
     return candidates[0]['text'], candidates
 
 
+def apply_controller_direction(model, on: bool) -> bool:
+    """按 CLI 值设 Controller 的 direction 信号③开关（model.controller.use_direction）。
+
+    必须在 load_model 之后、任何一次前向之前调用：load_model 读的是 config 里的
+    controller_direction（r42 = True = 旧行为），这里按参数覆盖，不动 model_config
+    默认值、不动 checkpoint。只切运行时开关，set_enhancements_active 不碰它
+    （后者只管 _rt_layer_film/_input_highway/_rt_controller）。
+    返回**实际生效值**：Controller 未启用时恒 False（本开关无载体）。
+    """
+    if not getattr(model, 'controller_enabled', False):
+        return False
+    model.controller.use_direction = bool(on)
+    return bool(model.controller.use_direction)
+
+
 @cli_guard
 def main():
     # 避免中文在 GBK 控制台打印时崩溃；同时把结果写入 UTF-8 文件便于查看
@@ -490,6 +505,10 @@ def main():
                         help='CharMerge 增量滚动缓冲（char_merge_incremental_buffer）。'
                              '生成入口默认 on = 修好的读取路径；off = r42 旧码零填充行为。'
                              '只切层内运行时开关，config/checkpoint 不动')
+    parser.add_argument('--controller-direction', choices=['on', 'off'], default='off',
+                        help='Controller 的 direction 信号③开关（model.controller.use_direction）。'
+                             '生成入口默认 off = 本轮 r42 生成对照的默认；on = config 默认（旧行为）。'
+                             '只切层内运行时开关，model_config 默认值与 checkpoint 不动')
     parser.add_argument('--igmcg-rep-w', type=float, default=2.5,
                         help='IGMCG 重复惩罚权重')
     
@@ -521,6 +540,13 @@ def main():
         model.char_merge.incremental_buffer = cmb_on
         model.char_merge.reset_buffer()
     print(f"CharMerge 增量缓冲 = {'on' if cmb_on else 'off'}")
+
+    # Controller direction：生成入口默认 off（本轮 r42 生成对照口径）。
+    # 施加点同样必须在 load_model 之后、任何前向之前；打印的是实际生效值
+    # （Controller 未启用时 CLI 传 on 也只会显示 off）。
+    dir_on = apply_controller_direction(model, args.controller_direction == 'on')
+    print(f"Controller direction = {'on' if dir_on else 'off'}"
+          f"（--controller-direction {args.controller_direction}）")
 
     # 推理精度：bf16 在支持的 CPU/CUDA 上约 1.5~1.8x 提速，且质量基本无损（此机实测困惑度更优）
     # 注意：torch 2.4.1 无 torch.cpu.get_cpu_capability()（该 API 在更新版本才存在），
@@ -615,6 +641,7 @@ def main():
         os.makedirs('logs', exist_ok=True)
         with open(out_path, 'w', encoding='utf-8') as of:
             of.write(f"char_merge_incremental_buffer = {cmb_on}\n")
+            of.write(f"controller_direction = {dir_on}\n")
             of.write(f"Prompt: {prompt}\nGenerated: {generated}\n")
         print(f"\nPrompt: {prompt}")
         print(f"Generated: {generated}{gen_info}\n")

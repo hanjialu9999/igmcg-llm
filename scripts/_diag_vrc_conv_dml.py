@@ -8,6 +8,11 @@
     其全量路径用 F.conv1d(groups=C, padding=T-1) 实现因果卷积；T=1 时该分支不进 → v 原样。
   ⇒ 嫌疑锁定 mixers.py:658-661 的 conv1d。
 
+第七轮（2026-09-30）更正：conv1d 无罪。真正根因是本脚本 `vrc_conv` 里构造卷积核的
+`(lam ** torch.arange(...))` —— lam 是 `reshape(1,1,1,1)` 的 rank-4 标量，在 DML 上
+命中 broadcast bug（见 docs/ARCHITECTURE.md 附录 B.3 **N6**）。conv1d 本身 DML/CPU 一致。
+已改用 `models.mixers._vrc_decay_kernel`。
+
 本脚本直接对该 conv1d 做独立复现（不碰模型），比 DML vs CPU vs 手写递推三者。
 
 用法：
@@ -24,6 +29,7 @@ import torch.nn.functional as F
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from models.device import get_device  # noqa: E402
+from models.mixers import _vrc_decay_kernel  # noqa: E402
 
 
 def vrc_conv(v, lam):
@@ -32,7 +38,11 @@ def vrc_conv(v, lam):
     B_, H_, _, D_ = v.shape
     v_2d = v.permute(0, 2, 1, 3).reshape(B_, T, H_ * D_, 1)
     _klen = T
-    _ker = (lam ** torch.arange(_klen - 1, -1, -1, device=v.device)).reshape(1, 1, _klen)
+    # 第七轮更正：原来写 `(lam ** torch.arange(...))`，而 lam 是 reshape(1,1,1,1)
+    # 的 rank-4 标量 → 在 DML 上正是 N6 broadcast bug（只取 base[0]**exp[0] 广播全张量、
+    # 0-dim `0**0` 返 nan）。conv1d 本身没问题，锅在核构造。改用 models/mixers.py
+    # 的 _vrc_decay_kernel（纯连乘，DML/CPU 逐位一致）。
+    _ker = _vrc_decay_kernel(lam.reshape(()), _klen).reshape(1, 1, _klen)
     _ker_full = _ker.repeat(H_ * D_, 1, 1)
     _v_c = F.conv1d(v_2d.squeeze(-1).permute(0, 2, 1), _ker_full,
                     groups=H_ * D_, padding=_klen - 1)

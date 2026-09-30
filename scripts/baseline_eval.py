@@ -174,7 +174,21 @@ def run_generation(model, vocab, device, prompts, seed):
     return out
 
 
-def main():
+def apply_value_relative_safe_pow(model, on: bool) -> int:
+    """把 value_relative_safe_pow 施加到所有带该属性的子模块，返回命中数。
+
+    模型由 checkpoint 内置 config 构建，`--config` 不影响架构，所以这个运行时开关
+    必须在加载后显式施加（与 --direction / --char-merge-buffer 同一模式）。
+    """
+    n = 0
+    for sub in model.modules():
+        if hasattr(sub, 'value_relative_safe_pow'):
+            sub.value_relative_safe_pow = on
+            n += 1
+    return n
+
+
+def build_parser():
     ap = argparse.ArgumentParser(description='质量基准（TF / prefix / 增量 ppl + 生成）')
     ap.add_argument('--config', default='configs/config_train_8k_r42.yaml')
     ap.add_argument('--model', default='checkpoints_train_8k_r42/final_model.pt')
@@ -197,9 +211,19 @@ def main():
                     help='CharMerge 增量滚动缓冲开关（char_merge_incremental_buffer）。'
                          '默认 off = r42 原行为，逐位可比；on=读取路径改用真实前 pad 个输入，'
                          '不重训。只改层内运行时开关，不动 config/checkpoint。')
+    ap.add_argument('--value-relative-safe-pow', choices=['on', 'off'], default='off',
+                    help='VRC 卷积核改纯连乘构造（value_relative_safe_pow）。'
+                         '默认 off = r42 原行为（逐位可比）；on=绕开 DirectML `base**exp` '
+                         'broadcast bug（N6）。只切运行时开关，不动 config/checkpoint。'
+                         '注意：本脚本的模型由 checkpoint 内置 config 构建，`--config` 不影响架构，'
+                         '故该开关必须在加载后显式施加。')
     ap.add_argument('--out', default='baselines/r42_baseline.json')
     ap.add_argument('--no-gen', action='store_true', help='跳过生成基准')
-    args = ap.parse_args()
+    return ap
+
+
+def main():
+    args = build_parser().parse_args()
 
     t0 = time.time()
     config = load_config(args.config)
@@ -236,6 +260,10 @@ def main():
         model.char_merge.incremental_buffer = cmb_on
         model.char_merge.reset_buffer()   # 换开关后丢掉上一次跑残留的尾巴
     print(f'      CharMerge 增量缓冲 = {"on" if cmb_on else "off"}')
+    vrs_on = args.value_relative_safe_pow == 'on'
+    n_vrs = apply_value_relative_safe_pow(model, vrs_on)
+    print(f'      value_relative_safe_pow = {"on" if vrs_on else "off"}'
+          f'（作用于 {n_vrs} 个 mixer）')
     ignore_index = vocab.pad_idx
 
     print('[2/4] 加载 val 集（复刻训练期划分）')
@@ -289,6 +317,8 @@ def main():
             'controller': args.controller,
             'controller_direction': dir_on,
             'char_merge_incremental_buffer': cmb_on,
+            'value_relative_safe_pow': vrs_on,
+            'value_relative_safe_pow_modules': n_vrs,
             'n_params': n_params,
             'pad_idx': int(ignore_index),
             'total_seconds': None,

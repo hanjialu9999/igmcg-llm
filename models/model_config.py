@@ -57,6 +57,7 @@ class AttnConfig:
     # 第二十一轮新特性
     head_temp: bool = False            # per-head 可学注意力温度（升级全局标量 log_temp 为 per-head 向量，NoPE 层长度外推增强）
     value_relative_coding: bool = False  # value-side 相对编码（v+=tanh(λ)·v_{t-1}，轻量相对位置信号，NoPE 层外推增强）
+    value_relative_safe_pow: bool = False  # R40：VRC 卷积核改纯连乘构造，修 DirectML `base**exp` broadcast bug；默认关保 r42 旧行为字节不变
     rwkv7: bool = False                # RWKV-7 广义 Delta Rule（GatedDeltaNet 新增 rank-1 状态扰动项）
     # 第二十二轮新特性
     intra_hybrid_rope: bool = False    # 层内 head 拆半 RoPE/NoPE（前半 head 用 RoPE，后半用 NoPE 靠 ALiBi 获位置）
@@ -357,6 +358,7 @@ class ModelConfig:
             kv_latent_dim=mc.get('kv_latent_dim', None),
             head_temp=bool(mc.get('head_temp', False)),
             value_relative_coding=bool(mc.get('value_relative_coding', False)),
+            value_relative_safe_pow=bool(mc.get('value_relative_safe_pow', False)),
             rwkv7=bool(mc.get('rwkv7', False)),
             intra_hybrid_rope=bool(mc.get('intra_hybrid_rope', False)),
             intra_hybrid_ratio=float(mc.get('intra_hybrid_ratio', 0.5)),

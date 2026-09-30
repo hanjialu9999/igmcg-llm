@@ -140,3 +140,30 @@ def test_finish_returns_exp_of_loss():
     assert out['loss'] == pytest.approx(4.0)
     assert out['ppl'] == pytest.approx(float(torch.exp(torch.tensor(4.0))), rel=1e-5)
     assert out['tokens'] == 8
+
+
+def test_value_relative_safe_pow_cli_defaults_off():
+    """第七轮新增开关必须默认 off（= r42 原路径逐位可比），防止被悄悄改成 on。
+
+    同 test_char_merge_layer_has_no_incremental_state 的"锁默认"红线。
+    """
+    from scripts.baseline_eval import build_parser
+    args = build_parser().parse_args([])
+    assert args.value_relative_safe_pow == 'off'
+    # 与既有三个开关一起核对，避免整组默认值被改动
+    assert (args.controller, args.direction, args.char_merge_buffer) == ('on', 'on', 'off')
+
+
+def test_value_relative_safe_pow_applies_to_every_mixer():
+    """apply_value_relative_safe_pow 必须命中每个带该属性的子模块并可逆。"""
+    from scripts.baseline_eval import apply_value_relative_safe_pow
+    m = _build(char_merge=False, controller=False, seed=19)
+    mix = [s for s in m.modules() if hasattr(s, 'value_relative_safe_pow')]
+    assert mix, 'r42 同款 attn mixer 应带 value_relative_safe_pow'
+    assert all(s.value_relative_safe_pow is False for s in mix), '代码默认必须是 False'
+
+    assert apply_value_relative_safe_pow(m, True) == len(mix)
+    assert all(s.value_relative_safe_pow is True for s in mix)
+
+    assert apply_value_relative_safe_pow(m, False) == len(mix)
+    assert all(s.value_relative_safe_pow is False for s in mix)
