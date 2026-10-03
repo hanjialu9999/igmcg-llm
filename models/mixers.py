@@ -1301,14 +1301,24 @@ class GatedDeltaNet(LinearMixerBase):
             return self.proj(out), present
 
         outs = []
+        # 第八批【四】S1 路线① v2 循环外提（2026-10-03）：
+        # ① den 只依赖 qf/z_all，与 t 无关 → 循环前一次 einsum + clamp，循环内只切片；
+        # ② α/β 先 unsqueeze 成 (B,H,T,·,1)，循环内只切 1 次（原为「切片 + unsqueeze」2 次）；
+        # ③ kf/v/qf/z_all 先 unbind 成视图列表，循环内纯 Python 下标，免逐步 slice dispatch。
+        # 三处都只挪运算时机、不改运算本身，数值应逐位不变（torch.equal 对拍验证）。
+        den_all = torch.einsum('bhtd,bhtd->bht', qf, z_all).clamp_min(1e-6)  # (B,H,T)
+        alpha_S_all = alpha.unsqueeze(-1)  # (B,H,T,1,1) 或 (B,H,T,D,1)
+        beta_S_all = beta.unsqueeze(-1)
+        kf_l = torch.unbind(kf, dim=2)
+        v_l = torch.unbind(v, dim=2)
+        qf_l = torch.unbind(qf, dim=2)
+        z_l = torch.unbind(z_all, dim=2)
         for t in range(T):
-            kf_t = kf[:, :, t, :]
-            v_t = v[:, :, t, :]
-            # R34 优化：alpha_t/beta_t 保持原形状 (B,H,X)，仅 S 更新需 unsqueeze 广播；
-            alpha_t = alpha[:, :, t, :]   # (B,H,1) 或 (B,H,D)
-            beta_t = beta[:, :, t, :]
-            alpha_S = alpha_t.unsqueeze(-1)  # (B,H,1,1) 与 S (B,H,D,D) 广播
-            beta_S = beta_t.unsqueeze(-1)
+            kf_t = kf_l[t]
+            v_t = v_l[t]
+            # alpha/beta 直接取预 unsqueeze 后的 (B,H,1,1)/(B,H,D,1)
+            alpha_S = alpha_S_all[:, :, t]
+            beta_S = beta_S_all[:, :, t]
             Sk = torch.einsum('bhd,bhde->bhe', kf_t, S)
             # delta 更新：S = α·S + β·(v - S·k)⊗k
             # R39 回退：原 addcmul 融合（R35）backward 在 DML 不支持，4 算子等价式。
@@ -1321,9 +1331,8 @@ class GatedDeltaNet(LinearMixerBase):
                 # R39 回退：原 addcmul 融合（R35）backward 在 DML 不支持，2 算子等价式。
                 S = S + zt.unsqueeze(-1).unsqueeze(-1) * torch.einsum('bhd,bhe->bhde', bt, bTS)
             # z_t 已由前缀扫描预计算（R36-4），直接取用，省 T 次串行 z 更新
-            z_t = z_all[:, :, t, :]
-            num = torch.einsum('bhd,bhde->bhe', qf[:, :, t, :], S)
-            den = torch.einsum('bhd,bhd->bh', qf[:, :, t, :], z_t).unsqueeze(-1).clamp_min(1e-6)
+            num = torch.einsum('bhd,bhde->bhe', qf_l[t], S)
+            den = den_all[:, :, t].unsqueeze(-1)
             outs.append(num / den)
         out = torch.stack(outs, dim=2)  # (B,H,T,D)
         out = out.transpose(1, 2).reshape(B, T, H * D)
