@@ -1,0 +1,53 @@
+diff --git a/models/mixers.py b/models/mixers.py
+index 2d0128d..0dafa40 100644
+--- a/models/mixers.py
++++ b/models/mixers.py
+@@ -1304,25 +1304,22 @@ class GatedDeltaNet(LinearMixerBase):
+         # 第八批【四】S1 路线① v2 循环外提（2026-10-03）：
+         # ① den 只依赖 qf/z_all，与 t 无关 → 循环前一次 einsum + clamp，循环内只切片；
+         # ② α/β 先 unsqueeze 成 (B,H,T,·,1)，循环内只切 1 次（原为「切片 + unsqueeze」2 次）；
+-        # ③ kf/v/qf/z_all 先 unbind 成视图列表，循环内纯 Python 下标，免逐步 slice dispatch。
++        # ③ kf/v/qf 先 unbind 成视图列表，循环内纯 Python 下标，免逐步 slice dispatch。
+         # 三处都只挪运算时机、不改运算本身，数值应逐位不变（torch.equal 对拍验证）。
+         den_all = torch.einsum('bhtd,bhtd->bht', qf, z_all).clamp_min(1e-6)  # (B,H,T)
+-        alpha_S_all = alpha.unsqueeze(-1)  # (B,H,T,1,1) 或 (B,H,T,D,1)
+-        beta_S_all = beta.unsqueeze(-1)
++        # v3（第九批）：α/β 与 kf 的行向量也 unbind 成视图列表，循环内不再逐步 select/unsqueeze；
++        # 除以 den 挪到循环外整体做一次（逐元素除法，值逐位不变）。
++        alpha_l = torch.unbind(alpha.unsqueeze(-1), dim=2)  # 每步 (B,H,1,1) 或 (B,H,D,1)
++        beta_l = torch.unbind(beta.unsqueeze(-1), dim=2)
+         kf_l = torch.unbind(kf, dim=2)
++        kf_row_l = torch.unbind(kf.unsqueeze(-2), dim=2)    # 每步 (B,H,1,D)，外积用
+         v_l = torch.unbind(v, dim=2)
+         qf_l = torch.unbind(qf, dim=2)
+-        z_l = torch.unbind(z_all, dim=2)
+         for t in range(T):
+-            kf_t = kf_l[t]
+-            v_t = v_l[t]
+-            # alpha/beta 直接取预 unsqueeze 后的 (B,H,1,1)/(B,H,D,1)
+-            alpha_S = alpha_S_all[:, :, t]
+-            beta_S = beta_S_all[:, :, t]
+-            Sk = torch.einsum('bhd,bhde->bhe', kf_t, S)
++            Sk = torch.einsum('bhd,bhde->bhe', kf_l[t], S)
+             # delta 更新：S = α·S + β·(v - S·k)⊗k
+             # R39 回退：原 addcmul 融合（R35）backward 在 DML 不支持，4 算子等价式。
+-            S = alpha_S * S + beta_S * ((v_t - Sk).unsqueeze(-1) * kf_t.unsqueeze(-2))
++            S = alpha_l[t] * S + beta_l[t] * ((v_l[t] - Sk).unsqueeze(-1) * kf_row_l[t])
+             if rwkv7:
+                 # rank-1 扰动：S += z_t·b_t⊗(b_t^T·S)
+                 zt = z_gate[:, :, t]  # (B,H)
+@@ -1330,11 +1327,9 @@ class GatedDeltaNet(LinearMixerBase):
+                 bTS = torch.einsum('bhd,bhde->bhe', bt, S)  # (B,H,D)
+                 # R39 回退：原 addcmul 融合（R35）backward 在 DML 不支持，2 算子等价式。
+                 S = S + zt.unsqueeze(-1).unsqueeze(-1) * torch.einsum('bhd,bhe->bhde', bt, bTS)
+-            # z_t 已由前缀扫描预计算（R36-4），直接取用，省 T 次串行 z 更新
+-            num = torch.einsum('bhd,bhde->bhe', qf_l[t], S)
+-            den = den_all[:, :, t].unsqueeze(-1)
+-            outs.append(num / den)
+-        out = torch.stack(outs, dim=2)  # (B,H,T,D)
++            # z_t 已由前缀扫描预计算（R36-4），den_all 在循环外一次算完
++            outs.append(torch.einsum('bhd,bhde->bhe', qf_l[t], S))
++        out = torch.stack(outs, dim=2) / den_all.unsqueeze(-1)  # (B,H,T,D)
+         out = out.transpose(1, 2).reshape(B, T, H * D)
+         z = z_all[:, :, -1, :]  # 最终 z（用于 cache，与原 for 循环结束时一致）
+         present = (k, v, S, z) if use_cache else None
