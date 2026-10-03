@@ -1,9 +1,11 @@
-"""GDN 循环外提 v3 的逐位对拍：HEAD 版 GatedDeltaNet vs 打了 gdn_loop_v3.patch 的工作区版本。
+"""GDN 循环外提的逐位对拍：某个提交里的 GatedDeltaNet vs 工作区的 models/mixers.py。
 
 用法（先 git apply gdn_loop_v3.patch，再跑）：
-    python experiments/claude_review_20261003/gdn_loop_v3_check.py [--device dml]
-它从 `git show HEAD:models/mixers.py` 取改前代码，和工作区的 models/mixers.py 同权重同输入比较：
-前向、输入梯度、全部参数梯度 torch.equal；CPU 下另报前向+反向算子数。
+    python experiments/claude_review_20261003/gdn_loop_v3_check.py                       # v2(HEAD) 对 v3，CPU
+    python experiments/claude_review_20261003/gdn_loop_v3_check.py --device dml
+    python experiments/claude_review_20261003/gdn_loop_v3_check.py --base 82c44f8 --device dml   # v1 对 v3
+--base 指定改前代码所在提交（默认 HEAD），用 `git show <base>:models/mixers.py` 取出，和工作区版本
+同权重同输入比较：前向、输入梯度、全部参数梯度 torch.equal 和最大差；CPU 下另报前向+反向算子数。
 """
 import argparse
 import importlib.util
@@ -18,8 +20,8 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 sys.path.insert(0, ROOT)
 
 
-def load_head_mixers():
-    src = subprocess.check_output(['git', 'show', 'HEAD:models/mixers.py'], cwd=ROOT)
+def load_base_mixers(base):
+    src = subprocess.check_output(['git', 'show', f'{base}:models/mixers.py'], cwd=ROOT)
     fd, path = tempfile.mkstemp(suffix='_mixers_head.py')
     with os.fdopen(fd, 'wb') as f:
         f.write(src)
@@ -45,6 +47,7 @@ def count_ops(fn):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--device', default='cpu', choices=['cpu', 'dml'])
+    ap.add_argument('--base', default='HEAD', help='改前代码所在提交，默认 HEAD')
     args = ap.parse_args()
     if args.device == 'dml':
         import torch_directml
@@ -52,7 +55,7 @@ def main():
     else:
         dev = torch.device('cpu')
     from models.mixers import GatedDeltaNet as New
-    Old = load_head_mixers().GatedDeltaNet
+    Old = load_base_mixers(args.base).GatedDeltaNet
     torch.manual_seed(0)
     kw = dict(dim=256, num_heads=8, qk_norm=True, attn_temp=True, max_seq_length=64,
               alpha_init=-2.0, beta_init=2.0)
@@ -71,7 +74,7 @@ def main():
 
     y1, gx1, gp1 = run(m_old)
     y2, gx2, gp2 = run(m_new)
-    print('device', dev)
+    print('device', dev, ' base', args.base)
     print('前向 torch.equal:', torch.equal(y1, y2), ' max|Δ|=', (y1 - y2).abs().max().item())
     print('输入梯度 torch.equal:', torch.equal(gx1, gx2))
     print('参数梯度全部 torch.equal:', all(torch.equal(gp1[n], gp2[n]) for n in gp1),
