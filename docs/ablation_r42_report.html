@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IGMCG-LLM R42 消融实验报告</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --border:#30363d; --text:#e6edf3;
+    --muted:#8b949e; --accent:#58a6ff; --green:#3fb950; --red:#f85149;
+    --gold:#d29922; --purple:#bc8cff;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;line-height:1.6;padding:24px}
+  .container{max-width:1200px;margin:0 auto}
+  header{text-align:center;margin-bottom:32px;padding:32px 0;border-bottom:1px solid var(--border)}
+  header h1{font-size:28px;font-weight:700;background:linear-gradient(135deg,var(--accent),var(--purple));-webkit-background-clip:text;background-clip:text;color:transparent;margin-bottom:8px}
+  header p{color:var(--muted);font-size:14px}
+  .meta-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:24px 0}
+  .meta-card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px;text-align:center}
+  .meta-card .label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+  .meta-card .value{font-size:22px;font-weight:700;margin-top:4px;color:var(--accent)}
+  .section{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:24px;margin-bottom:24px}
+  .section h2{font-size:18px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:8px}
+  .section h2::before{content:"";width:4px;height:18px;background:var(--accent);border-radius:2px}
+  .section .subtitle{color:var(--muted);font-size:13px;margin-bottom:16px}
+  .chart{width:100%;height:420px}
+  .chart-tall{height:500px}
+  .findings{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-top:16px}
+  .finding{background:rgba(88,166,255,.06);border-left:3px solid var(--accent);border-radius:0 8px 8px 0;padding:14px 16px}
+  .finding h4{font-size:14px;color:var(--accent);margin-bottom:6px}
+  .finding p{font-size:13px;color:var(--muted);line-height:1.7}
+  .finding.win{border-left-color:var(--green);background:rgba(63,185,80,.06)}
+  .finding.win h4{color:var(--green)}
+  .finding.warn{border-left-color:var(--gold);background:rgba(210,153,34,.06)}
+  .finding.warn h4{color:var(--gold)}
+  .finding.danger{border-left-color:var(--red);background:rgba(248,81,73,.06)}
+  .finding.danger h4{color:var(--red)}
+  table{width:100%;border-collapse:collapse;font-size:13px;margin-top:12px}
+  th,td{padding:10px 12px;text-align:right;border-bottom:1px solid var(--border)}
+  th:first-child,td:first-child{text-align:left}
+  th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.03em;background:rgba(255,255,255,.02)}
+  tr:hover{background:rgba(88,166,255,.04)}
+  .best{color:var(--green);font-weight:700}
+  .worst{color:var(--red)}
+  .tag{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;margin-right:4px}
+  .tag.on{background:rgba(63,185,80,.15);color:var(--green)}
+  .tag.off{background:rgba(248,81,73,.15);color:var(--red)}
+  .gen-sample{background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:12px}
+  .gen-sample .prompt{font-size:12px;color:var(--muted);margin-bottom:6px}
+  .gen-sample .prompt strong{color:var(--accent)}
+  .gen-sample .output{font-size:14px;line-height:1.8;word-break:break-all}
+  .gen-sample .output.good{color:var(--green)}
+  .gen-sample .output.bad{color:var(--red)}
+  .two-col{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+  @media(max-width:768px){.two-col{grid-template-columns:1fr}}
+  footer{text-align:center;color:var(--muted);font-size:12px;padding:24px 0;border-top:1px solid var(--border);margin-top:16px}
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <h1>IGMCG-LLM R42 消融实验报告</h1>
+  <p>Controller × Direction × Char-Merge-Buffer 三组件全排列消融 · 验证集 800/24 序列 · 2026-09-28 ~ 09-30</p>
+</header>
+
+<div class="meta-grid">
+  <div class="meta-card"><div class="label">模型参数量</div><div class="value">6.76M</div></div>
+  <div class="meta-card"><div class="label">词表大小</div><div class="value">BPE</div></div>
+  <div class="meta-card"><div class="label">实验配置数</div><div class="value">11</div></div>
+  <div class="meta-card"><div class="label">评估模式</div><div class="value">3 种</div></div>
+  <div class="meta-card"><div class="label">最佳 TF PPL</div><div class="value" style="color:var(--green)">106.4</div></div>
+  <div class="meta-card"><div class="label">最稳配置 PPL</div><div class="value" style="color:var(--gold)">199.4</div></div>
+</div>
+
+<!-- 核心结论 -->
+<div class="section">
+  <h2>核心发现</h2>
+  <div class="subtitle">基于 800 序列完整验证集的三模式对比</div>
+  <div class="findings">
+    <div class="finding win">
+      <h4>Controller 是质量核心</h4>
+      <p>开启 Controller 后 TF PPL 从 <strong>970.1 → 106.4</strong>（9.1× 改善）。关闭 Controller 时三种解码模式完全一致，模型退化为普通前馈网络。</p>
+    </div>
+    <div class="finding warn">
+      <h4>Direction 提升 TF 但破坏增量解码</h4>
+      <p>Direction 使 TF PPL 从 199.4 → 106.4（降 47%），但 Incremental PPL 飙升至 <strong>37,265</strong>，KV-Cache 增量解码完全不可用。</p>
+    </div>
+    <div class="finding win">
+      <h4>CMB 修复增量解码一致性</h4>
+      <p>Char-Merge-Buffer 在 Direction=Off 时使 Incremental PPL 从 324.7 → 190.3，与 Prefix 完全对齐（差值 &lt; 0.001），实现三模式一致。</p>
+    </div>
+    <div class="finding danger">
+      <h4>完整模型存在推理矛盾</h4>
+      <p>完整模型（Ctrl+Dir+CMB）TF 最优但 Incremental 崩溃，<strong>无法用于实际部署</strong>。推荐部署配置：Ctrl=On, Dir=Off, CMB=On。</p>
+    </div>
+  </div>
+</div>
+
+<!-- 800序列三模式对比 -->
+<div class="section">
+  <h2>800 序列 · 三解码模式 Loss 对比</h2>
+  <div class="subtitle">Teacher Forcing / Prefix / Incremental 三种模式的交叉熵损失，越低越好</div>
+  <div id="chart1" class="chart chart-tall"></div>
+</div>
+
+<!-- 800序列PPL对比（对数轴） -->
+<div class="section">
+  <h2>800 序列 · PPL 对比（对数轴）</h2>
+  <div class="subtitle">困惑度对比，对数坐标展示跨量级差异。完整模型 Incremental PPL 达 37,265</div>
+  <div id="chart2" class="chart"></div>
+</div>
+
+<!-- 24序列消融全排列 -->
+<div class="section">
+  <h2>24 序列 · 消融全排列热力图</h2>
+  <div class="subtitle">Controller × CMB 四组配置在三种解码模式下的 Loss，颜色越浅越好</div>
+  <div id="chart3" class="chart"></div>
+</div>
+
+<!-- 组件贡献分析 -->
+<div class="section">
+  <h2>组件贡献分析</h2>
+  <div class="subtitle">各组件对 TF Loss 的边际贡献（基于 24 序列对照实验）</div>
+  <div class="two-col">
+    <div id="chart4" class="chart"></div>
+    <div id="chart5" class="chart"></div>
+  </div>
+</div>
+
+<!-- 推理速度 -->
+<div class="section">
+  <h2>推理速度对比</h2>
+  <div class="subtitle">800 序列完整评估的总耗时（秒），含 TF + Prefix + Incremental 三模式</div>
+  <div id="chart6" class="chart"></div>
+</div>
+
+<!-- 详细数据表 -->
+<div class="section">
+  <h2>详细数据 · 800 序列基准</h2>
+  <table>
+    <thead>
+      <tr><th>配置</th><th>Ctrl</th><th>Dir</th><th>CMB</th><th>TF Loss</th><th>TF PPL</th><th>Prefix Loss</th><th>Incr Loss</th><th>Incr PPL</th><th>耗时(s)</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>完整模型</td>
+        <td><span class="tag on">ON</span></td><td><span class="tag on">ON</span></td><td><span class="tag on">ON</span></td>
+        <td class="best">4.667</td><td class="best">106.4</td><td>5.291</td><td class="worst">10.526</td><td class="worst">37,265</td><td>499</td>
+      </tr>
+      <tr>
+        <td>Dir=Off, CMB=On</td>
+        <td><span class="tag on">ON</span></td><td><span class="tag off">OFF</span></td><td><span class="tag on">ON</span></td>
+        <td>5.295</td><td>199.4</td><td>5.296</td><td class="best">5.296</td><td class="best">199.6</td><td>416</td>
+      </tr>
+      <tr>
+        <td>Ctrl=Off</td>
+        <td><span class="tag off">OFF</span></td><td>-</td><td>-</td>
+        <td class="worst">6.877</td><td class="worst">970.1</td><td>6.877</td><td>6.880</td><td>972.4</td><td>354</td>
+      </tr>
+      <tr>
+        <td>Ctrl=Off, CMB=Off</td>
+        <td><span class="tag off">OFF</span></td><td>-</td><td><span class="tag off">OFF</span></td>
+        <td class="worst">6.877</td><td class="worst">970.1</td><td>6.877</td><td>6.880</td><td>972.4</td><td>384</td>
+      </tr>
+      <tr>
+        <td>Ctrl=Off, CMB=On</td>
+        <td><span class="tag off">OFF</span></td><td>-</td><td><span class="tag on">ON</span></td>
+        <td class="worst">6.877</td><td class="worst">970.1</td><td>6.877</td><td>6.877</td><td>970.1</td><td>384</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="section">
+  <h2>详细数据 · 24 序列消融全排列</h2>
+  <table>
+    <thead>
+      <tr><th>配置</th><th>Ctrl</th><th>Dir</th><th>CMB</th><th>TF Loss</th><th>TF PPL</th><th>Prefix Loss</th><th>Incr Loss</th><th>TF-Incr Gap</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Ctrl+Dir (CMB Off)</td>
+        <td><span class="tag on">ON</span></td><td><span class="tag on">ON</span></td><td><span class="tag off">OFF</span></td>
+        <td class="best">4.657</td><td class="best">105.4</td><td>5.257</td><td class="worst">10.462</td><td class="worst">5.805</td>
+      </tr>
+      <tr>
+        <td>Ctrl+Dir+CMB</td>
+        <td><span class="tag on">ON</span></td><td><span class="tag on">ON</span></td><td><span class="tag on">ON</span></td>
+        <td class="best">4.657</td><td class="best">105.4</td><td>5.257</td><td>10.140</td><td>5.483</td>
+      </tr>
+      <tr>
+        <td>Ctrl (Dir Off, CMB Off)</td>
+        <td><span class="tag on">ON</span></td><td><span class="tag off">OFF</span></td><td><span class="tag off">OFF</span></td>
+        <td>5.245</td><td>189.6</td><td>5.249</td><td>5.783</td><td>0.538</td>
+      </tr>
+      <tr>
+        <td>Ctrl+CMB (Dir Off)</td>
+        <td><span class="tag on">ON</span></td><td><span class="tag off">OFF</span></td><td><span class="tag on">ON</span></td>
+        <td>5.245</td><td>189.6</td><td>5.249</td><td class="best">5.249</td><td class="best">0.004</td>
+      </tr>
+      <tr>
+        <td>Ctrl=Off (CMB Off)</td>
+        <td><span class="tag off">OFF</span></td><td>-</td><td><span class="tag off">OFF</span></td>
+        <td class="worst">6.706</td><td class="worst">817.1</td><td>6.706</td><td>6.710</td><td>0.005</td>
+      </tr>
+      <tr>
+        <td>Ctrl=Off+CMB</td>
+        <td><span class="tag off">OFF</span></td><td>-</td><td><span class="tag on">ON</span></td>
+        <td class="worst">6.706</td><td class="worst">817.1</td><td>6.706</td><td>6.706</td><td class="best">0.000</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- 生成样例对比 -->
+<div class="section">
+  <h2>生成质量样例对比</h2>
+  <div class="subtitle">相同 prompt + seed=42 下，不同配置的 greedy 解码输出</div>
+  <div class="two-col">
+    <div>
+      <h4 style="color:var(--green);margin-bottom:12px;font-size:14px">推荐配置：Ctrl=On, Dir=Off, CMB=On</h4>
+      <div class="gen-sample">
+        <div class="prompt"><strong>Prompt:</strong> 今天天气真好，我们去</div>
+        <div class="output good">今天天气真好，我们去年的美国。1、你是否正常的重要组成部分享到：2020年3月1</div>
+      </div>
+      <div class="gen-sample">
+        <div class="prompt"><strong>Prompt:</strong> 人工智能的未来是</div>
+        <div class="output good">人工智能的未来是一个新型的地方，在这次上演了《关于中国共产党第二次会议。20</div>
+      </div>
+      <div class="gen-sample">
+        <div class="prompt"><strong>Prompt:</strong> Hello, how are you</div>
+        <div class="output good">hello,howareyous，但是我们的生活中心。2019年3月26日下午，在这个时候</div>
+      </div>
+    </div>
+    <div>
+      <h4 style="color:var(--red);margin-bottom:12px;font-size:14px">完整模型：Ctrl+Dir+CMB（Incremental 崩溃）</h4>
+      <div class="gen-sample">
+        <div class="prompt"><strong>Prompt:</strong> 今天天气真好，我们去</div>
+        <div class="output bad">今天天气真好，我们去年年年年年年少少少少多多多多多多大大大大大大量量量量量量量数</div>
+      </div>
+      <div class="gen-sample">
+        <div class="prompt"><strong>Prompt:</strong> 人工智能的未来是</div>
+        <div class="output bad">人工智能的未来是人人人人人民民民民民眾眾眾眾眾眾群群群群体体体体体体育育育育</div>
+      </div>
+      <div class="gen-sample">
+        <div class="prompt"><strong>Prompt:</strong> Hello, how are you</div>
+        <div class="output bad">hello,howareyoussssttttiiiaapppppccccnnnnggdd</div>
+      </div>
+    </div>
+  </div>
+  <div style="margin-top:16px;padding:12px;background:rgba(210,153,34,.08);border-radius:8px;font-size:13px;color:var(--gold)">
+    <strong>注意：</strong>完整模型的生成样例来自 TF 模式下的 sample/greedy 输出，虽然 TF 质量指标最优，但实际生成已出现严重重复循环。推荐配置（Dir=Off）的生成文本虽然 PPL 较高，但语义连贯性明显更好，无重复崩溃。
+  </div>
+</div>
+
+<!-- 推荐配置 -->
+<div class="section">
+  <h2>部署建议</h2>
+  <div class="findings">
+    <div class="finding win">
+      <h4>生产部署推荐</h4>
+      <p><strong>Ctrl=On, Dir=Off, CMB=On</strong><br>三模式一致（TF≈Prefix≈Incremental，PPL≈199），支持 KV-Cache 加速推理，生成无重复崩溃。TF PPL 比完整模型高 87%，但可实际部署。</p>
+    </div>
+    <div class="finding warn">
+      <h4>研究方向</h4>
+      <p>Direction 模块与 Incremental 解码存在根本冲突，建议：<br>1) 探索 Direction 的因果兼容变体<br>2) 训练时加入 Incremental 一致性损失<br>3) 用 CMB 思路扩展到 Direction 路径</p>
+    </div>
+    <div class="finding">
+      <h4>下一步实验</h4>
+      <p>1) 4 个新 checkpoint（e_x1/e_x2/e_y1/e_y2）的对比评估<br>2) Direction=Off 配置的更长训练（当前 r42 是 Dir=On 训练的）<br>3) 中文基准测试（CMMLU/CEval）补充</p>
+    </div>
+  </div>
+</div>
+
+<footer>
+  IGMCG-LLM R42 Ablation Report · 数据来源 F:\Projects\igmcg-llm\baselines\ · 生成于 2026-10-01
+</footer>
+
+</div>
+
+<script>
+// 通用配置
+var tooltipCfg = { trigger:'axis', triggerOn:'click', renderMode:'richText', confine:true };
+
+// Chart 1: 800序列三模式Loss对比
+var c1 = echarts.init(document.getElementById('chart1'));
+c1.setOption({
+  tooltip: tooltipCfg,
+  legend: { data:['Teacher Forcing','Prefix','Incremental'], top:0, textStyle:{color:'#8b949e'} },
+  grid: { left:60, right:30, top:50, bottom:40, containLabel:true },
+  xAxis: { type:'category', data:['完整模型\n(Ctrl+Dir+CMB)','Dir=Off\n+CMB','Ctrl=Off','Ctrl=Off\n+CMB Off','Ctrl=Off\n+CMB On'], axisLabel:{color:'#8b949e',interval:0,fontSize:11}, axisLine:{lineStyle:{color:'#30363d'}} },
+  yAxis: { type:'value', name:'Loss (越低越好)', nameTextStyle:{color:'#8b949e'}, axisLabel:{color:'#8b949e'}, splitLine:{lineStyle:{color:'#21262d'}} },
+  series: [
+    { name:'Teacher Forcing', type:'bar', data:[4.667,5.295,6.877,6.877,6.877], itemStyle:{borderRadius:[4,4,0,0]} },
+    { name:'Prefix', type:'bar', data:[5.291,5.296,6.877,6.877,6.877], itemStyle:{borderRadius:[4,4,0,0]} },
+    { name:'Incremental', type:'bar', data:[10.526,5.296,6.880,6.880,6.877], itemStyle:{borderRadius:[4,4,0,0]} }
+  ]
+});
+
+// Chart 2: PPL对数轴对比
+var c2 = echarts.init(document.getElementById('chart2'));
+c2.setOption({
+  tooltip: tooltipCfg,
+  legend: { data:['TF PPL','Prefix PPL','Incremental PPL'], top:0, textStyle:{color:'#8b949e'} },
+  grid: { left:60, right:30, top:50, bottom:40, containLabel:true },
+  xAxis: { type:'category', data:['完整模型','Dir=Off+CMB','Ctrl=Off','Ctrl=Off+CMB Off','Ctrl=Off+CMB On'], axisLabel:{color:'#8b949e',interval:0,fontSize:11}, axisLine:{lineStyle:{color:'#30363d'}} },
+  yAxis: { type:'log', name:'PPL (log轴, 越低越好)', nameTextStyle:{color:'#8b949e'}, axisLabel:{color:'#8b949e'}, splitLine:{lineStyle:{color:'#21262d'}} },
+  series: [
+    { name:'TF PPL', type:'line', data:[106.4,199.4,970.1,970.1,970.1], symbol:'circle', symbolSize:10, lineStyle:{width:3} },
+    { name:'Prefix PPL', type:'line', data:[198.5,199.6,970.1,970.1,970.1], symbol:'circle', symbolSize:10, lineStyle:{width:3} },
+    { name:'Incremental PPL', type:'line', data:[37265,199.6,972.4,972.4,970.1], symbol:'circle', symbolSize:10, lineStyle:{width:3} }
+  ]
+});
+
+// Chart 3: 24序列消融热力图
+var c3 = echarts.init(document.getElementById('chart3'));
+var heatData = [
+  [0,0,4.657],[0,1,5.257],[0,2,10.462],
+  [1,0,4.657],[1,1,5.257],[1,2,10.140],
+  [2,0,5.245],[2,1,5.249],[2,2,5.783],
+  [3,0,5.245],[3,1,5.249],[3,2,5.249],
+  [4,0,6.706],[4,1,6.706],[4,2,6.710],
+  [5,0,6.706],[5,1,6.706],[5,2,6.706]
+];
+c3.setOption({
+  tooltip: { trigger:'item', triggerOn:'click', renderMode:'richText', confine:true,
+    formatter: function(p){ return p.name + String.fromCharCode(10) + 'Loss: ' + p.value[2].toFixed(3); } },
+  grid: { left:140, right:60, top:30, bottom:40 },
+  xAxis: { type:'category', data:['TF','Prefix','Incremental'], axisLabel:{color:'#8b949e'}, axisLine:{lineStyle:{color:'#30363d'}}, splitArea:{show:true} },
+  yAxis: { type:'category', data:['Ctrl+Dir (CMB Off)','Ctrl+Dir+CMB','Ctrl (DirOff,CMB Off)','Ctrl+CMB (DirOff)','Ctrl Off (CMB Off)','Ctrl Off+CMB'], axisLabel:{color:'#8b949e',fontSize:11}, axisLine:{lineStyle:{color:'#30363d'}}, splitArea:{show:true} },
+  visualMap: { min:4.5, max:10.5, calculable:true, orient:'horizontal', left:'center', bottom:0, textStyle:{color:'#8b949e'}, inRange:{color:['#1a4480','#2f81f7','#58a6ff','#d29922','#f85149']} },
+  series: [{ type:'heatmap', data:heatData, label:{show:true, color:'#fff', fontSize:12, formatter:function(p){return p.value[2].toFixed(2);}}, emphasis:{itemStyle:{shadowBlur:10,shadowColor:'rgba(0,0,0,.5)'}} }]
+});
+
+// Chart 4: 组件边际贡献（TF Loss）
+var c4 = echarts.init(document.getElementById('chart4'));
+c4.setOption({
+  title:{ text:'TF Loss 边际贡献', left:'center', textStyle:{color:'#e6edf3',fontSize:14}, subtext:'越低越好', subtextStyle:{color:'#8b949e'} },
+  tooltip: tooltipCfg,
+  grid: { left:60, right:20, top:60, bottom:30, containLabel:true },
+  xAxis: { type:'category', data:['无Ctrl','+Ctrl','+Dir','+CMB'], axisLabel:{color:'#8b949e'}, axisLine:{lineStyle:{color:'#30363d'}} },
+  yAxis: { type:'value', name:'TF Loss', nameTextStyle:{color:'#8b949e'}, axisLabel:{color:'#8b949e'}, splitLine:{lineStyle:{color:'#21262d'}}, min:4, max:7 },
+  series: [{ type:'bar', data:[
+    {value:6.706, itemStyle:{color:'#f85149'}},
+    {value:5.245, itemStyle:{color:'#d29922'}},
+    {value:4.657, itemStyle:{color:'#3fb950'}},
+    {value:4.657, itemStyle:{color:'#8b949e'}}
+  ], itemStyle:{borderRadius:[6,6,0,0]}, label:{show:true,position:'top',color:'#e6edf3',formatter:'{c}'} }]
+});
+
+// Chart 5: 三模式一致性（TF-Incr Gap）
+var c5 = echarts.init(document.getElementById('chart5'));
+c5.setOption({
+  title:{ text:'TF-Incremental 一致性 Gap', left:'center', textStyle:{color:'#e6edf3',fontSize:14}, subtext:'越低越一致，0=完美对齐', subtextStyle:{color:'#8b949e'} },
+  tooltip: tooltipCfg,
+  grid: { left:60, right:20, top:60, bottom:50, containLabel:true },
+  xAxis: { type:'category', data:['Ctrl Off\n+CMB','Ctrl+CMB\n(Dir Off)','Ctrl\n(Dir Off)','Ctrl+Dir\n+CMB','Ctrl+Dir\n(CMB Off)'], axisLabel:{color:'#8b949e',interval:0,fontSize:10}, axisLine:{lineStyle:{color:'#30363d'}} },
+  yAxis: { type:'value', name:'Loss Gap', nameTextStyle:{color:'#8b949e'}, axisLabel:{color:'#8b949e'}, splitLine:{lineStyle:{color:'#21262d'}} },
+  series: [{ type:'bar', data:[
+    {value:0.000, itemStyle:{color:'#3fb950'}},
+    {value:0.004, itemStyle:{color:'#3fb950'}},
+    {value:0.538, itemStyle:{color:'#d29922'}},
+    {value:5.483, itemStyle:{color:'#f85149'}},
+    {value:5.805, itemStyle:{color:'#f85149'}}
+  ], itemStyle:{borderRadius:[6,6,0,0]}, label:{show:true,position:'top',color:'#e6edf3',formatter:'{c}'} }]
+});
+
+// Chart 6: 推理速度
+var c6 = echarts.init(document.getElementById('chart6'));
+c6.setOption({
+  tooltip: tooltipCfg,
+  grid: { left:60, right:30, top:30, bottom:40, containLabel:true },
+  xAxis: { type:'category', data:['完整模型','Dir=Off+CMB','Ctrl=Off','Ctrl=Off+CMB Off','Ctrl=Off+CMB On'], axisLabel:{color:'#8b949e',interval:0,fontSize:11}, axisLine:{lineStyle:{color:'#30363d'}} },
+  yAxis: { type:'value', name:'总耗时 (秒)', nameTextStyle:{color:'#8b949e'}, axisLabel:{color:'#8b949e'}, splitLine:{lineStyle:{color:'#21262d'}} },
+  series: [{ type:'bar', data:[
+    {value:499, itemStyle:{color:'#f85149'}},
+    {value:416, itemStyle:{color:'#d29922'}},
+    {value:354, itemStyle:{color:'#58a6ff'}},
+    {value:384, itemStyle:{color:'#58a6ff'}},
+    {value:384, itemStyle:{color:'#58a6ff'}}
+  ], itemStyle:{borderRadius:[6,6,0,0]}, label:{show:true,position:'top',color:'#e6edf3',formatter:'{c}s'} }]
+});
+
+// 响应式
+window.addEventListener('resize', function(){
+  c1.resize(); c2.resize(); c3.resize(); c4.resize(); c5.resize(); c6.resize();
+});
+</script>
+</body>
+</html>
