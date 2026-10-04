@@ -1,0 +1,30 @@
+## b8_gen_a.json tag=r42_new_default
+[sample] plen=10 genlen=30 boiler_onset=-1 hit=无 plen_onset=9 | 年后，他关于北京集团“中央空调技術是否正常的情况下一条业内开
+[greedy] plen=10 genlen=30 boiler_onset=22 hit='2020年' plen_onset=32 | 年的美国。1、你是否正常的重要组成部分享到：2020年3月1
+[sample] plen=8 genlen=30 boiler_onset=-1 hit=无 plen_onset=7 | 1760vo(在今天安全问题为什么没有过多的情况，一位很简单
+[greedy] plen=8 genlen=30 boiler_onset=-1 hit=无 plen_onset=7 | 一个新型的地方，在这次上演了《关于中国共产党第二次会议。20
+[sample] plen=18 genlen=45 boiler_onset=-1 hit=无 plen_onset=17 | hello,howareyoust）是中国旗下，希望为10个人来说是一个实际防爆”的同时，
+[greedy] plen=18 genlen=45 boiler_onset=27 hit='2019年' plen_onset=45 | hello,howareyous，但是我们的生活中心。2019年3月26日下午，在这个时候
+[sample] plen=14 genlen=42 boiler_onset=16 hit='本文摘要' plen_onset=30 | theweatheris13），本文摘要：2018-06-13点击量：自然剧院第二屆
+[greedy] plen=14 genlen=42 boiler_onset=18 hit='10:32' plen_onset=32 | theweatherissondmy10:32点击数：为什么是美国的一个人类型，在中
+[sample] plen=6 genlen=35 boiler_onset=22 hit='4月24日' plen_onset=28 | ilovest）是中国旗下，希望为10.6年4月24日，王蓓与德国内最
+[greedy] plen=6 genlen=35 boiler_onset=-1 hit=无 plen_onset=5 | iloverstapp是一款非常重要的，但是我们可以通过了解决者：首页
+[sample] plen=16 genlen=45 boiler_onset=19 hit='本文摘要' plen_onset=35 | machinelearning13），本文摘要：2018-06-13点击量：第二季度中心之
+[greedy] plen=16 genlen=45 boiler_onset=31 hit='在线观看' plen_onset=47 | machinelearningous，但是我们的生活中心。2、在线观看地址：1.08元，其
+[sample] plen=2 genlen=30 boiler_onset=17 hit='4月24日' plen_onset=19 | 中国手机本身影響，希望为10.6年4月24日，王蓓与德国内最
+[greedy] plen=2 genlen=30 boiler_onset=25 hit='2019年' plen_onset=27 | “小叶紫檀、侗族和膳食工作室内，但是一个新的生命。2019年
+## b8_gen_b.json tag=r42_new_default_v0hook
+[sample] plen=10 genlen=30 boiler_onset=-1 hit=无 plen_onset=9 | 年后，他关于北京集团“中央空调技術是否了解的情况下一条业内开
+[greedy] plen=10 genlen=30 boiler_onset=9 hit='1.08元' plen_onset=19 | 年来的一个人类型：1.08元，其中也是大家分享到了什么？2、
+[sample] plen=8 genlen=30 boiler_onset=9 hit='28:19' plen_onset=17 | 1760vo(3)28:19浏览次数：为什么，因此一位很多。
+[greedy] plen=8 genlen=30 boiler_onset=21 hit='2019年' plen_onset=29 | 一个新型的基础上，在中国共产党第二次会议。2019年3月26
+[sample] plen=18 genlen=45 boiler_onset=34 hit='点击' plen_onset=52 | hello,howareyoust）是一家简介：2018-06-13点击量：第二季，同时也
+[greedy] plen=18 genlen=45 boiler_onset=29 hit='在线观看' plen_onset=47 | hello,howareyous，但是我们的生活中心。2、在线观看地址：1.08元，其中也
+[sample] plen=14 genlen=42 boiler_onset=16 hit='本文摘要' plen_onset=30 | theweatheris13），本文摘要：2018-06-13点击量：第二季度中心之
+[greedy] plen=14 genlen=42 boiler_onset=18 hit='10:32' plen_onset=32 | theweatherissondmy10:32点击数：为什么是美国的一个人类型，在中
+[sample] plen=6 genlen=35 boiler_onset=24 hit='点击' plen_onset=30 | ilovest）是一家简介：2018-06-13点击量：第二季，同时也
+[greedy] plen=6 genlen=35 boiler_onset=-1 hit=无 plen_onset=5 | iloverstapp是一款非常重要的，但是我们可以通过了解决者：首页
+[sample] plen=16 genlen=45 boiler_onset=19 hit='本文摘要' plen_onset=35 | machinelearning13），本文摘要：2018-06-13点击量：第二季最终在一
+[greedy] plen=16 genlen=45 boiler_onset=22 hit='10:32' plen_onset=38 | machinelearningoustoky10:32点击数：为什么是美国的一个人类型，在
+[sample] plen=2 genlen=30 boiler_onset=-1 hit=无 plen_onset=1 | 中国手机本身影響，希望为10个人来说是一个实际防爆”的同时，
+[greedy] plen=2 genlen=30 boiler_onset=-1 hit=无 plen_onset=1 | “小叶紫檀、侗族的一个人类型，在中国共产党第二次会议。201

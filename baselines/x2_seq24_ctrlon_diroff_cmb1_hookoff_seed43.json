@@ -1,0 +1,40 @@
+{
+  "meta": {
+    "tag": "x2_on_nohook",
+    "model": "F:/Projects/igmcg-llm/checkpoints_e_x2/final_model.pt",
+    "config": "C:\\Users\\hanji\\AppData\\Local\\Temp\\opencode\\e_cfg\\config_e_x2.yaml",
+    "ctrl": "on",
+    "direction": "off",
+    "mem": "on",
+    "buffer": "on",
+    "pow": "on",
+    "hook": "off",
+    "max_seqs": 24,
+    "batch_size": 24,
+    "seed_config": 43,
+    "created": "2026-10-02 23:30:22"
+  },
+  "res": {
+    "tf": {
+      "nll_sum": 8262.324219,
+      "tokens": 1536,
+      "loss": 5.379117,
+      "ppl": 216.830801,
+      "elapsed_s": 0.29
+    },
+    "prefix": {
+      "nll_sum": 8298.80658,
+      "tokens": 1536,
+      "loss": 5.402869,
+      "ppl": 222.042514,
+      "elapsed_s": 7.5
+    },
+    "incremental": {
+      "nll_sum": 8299.482254,
+      "tokens": 1536,
+      "loss": 5.403309,
+      "ppl": 222.14021,
+      "elapsed_s": 1.07
+    }
+  }
+}

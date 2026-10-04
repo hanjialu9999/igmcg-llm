@@ -1,0 +1,60 @@
+## tag=r42_new_default 权重=checkpoints_train_8k_r42 controller=on direction=off 缓冲=True safe_pow=off(r42 default) seed=42 max_length=30 temperature=0.8 top_k=50 repetition_penalty=1.4
+[sample|seed42] prompt=今天天气真好，我们去
+今天天气真好，我们去年后，他关于北京集团“中央空调技術是否正常的情况下一条业内开
+[greedy|seed42] prompt=今天天气真好，我们去
+今天天气真好，我们去年的美国。1、你是否正常的重要组成部分享到：2020年3月1
+[sample|seed42] prompt=人工智能的未来是
+人工智能的未来是1760vo(在今天安全问题为什么没有过多的情况，一位很简单
+[greedy|seed42] prompt=人工智能的未来是
+人工智能的未来是一个新型的地方，在这次上演了《关于中国共产党第二次会议。20
+[sample|seed42] prompt=Hello, how are you
+hello,howareyoust）是中国旗下，希望为10个人来说是一个实际防爆”的同时，
+[greedy|seed42] prompt=Hello, how are you
+hello,howareyous，但是我们的生活中心。2019年3月26日下午，在这个时候
+[sample|seed42] prompt=The weather is
+theweatheris13），本文摘要：2018-06-13点击量：自然剧院第二屆
+[greedy|seed42] prompt=The weather is
+theweatherissondmy10:32点击数：为什么是美国的一个人类型，在中
+[sample|seed42] prompt=I love
+ilovest）是中国旗下，希望为10.6年4月24日，王蓓与德国内最
+[greedy|seed42] prompt=I love
+iloverstapp是一款非常重要的，但是我们可以通过了解决者：首页
+[sample|seed42] prompt=Machine learning
+machinelearning13），本文摘要：2018-06-13点击量：第二季度中心之
+[greedy|seed42] prompt=Machine learning
+machinelearningous，但是我们的生活中心。2、在线观看地址：1.08元，其
+[sample|seed42] prompt=我叫
+我叫中国手机本身影響，希望为10.6年4月24日，王蓓与德国内最
+[greedy|seed42] prompt=我叫
+我叫“小叶紫檀、侗族和膳食工作室内，但是一个新的生命。2019年
+
+## tag=r42_new_default_v0hook 权重=checkpoints_train_8k_r42 controller=on direction=off 缓冲=True safe_pow=off(r42 default) seed=42 max_length=30 temperature=0.8 top_k=50 repetition_penalty=1.4
+[sample|seed42] prompt=今天天气真好，我们去
+今天天气真好，我们去年后，他关于北京集团“中央空调技術是否了解的情况下一条业内开
+[greedy|seed42] prompt=今天天气真好，我们去
+今天天气真好，我们去年来的一个人类型：1.08元，其中也是大家分享到了什么？2、
+[sample|seed42] prompt=人工智能的未来是
+人工智能的未来是1760vo(3)28:19浏览次数：为什么，因此一位很多。
+[greedy|seed42] prompt=人工智能的未来是
+人工智能的未来是一个新型的基础上，在中国共产党第二次会议。2019年3月26
+[sample|seed42] prompt=Hello, how are you
+hello,howareyoust）是一家简介：2018-06-13点击量：第二季，同时也
+[greedy|seed42] prompt=Hello, how are you
+hello,howareyous，但是我们的生活中心。2、在线观看地址：1.08元，其中也
+[sample|seed42] prompt=The weather is
+theweatheris13），本文摘要：2018-06-13点击量：第二季度中心之
+[greedy|seed42] prompt=The weather is
+theweatherissondmy10:32点击数：为什么是美国的一个人类型，在中
+[sample|seed42] prompt=I love
+ilovest）是一家简介：2018-06-13点击量：第二季，同时也
+[greedy|seed42] prompt=I love
+iloverstapp是一款非常重要的，但是我们可以通过了解决者：首页
+[sample|seed42] prompt=Machine learning
+machinelearning13），本文摘要：2018-06-13点击量：第二季最终在一
+[greedy|seed42] prompt=Machine learning
+machinelearningoustoky10:32点击数：为什么是美国的一个人类型，在
+[sample|seed42] prompt=我叫
+我叫中国手机本身影響，希望为10个人来说是一个实际防爆”的同时，
+[greedy|seed42] prompt=我叫
+我叫“小叶紫檀、侗族的一个人类型，在中国共产党第二次会议。201
+

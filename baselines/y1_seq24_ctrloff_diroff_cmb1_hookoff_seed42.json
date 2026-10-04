@@ -1,0 +1,40 @@
+{
+  "meta": {
+    "tag": "y1_off",
+    "model": "F:/Projects/igmcg-llm/checkpoints_e_y1/final_model.pt",
+    "config": "configs/config_train_8k_r42.yaml",
+    "ctrl": "off",
+    "direction": "off",
+    "mem": "on",
+    "buffer": "on",
+    "pow": "on",
+    "hook": "off",
+    "max_seqs": 24,
+    "batch_size": 24,
+    "seed_config": 42,
+    "created": "2026-10-02 23:26:28"
+  },
+  "res": {
+    "tf": {
+      "nll_sum": 10445.790039,
+      "tokens": 1536,
+      "loss": 6.800645,
+      "ppl": 898.426192,
+      "elapsed_s": 0.22
+    },
+    "prefix": {
+      "nll_sum": 10445.789658,
+      "tokens": 1536,
+      "loss": 6.800644,
+      "ppl": 898.425969,
+      "elapsed_s": 5.53
+    },
+    "incremental": {
+      "nll_sum": 10445.789627,
+      "tokens": 1536,
+      "loss": 6.800644,
+      "ppl": 898.425951,
+      "elapsed_s": 0.75
+    }
+  }
+}

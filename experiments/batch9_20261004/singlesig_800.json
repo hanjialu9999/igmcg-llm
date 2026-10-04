@@ -1,0 +1,44 @@
+{
+  "y1_800_ctrloff": {
+    "meta": {
+      "tag": "y1_800_ctrloff",
+      "model": "checkpoints_e_y1/final_model.pt",
+      "config": "configs/config_train_8k_r42.yaml",
+      "ctrl": "off",
+      "direction": "off",
+      "mem": "on",
+      "film": "on",
+      "buffer": "on",
+      "pow": "on",
+      "hook": "off",
+      "max_seqs": 800,
+      "batch_size": 24,
+      "seed_config": 42,
+      "device": "cpu",
+      "created": "2026-10-04 16:20:48"
+    },
+    "res": {
+      "tf": {
+        "nll_sum": 349219.393555,
+        "tokens": 51130,
+        "loss": 6.830029,
+        "ppl": 925.217839,
+        "elapsed_s": 6.82
+      },
+      "prefix": {
+        "nll_sum": 349219.392048,
+        "tokens": 51130,
+        "loss": 6.830029,
+        "ppl": 925.217811,
+        "elapsed_s": 201.08
+      },
+      "incremental": {
+        "nll_sum": 349219.392143,
+        "tokens": 51130,
+        "loss": 6.830029,
+        "ppl": 925.217813,
+        "elapsed_s": 28.39
+      }
+    }
+  }
+}

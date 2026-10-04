@@ -1,0 +1,40 @@
+{
+  "meta": {
+    "tag": "y2_on",
+    "model": "F:/Projects/igmcg-llm/checkpoints_e_y2/final_model.pt",
+    "config": "C:\\Users\\hanji\\AppData\\Local\\Temp\\opencode\\e_cfg\\config_e_y2.yaml",
+    "ctrl": "on",
+    "direction": "off",
+    "mem": "on",
+    "buffer": "on",
+    "pow": "on",
+    "hook": "off",
+    "max_seqs": 24,
+    "batch_size": 24,
+    "seed_config": 43,
+    "created": "2026-10-02 23:27:00"
+  },
+  "res": {
+    "tf": {
+      "nll_sum": 8078.320312,
+      "tokens": 1536,
+      "loss": 5.259323,
+      "ppl": 192.351249,
+      "elapsed_s": 0.28
+    },
+    "prefix": {
+      "nll_sum": 8097.692688,
+      "tokens": 1536,
+      "loss": 5.271935,
+      "ppl": 194.792588,
+      "elapsed_s": 7.39
+    },
+    "incremental": {
+      "nll_sum": 8097.255173,
+      "tokens": 1536,
+      "loss": 5.271651,
+      "ppl": 194.737112,
+      "elapsed_s": 1.07
+    }
+  }
+}
