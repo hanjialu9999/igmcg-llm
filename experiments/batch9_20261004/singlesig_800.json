@@ -40,5 +40,131 @@
         "elapsed_s": 28.39
       }
     }
+  },
+  "y1_800_memoff": {
+    "meta": {
+      "tag": "y1_800_memoff",
+      "model": "checkpoints_e_y1/final_model.pt",
+      "config": "configs/config_train_8k_r42.yaml",
+      "ctrl": "on",
+      "direction": "off",
+      "mem": "off",
+      "film": "on",
+      "buffer": "on",
+      "pow": "on",
+      "hook": "off",
+      "max_seqs": 800,
+      "batch_size": 24,
+      "seed_config": 42,
+      "device": "cpu",
+      "created": "2026-10-04 16:26:36"
+    },
+    "res": {
+      "tf": {
+        "nll_sum": 272614.610352,
+        "tokens": 51130,
+        "loss": 5.331794,
+        "ppl": 206.808588,
+        "elapsed_s": 8.64
+      },
+      "prefix": {
+        "nll_sum": 272614.612568,
+        "tokens": 51130,
+        "loss": 5.331794,
+        "ppl": 206.808597,
+        "elapsed_s": 279.03
+      },
+      "incremental": {
+        "nll_sum": 272614.612602,
+        "tokens": 51130,
+        "loss": 5.331794,
+        "ppl": 206.808597,
+        "elapsed_s": 35.82
+      }
+    }
+  },
+  "y1_800_filmoff": {
+    "meta": {
+      "tag": "y1_800_filmoff",
+      "model": "checkpoints_e_y1/final_model.pt",
+      "config": "configs/config_train_8k_r42.yaml",
+      "ctrl": "on",
+      "direction": "off",
+      "mem": "on",
+      "film": "off",
+      "buffer": "on",
+      "pow": "on",
+      "hook": "off",
+      "max_seqs": 800,
+      "batch_size": 24,
+      "seed_config": 42,
+      "device": "cpu",
+      "created": "2026-10-04 16:32:23"
+    },
+    "res": {
+      "tf": {
+        "nll_sum": 358354.906982,
+        "tokens": 51130,
+        "loss": 7.008701,
+        "ppl": 1106.217134,
+        "elapsed_s": 8.07
+      },
+      "prefix": {
+        "nll_sum": 355127.909859,
+        "tokens": 51130,
+        "loss": 6.945588,
+        "ppl": 1038.557396,
+        "elapsed_s": 269.83
+      },
+      "incremental": {
+        "nll_sum": 356905.822079,
+        "tokens": 51130,
+        "loss": 6.98036,
+        "ppl": 1075.305729,
+        "elapsed_s": 43.12
+      }
+    }
+  },
+  "x1_800_ctrloff": {
+    "meta": {
+      "tag": "x1_800_ctrloff",
+      "model": "checkpoints_e_x1/final_model.pt",
+      "config": "configs/config_train_8k_r42.yaml",
+      "ctrl": "off",
+      "direction": "off",
+      "mem": "on",
+      "film": "on",
+      "buffer": "on",
+      "pow": "on",
+      "hook": "off",
+      "max_seqs": 800,
+      "batch_size": 24,
+      "seed_config": 42,
+      "device": "cpu",
+      "created": "2026-10-04 16:36:58"
+    },
+    "res": {
+      "tf": {
+        "nll_sum": 327686.525879,
+        "tokens": 51130,
+        "loss": 6.40889,
+        "ppl": 607.219058,
+        "elapsed_s": 6.85
+      },
+      "prefix": {
+        "nll_sum": 327686.526592,
+        "tokens": 51130,
+        "loss": 6.40889,
+        "ppl": 607.219067,
+        "elapsed_s": 211.61
+      },
+      "incremental": {
+        "nll_sum": 327686.526241,
+        "tokens": 51130,
+        "loss": 6.40889,
+        "ppl": 607.219062,
+        "elapsed_s": 32.65
+      }
+    }
   }
 }
