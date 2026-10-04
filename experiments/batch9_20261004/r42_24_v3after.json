@@ -1,0 +1,42 @@
+{
+  "r42_24_v3after": {
+    "meta": {
+      "tag": "r42_24_v3after",
+      "model": "checkpoints_train_8k_r42/final_model.pt",
+      "config": "configs/config_train_8k_r42.yaml",
+      "ctrl": "on",
+      "direction": "off",
+      "mem": "on",
+      "buffer": "on",
+      "pow": "on",
+      "hook": "off",
+      "max_seqs": 24,
+      "batch_size": 24,
+      "seed_config": 42,
+      "created": "2026-10-04 17:20:54"
+    },
+    "res": {
+      "tf": {
+        "nll_sum": 8056.41748,
+        "tokens": 1536,
+        "loss": 5.245063,
+        "ppl": 189.627849,
+        "elapsed_s": 0.35
+      },
+      "prefix": {
+        "nll_sum": 8061.884453,
+        "tokens": 1536,
+        "loss": 5.248623,
+        "ppl": 190.30398,
+        "elapsed_s": 8.84
+      },
+      "incremental": {
+        "nll_sum": 8061.783821,
+        "tokens": 1536,
+        "loss": 5.248557,
+        "ppl": 190.291513,
+        "elapsed_s": 1.37
+      }
+    }
+  }
+}
