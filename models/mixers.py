@@ -1036,7 +1036,8 @@ class GatedDeltaNet(LinearMixerBase):
                  dim_wise_rope: bool = False,
                  rwkv7: bool = False,
                  chunk_scan: bool = False,
-                 chunk_size: int = 16):
+                 chunk_size: int = 16,
+                 chunk_wy: bool = False):
         super().__init__(dim, num_heads, qk_norm, attn_temp, max_seq_length, feature,
                          head_dim, rope_learnable, rope_dim_fraction,
                          shared_qkv, shared_proj,
@@ -1092,6 +1093,14 @@ class GatedDeltaNet(LinearMixerBase):
         # 增量解码路径（T=1）也用标准形式单步更新 S=A_t'@S+B_t'，保证 cache parity。
         self.chunk_scan_enabled = chunk_scan
         self.chunk_size = max(1, int(chunk_size))
+        # 10-05 ④：chunk_wy=True 走教科书 gated delta rule + 块内 WY/UT 分块并行（块长 chunk_size，
+        # 默认 16；原型实测 32/64 在 α→1 时炸）。状态按 key 行存 S (D_k×D_v)：
+        #   S_t = α_t (I - β_t k_t k_tᵀ) S_{t-1} + β_t k_t v_tᵀ，读出 o_t = einsum('bhd,bhde->bhe', q_t, S_t)
+        # 上面 for-loop 与 chunk_scan 两条路径的写入方向都与读出不一致（取回 (k·v)k / (q·v)k），
+        # 见 experiments/claude_review_20261003/gdn_chunk_proto.py。默认关，旧权重行为不变。
+        if chunk_wy and (channel_wise or rwkv7 or chunk_scan):
+            raise ValueError('chunk_wy 只支持标量 α/β，不能与 channel_wise / rwkv7 / chunk_scan 同开')
+        self.chunk_wy = chunk_wy
 
     @staticmethod
     def convert_legacy_state_dict(state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
@@ -1164,6 +1173,60 @@ class GatedDeltaNet(LinearMixerBase):
         b = self.b_proj(x).reshape(B, T, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
         return z, b
 
+    @staticmethod
+    def _unit_lower_inv_apply(A: torch.Tensor, X: torch.Tensor, C: int) -> torch.Tensor:
+        """(I + A)⁻¹ X，A 严格下三角幂零：(I - A)(I + A²)(I + A⁴)… 依次作用，不用三角求解。"""
+        X = X - A @ X
+        P = A @ A
+        p = 2
+        while p < C:
+            X = X + P @ X
+            p *= 2
+            if p < C:
+                P = P @ P
+        return X
+
+    def _chunk_wy_scan(self, q, k, v, alpha, beta):
+        """chunk_wy 全量路径：块内 WY/UT 并行，块间 ⌈T/C⌉ 步顺序递推。返回 (num (B,H,T,D), 末状态 S)。
+
+        与 gdn_chunk_proto.chunked_standard 同一算法，状态转置成 key 行存；只用 matmul/exp/log/clamp/cat。
+        T 非 C 整数倍时尾部补 α=1、β=0、k=v=q=0（状态不变），输出截回 T。
+        """
+        B, H, T, D = q.shape
+        C = self.chunk_size
+        la = torch.log(alpha.clamp_min(1e-12))  # (B,H,T,1)
+        b = beta
+        pad = (-T) % C
+        if pad:
+            zd = q.new_zeros(B, H, pad, D)
+            z1 = q.new_zeros(B, H, pad, 1)
+            q, k, v = (torch.cat([t, zd], dim=2) for t in (q, k, v))
+            la = torch.cat([la, z1], dim=2)
+            b = torch.cat([b, z1], dim=2)
+        n = (T + pad) // C
+        qc, kc, vc = (t.reshape(B, H, n, C, D) for t in (q, k, v))
+        la = la.reshape(B, H, n, C, 1)
+        bc = b.reshape(B, H, n, C, 1)
+        i = torch.arange(C, device=q.device)
+        L_incl = (i.unsqueeze(1) >= i.unsqueeze(0)).to(q.dtype)
+        L_strict = (i.unsqueeze(1) > i.unsqueeze(0)).to(q.dtype)
+        g = L_incl @ la                                             # 块内累积 log 衰减
+        G = torch.exp((g - g.transpose(-1, -2)).clamp(max=0.0)) * L_incl  # i≤t 时 γ_t/γ_i
+        A = bc * G * (kc @ kc.transpose(-1, -2)) * L_strict
+        eg = torch.exp(g)
+        U_v = self._unit_lower_inv_apply(A, bc * vc, C)
+        W = self._unit_lower_inv_apply(A, bc * eg * kc, C)
+        P = G * (qc @ kc.transpose(-1, -2))
+        dec_end = torch.exp(g[:, :, :, -1:, :] - g)                 # γ_C/γ_i
+        g_end = torch.exp(g[:, :, :, -1, :]).unsqueeze(-1)          # (B,H,n,1,1)
+        S = q.new_zeros(B, H, D, D)
+        outs = []
+        for c in range(n):
+            U = U_v[:, :, c] - W[:, :, c] @ S
+            outs.append(eg[:, :, c] * (qc[:, :, c] @ S) + P[:, :, c] @ U)
+            S = g_end[:, :, c] * S + kc[:, :, c].transpose(-1, -2) @ (U * dec_end[:, :, c])
+        return torch.cat(outs, dim=2)[:, :, :T], S
+
     def forward(self, x: torch.Tensor, past_kv=None, use_cache: bool = False, start_pos: int = 0,
                 memory_kv=None):
         q, k, v = self.project_and_norm(x, start_pos)
@@ -1189,7 +1252,12 @@ class GatedDeltaNet(LinearMixerBase):
             # z 更新用原形状无需 squeeze，省 2 次 squeeze/步。
             alpha_t = alpha[:, :, 0, :]   # (B,H,1) 或 (B,H,D)
             beta_t = beta[:, :, 0, :]
-            if self.chunk_scan_enabled:
+            if self.chunk_wy:
+                # 教科书形式单步：S = α·S + β·k ⊗ (v - α·kᵀS)，与 _chunk_wy_scan 全量路径 cache parity
+                Sk = torch.einsum('bhd,bhde->bhe', kf_t, S)
+                S = alpha_t.unsqueeze(-1) * S + beta_t.unsqueeze(-1) * (
+                    kf_t.unsqueeze(-1) * (v_t - alpha_t * Sk).unsqueeze(-2))
+            elif self.chunk_scan_enabled:
                 # R36-4b：标准 delta rule 单步更新（与 chunk_scan 全量路径约定一致，非 for-loop 转置约定）。
                 # S_new = A_t' @ S + B_t'，其中 A_t'/B_t' 已含 RWKV-7 修正：
                 #   A_t = α·I - β·k⊗k^T（标量）/ Diag(α) - Diag(β)·k⊗k^T（channel_wise）
@@ -1254,6 +1322,14 @@ class GatedDeltaNet(LinearMixerBase):
         b_z = (beta_exp * kf).permute(0, 2, 1, 3).reshape(B, T, H * D, 1)
         z_all = _parallel_prefix_scan(a_z, b_z)                        # (B,T,H*D,1)
         z_all = z_all.reshape(B, T, H, D).permute(0, 2, 1, 3)         # (B,H,T,D)
+
+        if self.chunk_wy:
+            num, S = self._chunk_wy_scan(qf, kf, v, alpha, beta)
+            den = torch.einsum('bhtd,bhtd->bht', qf, z_all).unsqueeze(-1).clamp_min(1e-6)
+            out = (num / den).transpose(1, 2).reshape(B, T, H * D)
+            z = z_all[:, :, -1, :]
+            present = (k, v, S, z) if use_cache else None
+            return self.proj(out), present
 
         # R36-4b：S 更新 chunk-wise 矩阵前缀扫描（opt-in 默认关）。
         # 用「标准 delta rule」形式 S_t = A_t·S_{t-1} + B_t（注意：非原 for-loop 转置约定，

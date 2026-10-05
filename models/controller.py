@@ -84,7 +84,8 @@ class ControllerModel(nn.Module):
                  mem_slots: int, max_seq_length: int,
                  embedding_layer: nn.Embedding,
                  use_direction: bool = True, use_film: bool = True,
-                 use_memory_compress: bool = True, direction_causal: bool = False):
+                 use_memory_compress: bool = True, direction_causal: bool = False,
+                 chunk_scan: bool = False):
         super().__init__()
         # H1 修复开关（10-05）：True = direction 逐位置取前缀滚动均值 (B,T,gen_dim)，
         # 训练与增量解码同一语义；False = 旧行为整段均值 (B,gen_dim)（训练看到未来、增量第 2 步起只剩 1 token）
@@ -114,11 +115,13 @@ class ControllerModel(nn.Module):
         self.ln_layers = nn.ModuleList([RMSNorm(ctrl_dim) for _ in range(ctrl_layers)])
         # GatedDeltaNet mixer：线性复杂度看全上下文，S 矩阵=上下文压缩
         # 用项目已验证的默认参数（alpha_init=-2 弱遗忘 / beta_init=2 强写入）
-        # chunk_scan=False（for-loop 路径）：比 chunk_scan 省峰值内存（后者 A_mats/B_mats 各 50MB，
-        # DML OOM）；for-loop 仅保持单步 S (B,H,D,D)，峰值低。
+        # chunk_scan=False（旧 for-loop 路径）：不走 GDN 自带 chunk_scan（A_mats/B_mats 各 50MB，DML OOM）。
+        # chunk_scan=True（10-05 ④）：GDN chunk_wy——教科书 delta rule + C=16 分块，块内并行、块间 T/16 步，
+        # 状态按 key 行存，与下面 mem_query 的 einsum('mhd,bhde->bme') 读法同向。
         self.mixers = nn.ModuleList([
             GatedDeltaNet(dim=ctrl_dim, num_heads=ctrl_heads, qk_norm=True, attn_temp=True,
-                          max_seq_length=max_seq_length, alpha_init=-2.0, beta_init=2.0)
+                          max_seq_length=max_seq_length, alpha_init=-2.0, beta_init=2.0,
+                          chunk_wy=chunk_scan)
             for _ in range(ctrl_layers)])
         # ① 压缩记忆投影：S (B, H_ctrl, D_head, D_head) → mem_query (M, H_ctrl, D_head) einsum
         #   → (B, M, D_head) → Linear(D_head, 2*gen_head_dim) → chunk → (mk, mv)
