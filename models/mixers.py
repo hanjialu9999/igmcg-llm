@@ -1228,8 +1228,11 @@ class GatedDeltaNet(LinearMixerBase):
         dec_end = torch.exp(g[:, :, :, -1:, :] - g)                 # γ_C/γ_i
         g_end = torch.exp(g[:, :, :, -1, :]).unsqueeze(-1)          # (B,H,n,1,1)
         if read_q is not None:
-            # (B,H,n,C,M,C)：Pm[t,m,i] = G[t,i]·(q_m·k_i)
-            Pm = G.unsqueeze(-2) * torch.einsum('mhd,bhncd->bhnmc', read_q, kc).unsqueeze(-3)
+            # (B,H,n,C,M,C)：Pm[t,m,i] = G[t,i]·(q_m·k_i)。先并成 4 维再双边广播：
+            # 6 维双边广播在 DML 上触发 dml_tensor_desc.cc:135 broadcast 检查直接杀进程（10-05 实测）
+            qk = torch.einsum('mhd,bhncd->bhnmc', read_q, kc)
+            M = qk.size(3)
+            Pm = (G.reshape(-1, C, 1, C) * qk.reshape(-1, 1, M, C)).reshape(B, H, n, C, M, C)
             reads = []
         S = q.new_zeros(B, H, D, D)
         outs = []
