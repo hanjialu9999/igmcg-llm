@@ -26,7 +26,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from models.transformer import TransformerModel
-from models.data_utils import load_data, create_dataloader, split_dataset
+from models.data_utils import load_data, load_packed_data, create_dataloader, split_dataset
 from models.config_loader import build_model, load_config
 from models.device import get_device, apply_cpu_threads
 from models.utils import (save_checkpoint, cleanup_old_checkpoints,
@@ -489,11 +489,23 @@ def main(config_path='configs/pretrain.yaml', resume=False):
     
     # Load data
     print("Loading data...")
-    dataset, vocab = load_data(
-        config['data']['train_file'],
-        vocab_size=config['data']['vocab_size'],
-        max_seq_length=config['data']['max_seq_length']
-    )
+    test_split = config['data'].get('test_split', 0.0)
+    # data.pack（缺省关 = 旧行为：每行截到 max_seq_length+1）：先按行切 train/val 再各自打包
+    pack = bool(config['data'].get('pack', False))
+    if pack:
+        dataset, val_dataset, vocab = load_packed_data(
+            config['data']['train_file'],
+            vocab_size=config['data']['vocab_size'],
+            max_seq_length=config['data']['max_seq_length'],
+            test_split=test_split, seed=config['seed'],
+            max_train_chunks=config['data'].get('pack_max_train_chunks'),
+            max_val_chunks=config['data'].get('pack_max_val_chunks'))
+    else:
+        dataset, vocab = load_data(
+            config['data']['train_file'],
+            vocab_size=config['data']['vocab_size'],
+            max_seq_length=config['data']['max_seq_length']
+        )
     print(f"Vocabulary size: {len(vocab)}")
     print(f"Dataset size: {len(dataset)}")
 
@@ -508,8 +520,9 @@ def main(config_path='configs/pretrain.yaml', resume=False):
             f"（当前 data.vocab_size={config['data']['vocab_size']}）。")
     
     # Split into train/validation
-    test_split = config['data'].get('test_split', 0.0)
-    if test_split > 0:
+    if pack:
+        train_dataset = dataset
+    elif test_split > 0:
         train_dataset, val_dataset = split_dataset(dataset, train_ratio=1.0 - test_split,
                                                     seed=config['seed'])
         print(f"Split: train={len(train_dataset)}, val={len(val_dataset)} "

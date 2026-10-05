@@ -16,13 +16,18 @@ from models.constants import (SPECIAL_TOKENS, PAD_IDX, UNK_IDX, BOS_IDX,
 class TextDataset(Dataset):
     """Improved dataset with lazy loading and better preprocessing"""
     
-    def __init__(self, texts: List[str], vocab: 'BaseTokenizer', max_seq_length: int = 32, preprocess: bool = True):
+    def __init__(self, texts: List[str], vocab: 'BaseTokenizer', max_seq_length: int = 32, preprocess: bool = True,
+                 pack: bool = False, max_chunks: Optional[int] = None, seed: int = 42):
         """
         Args:
             texts: List of text strings
             vocab: BaseTokenizer object (统一分词，训练/推理共用)
             max_seq_length: Maximum sequence length
             preprocess: Whether to preprocess texts (clean, deduplicate)
+            pack: 打包模式——各行 [BOS..EOS] 首尾相接成一条流，按 max_seq_length 步长切成
+                长 L=max_seq_length+1 的块（相邻块重叠 1 个 token，流里每个 token 都当过目标）。
+                关（默认）= 旧行为：每行截到 L、不足补 pad（长行只用到开头）。
+            max_chunks: 仅 pack 时有效；块数超过时按 seed 随机抽这么多块（固定子集，便于控步数和复现）
         """
         self.vocab = vocab
         self.max_seq_length = max_seq_length
@@ -36,20 +41,35 @@ class TextDataset(Dataset):
         # “GPU 不响应更多命令 / device reset”导致 backward 崩溃。
         L = max_seq_length + 1
         pad = self.vocab.pad_idx
-        # int32 以容纳 vocab_size > 32767 的词表（int16 上限 32767，超界会回绕静默损坏 token id）。
-        arr = np.zeros((len(texts), L), dtype=np.int32)
-        for i, text in enumerate(texts):
-            tokens = self.vocab.encode(text)
-            n = len(tokens)
-            if n > L:
-                tokens = tokens[:L]
-            elif n < L:
-                tokens = tokens + [pad] * (L - n)
-            arr[i] = tokens
+        if pack:
+            arr = self._pack(texts, L, max_chunks, seed)
+        else:
+            # int32 以容纳 vocab_size > 32767 的词表（int16 上限 32767，超界会回绕静默损坏 token id）。
+            arr = np.zeros((len(texts), L), dtype=np.int32)
+            for i, text in enumerate(texts):
+                tokens = self.vocab.encode(text)
+                n = len(tokens)
+                if n > L:
+                    tokens = tokens[:L]
+                elif n < L:
+                    tokens = tokens + [pad] * (L - n)
+                arr[i] = tokens
         self.tokens = torch.from_numpy(arr)  # (N, L) int32，取用时转 long
         self.texts = None  # 释放原始字符串，回收内存
-        
-    def _preprocess_texts(self, texts: List[str]) -> List[str]:
+
+    def _pack(self, texts: List[str], L: int, max_chunks: Optional[int], seed: int) -> np.ndarray:
+        """各行编码后拼成一条流，按步长 L-1 切 (N, L) 块；尾部不足一块的丢弃（< L-1 个 token）。"""
+        parts = [np.asarray(self.vocab.encode(t), dtype=np.int32) for t in texts]
+        stream = np.concatenate(parts) if parts else np.zeros(0, dtype=np.int32)
+        T = L - 1
+        n = max((len(stream) - 1) // T, 0)
+        starts = np.arange(n, dtype=np.int64) * T
+        if max_chunks is not None and n > max_chunks:
+            starts = np.sort(np.random.RandomState(seed).choice(starts, int(max_chunks), replace=False))
+        return stream[starts[:, None] + np.arange(L)]
+
+    @staticmethod
+    def _preprocess_texts(texts: List[str]) -> List[str]:
         """Clean and validate texts"""
         cleaned: List[str] = []
         seen: set = set()
@@ -117,6 +137,36 @@ def load_data(data_file: str, vocab_size: int = 5000, max_seq_length: int = 32,
     print(f"  regular symbols: {len(vocab.word2idx) - len(vocab.special_tokens)}")
     
     return dataset, vocab
+
+
+def load_packed_data(data_file: str, vocab_size: int = 5000, max_seq_length: int = 32,
+                     test_split: float = 0.1, seed: int = 42,
+                     max_train_chunks: Optional[int] = None, max_val_chunks: Optional[int] = None,
+                     min_freq: int = 1, vocab: Optional['BaseTokenizer'] = None
+                     ) -> Tuple[TextDataset, Optional[TextDataset], 'BaseTokenizer']:
+    """打包版 load_data + split_dataset：先按行（清洗去重后）随机切 train/val，再各自打包，
+    同一行不会同时出现在两边。词表与 load_data 一样用全部行构建。test_split=0 时 val 为 None。"""
+    print(f"Loading data from {data_file} (packed)...")
+    with open(data_file, 'r', encoding='utf-8', errors='replace') as f:
+        texts = [line.strip() for line in f if line.strip()]
+    print(f"Loaded {len(texts)} lines")
+    if vocab is None:
+        vocab = CharTokenizer(vocab_size=vocab_size)
+        vocab.train(texts, min_freq=min_freq)
+    texts = TextDataset._preprocess_texts(texts)
+    perm = np.random.RandomState(seed).permutation(len(texts))
+    n_train = int(len(texts) * (1.0 - test_split))
+    train_texts = [texts[i] for i in np.sort(perm[:n_train])]
+    val_texts = [texts[i] for i in np.sort(perm[n_train:])]
+    del texts
+    train_ds = TextDataset(train_texts, vocab, max_seq_length, preprocess=False,
+                           pack=True, max_chunks=max_train_chunks, seed=seed)
+    val_ds = (TextDataset(val_texts, vocab, max_seq_length, preprocess=False,
+                          pack=True, max_chunks=max_val_chunks, seed=seed) if val_texts else None)
+    print(f"Packed: lines train={len(train_texts)} val={len(val_texts)}；"
+          f"chunks train={len(train_ds)} val={len(val_ds) if val_ds is not None else 0}"
+          f"（L={max_seq_length + 1}，上限 train={max_train_chunks} val={max_val_chunks}）")
+    return train_ds, val_ds, vocab
 
 
 def create_dataloader(dataset: TextDataset, batch_size: int = 16, shuffle: bool = True, num_workers: int = 0) -> DataLoader:

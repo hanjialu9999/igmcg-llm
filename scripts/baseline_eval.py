@@ -33,7 +33,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from models.checkpoint import load_model
-from models.data_utils import load_data, split_dataset
+from models.data_utils import load_data, load_packed_data, split_dataset
 from models.device import get_device, apply_cpu_threads
 from models.config_loader import load_config
 from scripts.generate import generate_text
@@ -67,17 +67,27 @@ def _sha256_head(path, n=16):
 
 
 def load_val_set(config, max_seqs=0):
-    """复刻训练期的 val 划分（同 train_file / test_split / seed），保证与 val_loss 同分布。"""
-    dataset, vocab = load_data(
-        config['data']['train_file'],
-        vocab_size=config['data']['vocab_size'],
-        max_seq_length=config['data']['max_seq_length'],
-    )
+    """复刻训练期的 val 划分（同 train_file / test_split / seed），保证与 val_loss 同分布。
+    config 开 data.pack 时走打包 val（旧 ckpt 配打包 config 即可在同一 val 上比）。"""
     test_split = config['data'].get('test_split', 0.0)
     if test_split <= 0:
         raise ValueError('config 的 data.test_split <= 0，没有 val 集可评测')
-    _, val_dataset = split_dataset(dataset, train_ratio=1.0 - test_split,
-                                   seed=config['seed'])
+    if config['data'].get('pack', False):
+        _, val_dataset, vocab = load_packed_data(
+            config['data']['train_file'],
+            vocab_size=config['data']['vocab_size'],
+            max_seq_length=config['data']['max_seq_length'],
+            test_split=test_split, seed=config['seed'],
+            max_train_chunks=config['data'].get('pack_max_train_chunks'),
+            max_val_chunks=config['data'].get('pack_max_val_chunks'))
+    else:
+        dataset, vocab = load_data(
+            config['data']['train_file'],
+            vocab_size=config['data']['vocab_size'],
+            max_seq_length=config['data']['max_seq_length'],
+        )
+        _, val_dataset = split_dataset(dataset, train_ratio=1.0 - test_split,
+                                       seed=config['seed'])
     n = max_seqs if (max_seqs and max_seqs > 0) else len(val_dataset)
     n = min(n, len(val_dataset))
     if n < len(val_dataset):

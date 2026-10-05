@@ -1,0 +1,93 @@
+# 【打包版，10-05】= config_train_8k.yaml + data.pack：先按行切 train/val 再各自打包成 65-token 块，长行不再只用开头。
+# 步数对齐旧版 3 epoch（900 步 × 24 = 21600 块），同算力比数据效果；val 固定抽 2400 块。
+# 8000 行训练配置：适中特性集（不全开，避开训练慢的 ngram/qat/跨层协作）
+# 路线：attn mixer + intra_hybrid_rope NoPE 增强包 + R15/R23/R25 高价值特性
+# 互斥处理：不开 use_mla_kv（与 intra_hybrid_rope 冲突）、不开 rwkv7/gated_delta_channel_wise（需 gated_delta mixer）
+# 历史基准：R22 intra_hybrid 5.70M Train 6.49/Val 5.90/3134 tok/s（CPU, 4000 行）
+#           R23 GPAS 5.70M Train 6.64/Val 6.12/7104 tok/s（CPU, 4000 行）
+#           R27 全特性 DML 8.07M Train 9.07/Val 9.81/1117 tok/s（150 步）
+# 本配置：8000 行数据翻倍 + DML + 12 项高价值特性（非全 25+）
+model:
+  vocab_size: 12000
+  embedding_dim: 256
+  num_heads: 8
+  num_layers: 4
+  hidden_dim: 512
+  max_seq_length: 64
+  dropout: 0
+  tie_weights: true
+  gradient_checkpointing: false
+  rope_base: 10000.0
+  rope_max_len: 4096
+  mask_fill_value: -1e9
+  layer_plan: "attn,attn,attn,attn"   # 全 attn 层，配合 intra_hybrid_rope
+  ssm_d_state: 16
+  ssm_d_inner_factor: 1
+  ssm_dt_rank: null
+  ssm_conv_kernel: 3
+  ssm_dt_proj_bias_init: 0.1
+  ssm_a_log_init_range: [-1, 1]
+  ssm_D_init: 1.0
+  attn_window: 0
+  attn_rel_bias: false
+  alibi: true                    # intra_hybrid_rope + NoPE half 必需
+  mixer: "attn"                  # R37: attn_linear → attn（R29 实测两者速度/质量相等，省线性分支 + mixer_gate）
+  char_merge: true               # 学习型字符合并（架构层分词）
+  char_merge_kernel: 3
+  char_merge_dropout: 0.0
+  # 第15轮：Partial RoPE + Output Gate + Zero-Centered Norm（高价值架构包）
+  rope_dim_fraction: 0.5         # 只旋转一半维度，另一半靠 ALiBi 获位置
+  output_gate: true              # NeurIPS 2025 Best：门源 out→query
+  zero_centered_norm: true       # 防止 RMSNorm 权重爆炸
+  # 第17轮：SwiGLU 合并（GEMM 调用 2→1，DML 加速）
+  fuse_swiglu: true
+  # 第19轮：YaRN 长度外推（2x 外推，高频外推低频插值）
+  yarn_scale: 2.0
+  yarn_beta: 0.1
+  yarn_orig_max_seq_length: 0
+  # 第二十二轮 NoPE 增强包（intra_hybrid_rope 包：3 项必同开）
+  intra_hybrid_rope: true        # 层内 head 拆半 RoPE/NoPE
+  intra_hybrid_ratio: 0.5        # 半半拆分（4 RoPE + 4 NoPE head）
+  head_temp: true                # NoPE half 需 per-head 温度防外推熵爆炸
+  value_relative_coding: true    # NoPE half 需 value-side 相对位置信号
+  # 第二十三轮：GPAS 梯度保留激活缩放（Pre-LN 跨层方差控制）
+  gpas: true
+  gpas_alpha_init: 0.5
+  # 第二十五轮：ALiBi 可学斜率（per-head 自由学习位置衰减模式）
+  alibi_learnable: true
+
+training:
+  batch_size: 24                 # DML 性能甜点（bs32 OOM）
+  epochs: 1                      # 10-05 用户定：测试一律 1 epoch 看效果最快（旧值 3；历史 1ep val5.19 → 3ep val4.13）
+  learning_rate: 3.0e-3
+  optimizer: adamw               # R37: sgd → adamw（train.py _dml_foreach_lerp patch 已消除 DML CPU lerp 回退税）
+  weight_decay: 0.0
+  gradient_clip: 1.0
+  warmup_steps: 10               # 10 步预热避免初期不稳
+  early_stop_patience: 9999
+  label_smoothing: 0.0
+  cpu_threads: 4
+  checkpoint_percents: [0.25, 0.5, 0.8]  # Step 级 checkpoint：25%/50%/80% 时存档，支持中断续训
+  precision: "fp32"
+  grad_accum_steps: 1
+  eta_min: 0.0
+  lr_schedule: "wsd"             # warmup-stable-decay，末段衰减收敛更好
+  wsd_decay_frac: 0.1            # 最后 10% 步衰减
+  compile: false
+
+data:
+  train_file: "data/pretrain_corpus/merged_8k.txt"
+  vocab_size: 12000
+  max_seq_length: 64
+  num_workers: 0
+  test_split: 0.1
+  pack: true                     # 10-05 打包（缺省 false = 旧行为：每行截到 65，8k 语料每 epoch 只用 7.58%）
+  pack_max_train_chunks: 21600   # = 900 步 × bs24；全量约 9.4 万块（null = 不限）
+  pack_max_val_chunks: 2400      # 按 seed 固定抽样，跨 run 可比
+
+paths:
+  checkpoint_dir: "checkpoints_train_8k_pack"
+  log_dir: "logs_train_8k_pack"
+
+device: "auto"
+seed: 42
