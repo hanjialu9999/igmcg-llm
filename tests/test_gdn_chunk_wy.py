@@ -42,7 +42,7 @@ def _inputs(T=37, B=2, H=3, D=8, seed=0):
 def test_chunk_wy_scan_matches_loop_fwd_and_grad(T):
     m = GatedDeltaNet(dim=24, num_heads=3, chunk_wy=True)
     xs = _inputs(T=T)
-    o1, S1 = m._chunk_wy_scan(*xs)
+    o1, S1, _ = m._chunk_wy_scan(*xs)
     o2, S2 = _ref_loop(*xs)
     assert (o1 - o2).abs().max().item() < 1e-9
     assert (S1 - S2).abs().max().item() < 1e-9

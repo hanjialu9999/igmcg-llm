@@ -85,11 +85,14 @@ class ControllerModel(nn.Module):
                  embedding_layer: nn.Embedding,
                  use_direction: bool = True, use_film: bool = True,
                  use_memory_compress: bool = True, direction_causal: bool = False,
-                 chunk_scan: bool = False):
+                 chunk_scan: bool = False, causal_memory: bool = False):
         super().__init__()
         # H1 修复开关（10-05）：True = direction 逐位置取前缀滚动均值 (B,T,gen_dim)，
         # 训练与增量解码同一语义；False = 旧行为整段均值 (B,gen_dim)（训练看到未来、增量第 2 步起只剩 1 token）
         self.direction_causal = direction_causal
+        # H2 修复开关（10-05）：True = mem_kv 逐位置 (B,T,M,·)，位置 t 读末层 S_t（只含 0..t）；
+        # False = 旧行为读整段末态 S_T (B,M,·)（训练时每个位置都读到未来）。见 docs/H2_CAUSALIZATION_PLAN.md B1。
+        self.causal_memory = causal_memory
         assert ctrl_dim % ctrl_heads == 0, (
             f"ctrl_dim ({ctrl_dim}) must be divisible by ctrl_heads ({ctrl_heads})")
         self.gen_dim = gen_dim
@@ -211,7 +214,12 @@ class ControllerModel(nn.Module):
             xn = ln(x)
             past_i = past_kv[i] if (past_kv is not None and i < len(past_kv)) else None
             # 内部强制 use_cache=True 以获取 S（压缩记忆源）；外部 use_cache 决定是否返回
-            h, present = mixer(xn, past_kv=past_i, use_cache=True, start_pos=start_pos)
+            pos_reads = None
+            if self.causal_memory and self.use_memory_compress and i == self.ctrl_layers - 1:
+                h, present, pos_reads = mixer.forward_with_reads(
+                    xn, past_kv=past_i, use_cache=True, start_pos=start_pos, read_q=self.mem_query)
+            else:
+                h, present = mixer(xn, past_kv=past_i, use_cache=True, start_pos=start_pos)
             x = x + h
             if use_cache and presents is not None:
                 presents.append(present)
@@ -222,7 +230,11 @@ class ControllerModel(nn.Module):
         # ① 压缩记忆：S (B, H_ctrl, D_head, D_head) → mem_query (M, H_ctrl, D_head) einsum
         #   → (B, M, D_head) → mem_proj → (B, M, 2*gen_head_dim) → chunk → (mk, mv)
         mem_kv = None
-        if self.use_memory_compress and last_S is not None:
+        if self.use_memory_compress and pos_reads is not None:
+            # H2：逐位置读出 (B, T, M, D_head) → mem_proj → mk/mv 各 (B, T, M, gen_head_dim)
+            mk, mv = self.mem_proj(pos_reads).chunk(2, dim=-1)
+            mem_kv = (mk, mv)
+        elif self.use_memory_compress and last_S is not None:
             # einsum('mhd,bhde->bme', mem_query, S) → (B, M, D_head)
             # 每个 mem_slot m 对每头 h 用查询向量 q[m,h] 读 S[h] 的 e 维 → 聚合头间到 m 维
             mem = torch.einsum('mhd,bhde->bme', self.mem_query, last_S)

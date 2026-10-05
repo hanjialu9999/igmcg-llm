@@ -222,7 +222,7 @@ class MemoryBank(nn.Module):
         Args:
             q: (B,H,Tq,D) 查询
             k,v: 主序列 K/V（B,H,Tkv,D），记忆将拼到其前面
-            mk,mv: 记忆 K/V（B,M,D）
+            mk,mv: 记忆 K/V（B,M,D）各位置共享；或 (B,Tq,M,D) 逐位置（H2，见下方 positional 分支）
             meta: 检索元信息（retrieval_gate / sparse_topk），可为 None
             mask_fill: 掩码填充值（-1e9）
         Returns:
@@ -230,12 +230,21 @@ class MemoryBank(nn.Module):
             v_aug: 记忆拼接后的 V (B,H,M+Tkv,D)
             mem_bias: 记忆段可加偏置 (B,H,Tq,M) 或 None
         """
-        mem_cols = mk.size(1)
-        # 各头共享记忆 K/V：升维到 (B,H,M,D) 供点积与拼接复用（避免重复 expand）
-        mk_e = mk.unsqueeze(1).expand(-1, q.size(1), -1, -1)
-        mv_e = mv.unsqueeze(1).expand(-1, q.size(1), -1, -1)
-        # 记忆查询相似度（每槽点积）：(B,H,Tq,M)，廉价（M 小）
-        mlogits = torch.einsum('bhqd,bhmd->bhqm', q, mk_e)
+        mem_cols = mk.size(-2)
+        positional = mk.dim() == 4
+        if positional:
+            # H2 controller_causal_memory（10-05）：逐位置记忆 mk/mv (B,Tq,M,D)，query t 只读自己那 M 槽。
+            # SDPA 的 K/V 各行共享，于是记忆列 K 置 0，q·mk/√D 放进 mem_bias 加到 scores；
+            # V 末尾拼 M 个指示通道（记忆列 m 取 e_m，主序列列取 0），SDPA 输出末 M 维即记忆列的
+            # 注意力权重，attend 再用 positional_memory_out 换成 Σ_m p_m·mv[t,m]。数学上与共享记忆同一 softmax。
+            mlogits = torch.einsum('bhqd,bqmd->bhqm', q, mk)
+            raw = mlogits * (q.size(-1) ** -0.5)
+        else:
+            # 各头共享记忆 K/V：升维到 (B,H,M,D) 供点积与拼接复用（避免重复 expand）
+            mk_e = mk.unsqueeze(1).expand(-1, q.size(1), -1, -1)
+            mv_e = mv.unsqueeze(1).expand(-1, q.size(1), -1, -1)
+            # 记忆查询相似度（每槽点积）：(B,H,Tq,M)，廉价（M 小）
+            mlogits = torch.einsum('bhqd,bhmd->bhqm', q, mk_e)
         if meta is not None:
             # 仅当开启检索/稀疏时才加偏置；否则记忆仅作为全局 KV 参与注意力（不加额外 bias）。
             # R39 修复：此前 mem_bias=mlogits 无条件返回——meta=None（无检索无稀疏）时
@@ -262,7 +271,23 @@ class MemoryBank(nn.Module):
         else:
             mem_bias = None
 
+        if positional:
+            B, H, Tkv, Dv = v.shape
+            mem_bias = raw if mem_bias is None else raw + mem_bias
+            k_aug = torch.cat([k.new_zeros(B, H, mem_cols, k.size(-1)), k], dim=2)
+            eye = torch.eye(mem_cols, dtype=v.dtype).to(v.device).view(1, 1, mem_cols, mem_cols)
+            v_mem = torch.cat([v.new_zeros(B, H, mem_cols, Dv), eye.expand(B, H, -1, -1)], dim=-1)
+            v_aug = torch.cat([v_mem, torch.cat([v, v.new_zeros(B, H, Tkv, mem_cols)], dim=-1)], dim=2)
+            return k_aug, v_aug, mem_bias
+
         # 记忆拼到 K/V 之前（记忆在前，窗口/全量在后）；各头共享记忆 K/V
         k_aug = torch.cat([mk_e, k], dim=2)
         v_aug = torch.cat([mv_e, v], dim=2)
         return k_aug, v_aug, mem_bias
+
+    @staticmethod
+    def positional_memory_out(out: torch.Tensor, mv: torch.Tensor) -> torch.Tensor:
+        """逐位置记忆（inject_memory 的 4 维 mk/mv 分支）的 SDPA 后处理：
+        out (B,H,Tq,Dv+M) → 前 Dv 维（主序列部分）+ Σ_m p_m·mv[t,m]。mv: (B,Tq,M,Dv)。"""
+        Dv = mv.size(-1)
+        return out[..., :Dv] + torch.einsum('bhqm,bqmd->bhqd', out[..., Dv:], mv)

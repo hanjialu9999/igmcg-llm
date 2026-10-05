@@ -40,6 +40,15 @@ __all__ = [
 ]
 
 
+def _cat_mem(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    """沿槽维拼两段记忆 K 或 V。一段逐位置 (B,T,M,D)（H2 causal_memory）、一段共享 (B,M,D) 时，
+    共享段沿 T 广播成逐位置再拼；两段同为共享时与原 cat(dim=1) 相同。"""
+    if a.dim() != b.dim():
+        T = (a if a.dim() == 4 else b).size(1)
+        a, b = (t if t.dim() == 4 else t.unsqueeze(1).expand(-1, T, -1, -1) for t in (a, b))
+    return torch.cat([a, b], dim=-2)
+
+
 class TransformerBlock(nn.Module):
     """可配置混合块：attn / ssm / hybrid(attn+ssm 并行)。Pre-LN。"""
     def __init__(self, dim: int, num_heads: int, hidden_dim: int, block_type: str = 'attn',
@@ -344,7 +353,7 @@ class TransformerBlock(nn.Module):
             if mem_kv is not None:
                 mk, mv, meta = mem_kv
                 # DML 约束：cat 空 tensor dim=0 报错；此处 mk/mv 非空（MemoryBank 有槽），安全
-                mem_kv = (torch.cat([mk, mk_c], dim=1), torch.cat([mv, mv_c], dim=1), meta)
+                mem_kv = (_cat_mem(mk, mk_c), _cat_mem(mv, mv_c), meta)
             else:
                 mem_kv = (mk_c, mv_c, None)
         ckpt = self.training and self.gradient_checkpointing
@@ -402,7 +411,7 @@ class TransformerBlock(nn.Module):
                 # 合并到 mem_kv（无 MemoryBank 时直接创建）
                 if mem_kv is not None:
                     mk, mv, meta = mem_kv
-                    mem_kv = (torch.cat([mk, ssm_k], dim=1), torch.cat([mv, ssm_v], dim=1), meta)
+                    mem_kv = (_cat_mem(mk, ssm_k), _cat_mem(mv, ssm_v), meta)
                 else:
                     mem_kv = (ssm_k, ssm_v, None)
                 h, attn_present = self._run_attn_mixer(xn, attn_past_kv, use_cache, start_pos, mem_kv, ckpt)
@@ -714,7 +723,8 @@ class TransformerModel(nn.Module):
                    controller_film: bool = True,
                    controller_memory_compress: bool = True,
                    controller_direction_causal: bool = False,
-                   controller_chunk_scan: bool = False):
+                   controller_chunk_scan: bool = False,
+                   controller_causal_memory: bool = False):
         super(TransformerModel, self).__init__()
 
         self.vocab_size = vocab_size
@@ -1034,7 +1044,8 @@ class TransformerModel(nn.Module):
                 use_direction=controller_direction, use_film=controller_film,
                 use_memory_compress=controller_memory_compress,
                 direction_causal=controller_direction_causal,
-                chunk_scan=controller_chunk_scan)
+                chunk_scan=controller_chunk_scan,
+                causal_memory=controller_causal_memory)
         # 权重初始化（_init_weights 遍历所有 Linear 用 N(0,0.02)，再对 SSM 调 proper_init 覆盖）
         self._init_weights()
         # 专用初始化必须在 _init_weights 之后重新应用（否则被通用 N(0,0.02)/zeros 覆盖）：
@@ -1202,6 +1213,7 @@ class TransformerModel(nn.Module):
             controller_memory_compress=cfg.controller_memory_compress,
             controller_direction_causal=cfg.controller_direction_causal,
             controller_chunk_scan=cfg.controller_chunk_scan,
+            controller_causal_memory=cfg.controller_causal_memory,
         )
 
     def set_enhancements_active(self, spec):

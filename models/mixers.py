@@ -705,7 +705,7 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         rbias_full: Optional[torch.Tensor] = None
         if memory_kv is not None:
             mk, mv, meta = memory_kv
-            mem_cols = mk.size(1)
+            mem_cols = mk.size(-2)  # 共享 (B,M,D) 或逐位置 (B,Tq,M,D)
             # 全上下文检索偏置（阶段3 扩展）：对真实 KV 远端做稀疏检索，注入为注意力正偏置。
             # 由实例方法计算以复用本层的 window/topk 开关（与两路径历史上各自实现同源一致）。
             # 注意：rbias_full 的 Treal 须取"真实 token 数"（= Tkv - mem_cols），且 cache 路径
@@ -731,6 +731,7 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
                 k = torch.cat([pk, k], dim=2)
                 v = torch.cat([pv, v], dim=2)
             # R39：记忆注入须在 past 拼接之后（布局 [mk|pk|cur] 才能被 present 剥离正确）
+            k_pre, v_pre = k, v  # 注入前的 token K/V（= 注入后剥掉前 mem_cols 列；逐位置记忆还多了 M 个 V 通道）
             if memory_kv is not None:
                 k, v, mem_bias = MemoryBank.inject_memory(
                     q, k, v, mk, mv, meta, self.mask_fill_value)
@@ -746,11 +747,11 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
             # 下一步拼接时记忆被重复注入 → 每步 Tkv 增长 M+1 而非 1，且多份记忆副本
             # 同时可见（训练/推理分歧 + 检索偏置错位 + 显存膨胀）。现剥离记忆列。
             if self.mla_kv_enabled:
-                present = (c_kv_full, v[:, :, mem_cols:]) if self.value_relative_coding_enabled else (c_kv_full, None)
+                present = (c_kv_full, v_pre) if self.value_relative_coding_enabled else (c_kv_full, None)
             elif self.kv_cache_int8:
                 # R36-3: int8 量化 KV cache（内存减 4x，精度损失 < 1e-2）
-                k_clean = k[:, :, mem_cols:]
-                v_clean = v[:, :, mem_cols:]
+                k_clean = k_pre
+                v_clean = v_pre
                 k_q, k_scale = self._quantize_int8(k_clean)
                 if self.value_relative_coding_enabled:
                     # VRC: V 保持 fp32（递推累积误差风险），只量化 K
@@ -759,7 +760,7 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
                     v_q, v_scale = self._quantize_int8(v_clean)
                     present = (k_q, v_q, k_scale, v_scale)
             else:
-                present = (k[:, :, mem_cols:], v[:, :, mem_cols:])
+                present = (k_pre, v_pre)
             Tkv = k.size(2)
             # 与全量路径共用基础因果/窗口掩码（额外1），保证 memory+window>0 时
             # 训练/推理一致性（否则推理期记忆按位置被部分遮蔽、静默质量退化）。
@@ -796,6 +797,8 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
             # 但 float attn_mask 正确（加到 scores 上）。本路径的 attn_mask 始终是 float
             # （_build_causal_window_mask 返回 mask.float()*fill_value，后续 +mem_bias 等加法也保持 float）。
             out = scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
+            if memory_kv is not None and mk.dim() == 4:
+                out = MemoryBank.positional_memory_out(out, mv)
             out = out.transpose(1, 2).reshape(B, Tq, self.num_heads * self.head_dim)
             return self.proj(out), present
 
@@ -845,6 +848,8 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         for b in addends[1:]:
             attn_mask = attn_mask + b
         out = scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
+        if memory_kv is not None and mk.dim() == 4:
+            out = MemoryBank.positional_memory_out(out, mv)
         out = out.transpose(1, 2).reshape(B, T, self.num_heads * self.head_dim)
         return self.proj(out), None
 
@@ -1186,11 +1191,14 @@ class GatedDeltaNet(LinearMixerBase):
                 P = P @ P
         return X
 
-    def _chunk_wy_scan(self, q, k, v, alpha, beta):
-        """chunk_wy 全量路径：块内 WY/UT 并行，块间 ⌈T/C⌉ 步顺序递推。返回 (num (B,H,T,D), 末状态 S)。
+    def _chunk_wy_scan(self, q, k, v, alpha, beta, read_q=None):
+        """chunk_wy 全量路径：块内 WY/UT 并行，块间 ⌈T/C⌉ 步顺序递推。
+        返回 (num (B,H,T,D), 末状态 S, reads)；reads 见 forward_with_reads，read_q=None 时为 None。
 
         与 gdn_chunk_proto.chunked_standard 同一算法，状态转置成 key 行存；只用 matmul/exp/log/clamp/cat。
         T 非 C 整数倍时尾部补 α=1、β=0、k=v=q=0（状态不变），输出截回 T。
+        块内位置 t 的状态 S_t = γ_t S_c + Σ_{i≤t} (γ_t/γ_i) k_i U_iᵀ 对任意查询向量线性，
+        故 read_q 的逐位置读出与 num 同式：γ_t (q_m S_c) + Σ_i G[t,i](q_m·k_i) U_i。
         """
         B, H, T, D = q.shape
         C = self.chunk_size
@@ -1219,16 +1227,33 @@ class GatedDeltaNet(LinearMixerBase):
         P = G * (qc @ kc.transpose(-1, -2))
         dec_end = torch.exp(g[:, :, :, -1:, :] - g)                 # γ_C/γ_i
         g_end = torch.exp(g[:, :, :, -1, :]).unsqueeze(-1)          # (B,H,n,1,1)
+        if read_q is not None:
+            # (B,H,n,C,M,C)：Pm[t,m,i] = G[t,i]·(q_m·k_i)
+            Pm = G.unsqueeze(-2) * torch.einsum('mhd,bhncd->bhnmc', read_q, kc).unsqueeze(-3)
+            reads = []
         S = q.new_zeros(B, H, D, D)
         outs = []
         for c in range(n):
             U = U_v[:, :, c] - W[:, :, c] @ S
             outs.append(eg[:, :, c] * (qc[:, :, c] @ S) + P[:, :, c] @ U)
+            if read_q is not None:
+                base = torch.einsum('mhd,bhde->bhme', read_q, S)  # 块起点状态的读出
+                reads.append(torch.einsum('bht,bhme->btme', eg[:, :, c, :, 0], base)
+                             + torch.einsum('bhtmi,bhie->btme', Pm[:, :, c], U))
             S = g_end[:, :, c] * S + kc[:, :, c].transpose(-1, -2) @ (U * dec_end[:, :, c])
-        return torch.cat(outs, dim=2)[:, :, :T], S
+        reads = torch.cat(reads, dim=1)[:, :T] if read_q is not None else None
+        return torch.cat(outs, dim=2)[:, :, :T], S, reads
 
     def forward(self, x: torch.Tensor, past_kv=None, use_cache: bool = False, start_pos: int = 0,
                 memory_kv=None):
+        out, present, _ = self.forward_with_reads(x, past_kv, use_cache, start_pos)
+        return out, present
+
+    def forward_with_reads(self, x: torch.Tensor, past_kv=None, use_cache: bool = False, start_pos: int = 0,
+                           read_q: Optional[torch.Tensor] = None):
+        """同 forward，另返回逐位置状态读出 reads (B,T,M,D)：
+        reads[b,t,m,e] = Σ_h Σ_d read_q[m,h,d]·S_t[b,h,d,e]（S_t 为吃进 token t 之后的状态），
+        即 Controller 的 einsum('mhd,bhde->bme', mem_query, S) 逐位置版（H2 causal_memory 用）。"""
         q, k, v = self.project_and_norm(x, start_pos)
         B, H, T, D = q.shape
         qf = self._feat(q)
@@ -1302,7 +1327,8 @@ class GatedDeltaNet(LinearMixerBase):
             num = torch.einsum('bhd,bhde->bhe', qf[:, :, 0, :], S)  # (B,H,D)
             den = torch.einsum('bhd,bhd->bh', qf[:, :, 0, :], z).unsqueeze(-1).clamp_min(1e-6)
             out = (num / den).reshape(B, 1, H * D)
-            return self.proj(out), (*_accum_kv(past_kv, k, v), S, z)
+            reads = torch.einsum('mhd,bhde->bme', read_q, S).unsqueeze(1) if read_q is not None else None
+            return self.proj(out), (*_accum_kv(past_kv, k, v), S, z), reads
 
         # 全量训练：for 循环递推 S（T≤64 开销可控；后续可优化为 chunk-wise parallel）
         S = torch.zeros(B, H, D, D, device=x.device, dtype=x.dtype)
@@ -1324,12 +1350,12 @@ class GatedDeltaNet(LinearMixerBase):
         z_all = z_all.reshape(B, T, H, D).permute(0, 2, 1, 3)         # (B,H,T,D)
 
         if self.chunk_wy:
-            num, S = self._chunk_wy_scan(qf, kf, v, alpha, beta)
+            num, S, reads = self._chunk_wy_scan(qf, kf, v, alpha, beta, read_q)
             den = torch.einsum('bhtd,bhtd->bht', qf, z_all).unsqueeze(-1).clamp_min(1e-6)
             out = (num / den).transpose(1, 2).reshape(B, T, H * D)
             z = z_all[:, :, -1, :]
             present = (k, v, S, z) if use_cache else None
-            return self.proj(out), present
+            return self.proj(out), present, reads
 
         # R36-4b：S 更新 chunk-wise 矩阵前缀扫描（opt-in 默认关）。
         # 用「标准 delta rule」形式 S_t = A_t·S_{t-1} + B_t（注意：非原 for-loop 转置约定，
@@ -1374,7 +1400,8 @@ class GatedDeltaNet(LinearMixerBase):
             z = z_all[:, :, -1, :]                                     # 最终 z（cache 用）
             S = S_all[:, :, -1, :, :]                                  # 最终 S（cache 用）
             present = (k, v, S, z) if use_cache else None
-            return self.proj(out), present
+            reads = torch.einsum('mhd,bhtde->btme', read_q, S_all) if read_q is not None else None
+            return self.proj(out), present, reads
 
         outs = []
         # 第八批【四】S1 路线① v2 循环外提（2026-10-03）：
@@ -1391,6 +1418,7 @@ class GatedDeltaNet(LinearMixerBase):
         kf_row_l = torch.unbind(kf.unsqueeze(-2), dim=2)    # 每步 (B,H,1,D)，外积用
         v_l = torch.unbind(v, dim=2)
         qf_l = torch.unbind(qf, dim=2)
+        reads_l = []
         for t in range(T):
             Sk = torch.einsum('bhd,bhde->bhe', kf_l[t], S)
             # delta 更新：S = α·S + β·(v - S·k)⊗k
@@ -1405,11 +1433,14 @@ class GatedDeltaNet(LinearMixerBase):
                 S = S + zt.unsqueeze(-1).unsqueeze(-1) * torch.einsum('bhd,bhe->bhde', bt, bTS)
             # z_t 已由前缀扫描预计算（R36-4），den_all 在循环外一次算完
             outs.append(torch.einsum('bhd,bhde->bhe', qf_l[t], S))
+            if read_q is not None:
+                reads_l.append(torch.einsum('mhd,bhde->bme', read_q, S))
         out = torch.stack(outs, dim=2) / den_all.unsqueeze(-1)  # (B,H,T,D)
         out = out.transpose(1, 2).reshape(B, T, H * D)
         z = z_all[:, :, -1, :]  # 最终 z（用于 cache，与原 for 循环结束时一致）
         present = (k, v, S, z) if use_cache else None
-        return self.proj(out), present
+        reads = torch.stack(reads_l, dim=1) if read_q is not None else None
+        return self.proj(out), present, reads
 
 
 class AxialLinearAttention(LinearMixerBase):
@@ -1704,6 +1735,8 @@ class DifferentialAttention(nn.Module, EnhancementsMixin):
         mem_cols = 0
         if memory_kv is not None:
             mk, mv, mem_meta = memory_kv
+            if mk.dim() == 4:
+                raise NotImplementedError('逐位置记忆（controller_causal_memory）暂只支持标准 attention mixer')
             mem_cols = mk.size(1)
             k1t, v_aug, mem_bias1 = self.__class__.inject_mem(
                 q1t, k1t, vt, mk, mv, mem_meta, self.mask_fill_value)
