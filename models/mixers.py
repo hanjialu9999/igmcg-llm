@@ -276,6 +276,7 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
                  head_temp: bool = False,
                  value_relative_coding: bool = False,
                  value_relative_safe_pow: bool = False,
+                 value_relative_matmul: bool = False,
                  intra_hybrid_rope: bool = False,
                  intra_hybrid_ratio: float = 0.5,
                  alibi_learnable: bool = False,
@@ -382,6 +383,8 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         # R40：VRC 卷积核改用纯连乘构造（绕开 DirectML `base ** exp` broadcast bug）。
         # 默认 False = 保持 r42 旧行为字节不变；True 时 DML/CPU kernel 逐位一致。
         self.value_relative_safe_pow = value_relative_safe_pow
+        # 10-05：True 时 VRC 因果卷积改下三角 Toeplitz matmul（同一个核，数值等价，免重训）；默认 False 保 r42 旧路径。
+        self.value_relative_matmul = value_relative_matmul
         if value_relative_coding:
             # tanh 限制 λ∈(-1,1)，init 0 → v 不变；cache 存原始 v 保证 train/infer parity
             self.value_rel_lambda = nn.Parameter(torch.zeros(1))
@@ -676,8 +679,6 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
                 # 浮点舍入差异在 atol=1e-4 内（cache parity 测试已验证）。
                 T = v.size(2)
                 B_, H_, _, D_ = v.shape
-                # (B,H,T,D) → (B,T,H*D,1) 适配递推（保留原 scan 的布局约定）
-                v_2d = v.permute(0, 2, 1, 3).reshape(B_, T, H_ * D_, 1)
                 # R38 性能优化（替代第二十五/二十六轮的 Hillis-Steele 前缀扫描）：
                 # v_enc[t] = v[t] + λ·v_enc[t-1] = Σ_{i≤t} v[i]·λ^(t-i) 即 causal 卷积，
                 # 核 = [λ^(T-1), …, λ, 1]（λ^0=1 居末，左侧零填充），groups=C 逐通道独立。
@@ -690,14 +691,26 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
                     _ker = _vrc_decay_kernel(_lam.reshape(()), _klen).reshape(1, 1, _klen)
                 else:
                     _ker = (_lam ** torch.arange(_klen - 1, -1, -1, device=v.device)).reshape(1, 1, _klen)
-                # R38-2 修正：expand 是广播 view——其 backward 梯度合并（sum 到 kernel）
-                # 在 DML 上报错（weight grad [1,1,1,64] vs broadcast [1,256,1,64]）。
-                # repeat 实体化拷贝（每调用一次 64KB 级），backward 正常。
-                _ker_full = _ker.repeat(H_ * D_, 1, 1)
-                _v_c = torch.nn.functional.conv1d(
-                    v_2d.squeeze(-1).permute(0, 2, 1),  # (B, C, T)
-                    _ker_full, groups=H_ * D_, padding=_klen - 1)
-                v = _v_c[..., :_klen].permute(0, 2, 1).reshape(B_, T, H_, D_).permute(0, 2, 1, 3)
+                if self.value_relative_matmul:
+                    # 10-05：同一个核展开成下三角 Toeplitz Mt[i,t]=λ^(t-i)（t<i 为 0），v_enc = Mt^T @ v。
+                    # DML 上 depthwise conv1d 核长 = T 很慢（B=24,C=256 fwd+bwd：T=64 10.3→4.0ms、T=256 115→5.8ms，
+                    # Temp\opencode\p46\_vrc_mm.py）；对 conv1d 相对差 ≤2e-6（含 λ=0 与 safe_pow 两种造核）。
+                    # 用 repeat 错位展开而不用 unfold：unfold_backward DML 不支持、会退回 CPU。
+                    _k = _ker.reshape(_klen)
+                    _u = torch.cat([_k.flip(0), _k.new_zeros(_klen)])  # [1, λ, …, λ^(T-1), 0×T]
+                    _Mt = _u.repeat(_klen)[:_klen * (2 * _klen - 1)].reshape(_klen, 2 * _klen - 1)[:, :_klen]
+                    v = torch.matmul(_Mt.t(), v)
+                else:
+                    # (B,H,T,D) → (B,T,H*D,1) 适配递推（保留原 scan 的布局约定）
+                    v_2d = v.permute(0, 2, 1, 3).reshape(B_, T, H_ * D_, 1)
+                    # R38-2 修正：expand 是广播 view——其 backward 梯度合并（sum 到 kernel）
+                    # 在 DML 上报错（weight grad [1,1,1,64] vs broadcast [1,256,1,64]）。
+                    # repeat 实体化拷贝（每调用一次 64KB 级），backward 正常。
+                    _ker_full = _ker.repeat(H_ * D_, 1, 1)
+                    _v_c = torch.nn.functional.conv1d(
+                        v_2d.squeeze(-1).permute(0, 2, 1),  # (B, C, T)
+                        _ker_full, groups=H_ * D_, padding=_klen - 1)
+                    v = _v_c[..., :_klen].permute(0, 2, 1).reshape(B_, T, H_, D_).permute(0, 2, 1, 3)
         # 阶段3 可学习检索：统一经 MemoryBank.inject_memory 注入记忆 K/V + 检索偏置，
         # 取代 cache/全量两条路径各自重复的"记忆拼接 + 稀疏门控 + 全上下文检索"逻辑（B 项收敛）。
         mem_cols = 0
