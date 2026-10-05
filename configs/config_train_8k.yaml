@@ -56,7 +56,7 @@ model:
 
 training:
   batch_size: 24                 # DML 性能甜点（bs32 OOM）
-  epochs: 3                      # 历史经验：1ep val5.19 → 3ep val4.13（epochs 是质量第一杠杆）
+  epochs: 1                      # 10-05 用户定：测试一律 1 epoch 看效果最快（旧值 3；历史 1ep val5.19 → 3ep val4.13）
   learning_rate: 3.0e-3
   optimizer: adamw               # R37: sgd → adamw（train.py _dml_foreach_lerp patch 已消除 DML CPU lerp 回退税）
   weight_decay: 0.0

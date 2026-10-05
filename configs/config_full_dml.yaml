@@ -38,7 +38,7 @@ training:
   complexity_lambda: 0.05           # 复杂度奖励系数（hinge 预算约束）
   batch_size: 8
   # DML 扫描（2026-07-18）：epochs 是质量第一杠杆（ep1 val8.0 → ep3 val5.2 → ep3+lr0.3 val2.8）；lr 偏高更优
-  epochs: 3
+  epochs: 1                      # 10-05 用户定：一律 1 epoch（旧值 3）
   optimizer: sgd
   learning_rate: 0.3
   sgd_learning_rate: 0.3
