@@ -257,6 +257,7 @@ class ModelConfig:
     controller_direction: bool = True     # 输出③生成方向偏置 (B, D) 加到 embedding 输出
     controller_film: bool = True          # 输出②FiLM 调制 (γ, β) per-layer 调制 Generator 各层输入
     controller_memory_compress: bool = True  # 输出①压缩记忆 mem_kv 注入 Generator attention
+    controller_direction_causal: bool = False  # H1 修复（10-05）：direction 改逐位置前缀均值 (B,T,D)；False=旧整段均值
 
     # n-gram
     ngram_fusion: bool = False
@@ -442,6 +443,7 @@ class ModelConfig:
             controller_direction=bool(mc.get('controller_direction', True)),
             controller_film=bool(mc.get('controller_film', True)),
             controller_memory_compress=bool(mc.get('controller_memory_compress', True)),
+            controller_direction_causal=bool(mc.get('controller_direction_causal', False)),
             ngram_fusion=mc.get('ngram_fusion', False),
             ngram_gate_scale=float(mc.get('ngram_gate_scale', 1.0)),
             igmcg=bool(mc.get('igmcg', False)),

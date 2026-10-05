@@ -84,8 +84,11 @@ class ControllerModel(nn.Module):
                  mem_slots: int, max_seq_length: int,
                  embedding_layer: nn.Embedding,
                  use_direction: bool = True, use_film: bool = True,
-                 use_memory_compress: bool = True):
+                 use_memory_compress: bool = True, direction_causal: bool = False):
         super().__init__()
+        # H1 修复开关（10-05）：True = direction 逐位置取前缀滚动均值 (B,T,gen_dim)，
+        # 训练与增量解码同一语义；False = 旧行为整段均值 (B,gen_dim)（训练看到未来、增量第 2 步起只剩 1 token）
+        self.direction_causal = direction_causal
         assert ctrl_dim % ctrl_heads == 0, (
             f"ctrl_dim ({ctrl_dim}) must be divisible by ctrl_heads ({ctrl_heads})")
         self.gen_dim = gen_dim
@@ -236,7 +239,22 @@ class ControllerModel(nn.Module):
                     film_per_layer.append((gamma, beta))
         # ③ 生成方向：x.mean(T) (B, ctrl_dim) → Linear → (B, gen_dim)
         direction = None
-        if self.use_direction:
+        if self.use_direction and self.direction_causal:
+            # 前缀滚动均值：位置 t 取 x[0..t] 均值（含之前增量步的累计和），(B, T, ctrl_dim)。
+            # 累计 (和, 个数) 挂在 presents 末尾（mixer cache 之后），下一步从 past_kv 同位置取回。
+            prev = (past_kv[self.ctrl_layers]
+                    if (past_kv is not None and len(past_kv) > self.ctrl_layers) else None)
+            tri = torch.tril(torch.ones(T, T, dtype=x.dtype, device=x.device))
+            csum = torch.matmul(tri, x)  # (B, T, ctrl_dim)；下三角 matmul 代替 cumsum，DML 无回退
+            n0 = 0
+            if prev is not None:
+                csum = csum + prev[0].unsqueeze(1)
+                n0 = prev[1]
+            cnt = torch.arange(n0 + 1, n0 + T + 1, dtype=x.dtype, device=x.device).unsqueeze(-1)
+            direction = self.direction_proj(csum / cnt)  # (B, T, gen_dim)
+            if use_cache and presents is not None:
+                presents.append((csum[:, -1], n0 + T))
+        elif self.use_direction:
             x_mean = x.mean(dim=1)  # (B, ctrl_dim)
             direction = self.direction_proj(x_mean)  # (B, gen_dim)
         signals = ControllerOutput(mem_kv=mem_kv, film_per_layer=film_per_layer,

@@ -712,7 +712,8 @@ class TransformerModel(nn.Module):
                    controller_mem_slots: int = 4,
                    controller_direction: bool = True,
                    controller_film: bool = True,
-                   controller_memory_compress: bool = True):
+                   controller_memory_compress: bool = True,
+                   controller_direction_causal: bool = False):
         super(TransformerModel, self).__init__()
 
         self.vocab_size = vocab_size
@@ -1030,7 +1031,8 @@ class TransformerModel(nn.Module):
                 mem_slots=controller_mem_slots, max_seq_length=rope_max_len,
                 embedding_layer=self.embedding,
                 use_direction=controller_direction, use_film=controller_film,
-                use_memory_compress=controller_memory_compress)
+                use_memory_compress=controller_memory_compress,
+                direction_causal=controller_direction_causal)
         # 权重初始化（_init_weights 遍历所有 Linear 用 N(0,0.02)，再对 SSM 调 proper_init 覆盖）
         self._init_weights()
         # 专用初始化必须在 _init_weights 之后重新应用（否则被通用 N(0,0.02)/zeros 覆盖）：
@@ -1196,6 +1198,7 @@ class TransformerModel(nn.Module):
             controller_direction=cfg.controller_direction,
             controller_film=cfg.controller_film,
             controller_memory_compress=cfg.controller_memory_compress,
+            controller_direction_causal=cfg.controller_direction_causal,
         )
 
     def set_enhancements_active(self, spec):
@@ -1564,9 +1567,10 @@ class TransformerModel(nn.Module):
             ctrl_mem_kv = ctrl_signals.mem_kv
             ctrl_film = ctrl_signals.film_per_layer
             ctrl_direction = ctrl_signals.direction
-            # ③ 生成方向偏置加到 embedding 输出（broadcast over T；init=0 中性）
+            # ③ 生成方向偏置加到 embedding 输出（init=0 中性）：旧版 (B,D) broadcast over T；
+            # controller_direction_causal 下已是逐位置 (B,T,D)
             if ctrl_direction is not None:
-                x = x + ctrl_direction.unsqueeze(1)
+                x = x + (ctrl_direction if ctrl_direction.dim() == 3 else ctrl_direction.unsqueeze(1))
 
         # 第十一轮：跨层稀疏路由——收集每层输出供后续层 top-k 路由（残差注入）。
         # 仅 cross_layer_routing=True 且 num_layers>1 时启用（cross_router 已在 __init__ 创建）。
