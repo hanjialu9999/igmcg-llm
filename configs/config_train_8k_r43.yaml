@@ -31,6 +31,7 @@ model:
   char_merge: true
   char_merge_kernel: 3
   char_merge_dropout: 0.0
+  char_merge_incremental_buffer: true  # 增量读取用真实前 pad 个输入（59448a1，免重训；关 = 增量比 prefix 高 0.103）
   rope_dim_fraction: 0.5
   output_gate: true
   zero_centered_norm: true
