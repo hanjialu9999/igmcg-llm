@@ -1,0 +1,8099 @@
+{
+ "params": {
+  "max_length": 30,
+  "temperature": 0.8,
+  "top_k": 50,
+  "repetition_penalty": 1.4,
+  "min_length": 3,
+  "eos_penalty": -5.0
+ },
+ "prompts": [
+  "今天天气真好，我们去",
+  "人工智能的未来是",
+  "Hello, how are you",
+  "The weather is",
+  "I love",
+  "Machine learning",
+  "我叫",
+  "随着社会的发展，",
+  "近年来，我国",
+  "专家表示，",
+  "在日常生活中，",
+  "这部电影讲述了"
+ ],
+ "sets": [
+  [
+   "greedy",
+   0.0,
+   [
+    42
+   ]
+  ],
+  [
+   "T0.8",
+   0.8,
+   [
+    42,
+    0,
+    1,
+    2,
+    3
+   ]
+  ],
+  [
+   "T1.1",
+   1.1,
+   [
+    42,
+    0,
+    1,
+    2,
+    3
+   ]
+  ]
+ ],
+ "metrics": {
+  "r45-on/greedy": {
+   "n": 12,
+   "avg_len": 30.0,
+   "eos_rate": 0.0,
+   "distinct1": 0.3139,
+   "distinct2": 0.5489,
+   "self_d2": 0.9885,
+   "nll_by_r45": 2.5455,
+   "nll_by_r46": 2.6691
+  },
+  "r45-on/T0.8": {
+   "n": 60,
+   "avg_len": 30.0,
+   "eos_rate": 0.0,
+   "distinct1": 0.1989,
+   "distinct2": 0.5983,
+   "self_d2": 0.9994,
+   "nll_by_r45": 3.3931,
+   "nll_by_r46": 3.5299
+  },
+  "r45-on/T1.1": {
+   "n": 60,
+   "avg_len": 30.0,
+   "eos_rate": 0.0,
+   "distinct1": 0.2194,
+   "distinct2": 0.6029,
+   "self_d2": 1.0,
+   "nll_by_r45": 3.7689,
+   "nll_by_r46": 3.9577
+  },
+  "r45-off/greedy": {
+   "n": 12,
+   "avg_len": 30.0,
+   "eos_rate": 0.0,
+   "distinct1": 0.2472,
+   "distinct2": 0.5086,
+   "self_d2": 0.9713,
+   "nll_by_r45": 2.5714,
+   "nll_by_r46": 2.5718
+  },
+  "r45-off/T0.8": {
+   "n": 60,
+   "avg_len": 30.0,
+   "eos_rate": 0.0,
+   "distinct1": 0.1983,
+   "distinct2": 0.6305,
+   "self_d2": 0.9977,
+   "nll_by_r45": 3.4981,
+   "nll_by_r46": 3.5623
+  },
+  "r45-off/T1.1": {
+   "n": 60,
+   "avg_len": 30.0,
+   "eos_rate": 0.0,
+   "distinct1": 0.2211,
+   "distinct2": 0.6149,
+   "self_d2": 0.9994,
+   "nll_by_r45": 3.8925,
+   "nll_by_r46": 4.0013
+  },
+  "r46-on/greedy": {
+   "n": 12,
+   "avg_len": 30.0,
+   "eos_rate": 0.0,
+   "distinct1": 0.225,
+   "distinct2": 0.477,
+   "self_d2": 0.9799,
+   "nll_by_r45": 2.7072,
+   "nll_by_r46": 2.4566
+  },
+  "r46-on/T0.8": {
+   "n": 60,
+   "avg_len": 30.0,
+   "eos_rate": 0.0,
+   "distinct1": 0.1806,
+   "distinct2": 0.5667,
+   "self_d2": 0.9971,
+   "nll_by_r45": 3.4497,
+   "nll_by_r46": 3.2514
+  },
+  "r46-on/T1.1": {
+   "n": 60,
+   "avg_len": 30.0,
+   "eos_rate": 0.0,
+   "distinct1": 0.2156,
+   "distinct2": 0.6126,
+   "self_d2": 0.9994,
+   "nll_by_r45": 3.9612,
+   "nll_by_r46": 3.7036
+  },
+  "r46-off/greedy": {
+   "n": 12,
+   "avg_len": 30.0,
+   "eos_rate": 0.0,
+   "distinct1": 0.2222,
+   "distinct2": 0.4511,
+   "self_d2": 0.9914,
+   "nll_by_r45": 2.6252,
+   "nll_by_r46": 2.5344
+  },
+  "r46-off/T0.8": {
+   "n": 60,
+   "avg_len": 30.0,
+   "eos_rate": 0.0,
+   "distinct1": 0.1978,
+   "distinct2": 0.619,
+   "self_d2": 0.9989,
+   "nll_by_r45": 3.5276,
+   "nll_by_r46": 3.4
+  },
+  "r46-off/T1.1": {
+   "n": 60,
+   "avg_len": 30.0,
+   "eos_rate": 0.0,
+   "distinct1": 0.2061,
+   "distinct2": 0.5793,
+   "self_d2": 0.9989,
+   "nll_by_r45": 3.9721,
+   "nll_by_r46": 3.8299
+  }
+ },
+ "samples": [
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去年的人生活。”“你说：“我们在这个时候，他也是一个问题？”那",
+   "cont": "年的人生活。”“你说：“我们在这个时候，他也是一个问题？”那",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.4851,
+    "r46": 2.6099
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是一个大家，不会有些问题。”“我们在这里，他们也可以看到了解决",
+   "cont": "一个大家，不会有些问题。”“我们在这里，他们也可以看到了解决",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.3743,
+    "r46": 2.4782
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyoungitaps，我们的是一个人。”“你说明：“我们在这里来看",
+   "cont": "ngitaps，我们的是一个人。”“你说明：“我们在这里来看",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.6465,
+    "r46": 2.7411
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "The weather is",
+   "text": "theweatherisongulipy，我们的是一个人。”“你说，这样在这里来看到",
+   "cont": "ongulipy，我们的是一个人。”“你说，这样在这里来看到",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.703,
+    "r46": 2.9406
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "I love",
+   "text": "iloveranguthapsedmy，我们的是一个人。”“你说明：“",
+   "cont": "ranguthapsedmy，我们的是一个人。”“你说明：“",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.7302,
+    "r46": 2.733
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "Machine learning",
+   "text": "machinelearningostypodusthark的文件，我们在这个网站上来说，你",
+   "cont": "ostypodusthark的文件，我们在这个网站上来说，你",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.5655,
+    "r46": 2.6579
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "我叫",
+   "text": "我叫“你的人，我们在这个月内的一些事情。”他们不会有着大家都是很",
+   "cont": "“你的人，我们在这个月内的一些事情。”他们不会有着大家都是很",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.5991,
+    "r46": 2.8132
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，在2016年，中国人民共有限公司、广东省市场、农村产业等。为",
+   "cont": "在2016年，中国人民共有限公司、广东省市场、农村产业等。为",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.2932,
+    "r46": 2.5861
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国家的“大学”。在这里，他们也是一个人的时候，不得了解决。”“",
+   "cont": "家的“大学”。在这里，他们也是一个人的时候，不得了解决。”“",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.5669,
+    "r46": 2.6247
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "专家表示，",
+   "text": "专家表示，在2016年，中国的“大学”。这个人员会议上一次发展了解决方",
+   "cont": "在2016年，中国的“大学”。这个人员会议上一次发展了解决方",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.6548,
+    "r46": 2.823
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，我们的人才能够对于这个月的时候，不得到了解。”“你说：“我们",
+   "cont": "我们的人才能够对于这个月的时候，不得到了解。”“你说：“我们",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.5335,
+    "r46": 2.6028
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了解，我们的人们的时候，不得到一个问题。”“你说：“我想要做好",
+   "cont": "解，我们的人们的时候，不得到一个问题。”“你说：“我想要做好",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.3942,
+    "r46": 2.4191
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去年这次了一眼的风景。“不过，老師是没有了解的情况，”最终在时",
+   "cont": "年这次了一眼的风景。“不过，老師是没有了解的情况，”最终在时",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.545,
+    "r46": 3.8086
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去年来这么做不见，可能会不想过底的方向！”“其他国际机中没有玩",
+   "cont": "年来这么做不见，可能会不想过底的方向！”“其他国际机中没有玩",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7477,
+    "r46": 3.8137
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去到大人和不得着，就能看了。”那么很多钱的事情下来，你会有一种",
+   "cont": "到大人和不得着，就能看了。”那么很多钱的事情下来，你会有一种",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5397,
+    "r46": 3.4703
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去年来。马罗马斯斯的东西也是你将这么是什么会做？”“那些事儿子",
+   "cont": "年来。马罗马斯斯的东西也是你将这么是什么会做？”“那些事儿子",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5747,
+    "r46": 3.681
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去年轻人感受。我们在北大城区的中国战斗，他的身边之内比较多。那",
+   "cont": "年轻人感受。我们在北大城区的中国战斗，他的身边之内比较多。那",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.3186,
+    "r46": 3.4934
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是，这样为本人的专业性价格。因为有些问题了解的情况，不得很多多",
+   "cont": "，这样为本人的专业性价格。因为有些问题了解的情况，不得很多多",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.1137,
+    "r46": 3.3246
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是大家，有些不见地别人们不想，她也要选择以后一个文凭对自己的用",
+   "cont": "大家，有些不见地别人们不想，她也要选择以后一个文凭对自己的用",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7619,
+    "r46": 4.1595
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是对大学和不平，但成为最好做一些事情也有很重要保持，而且在他们",
+   "cont": "对大学和不平，但成为最好做一些事情也有很重要保持，而且在他们",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4605,
+    "r46": 3.5911
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是，多少人的方法，因此很容易。但是我们在这里还有些重点，让自己",
+   "cont": "，多少人的方法，因此很容易。但是我们在这里还有些重点，让自己",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.8663,
+    "r46": 2.9785
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是有一个美具。我们在地景上要求你的战斗，看到于这位国际课程上来",
+   "cont": "有一个美具。我们在地景上要求你的战斗，看到于这位国际课程上来",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4893,
+    "r46": 3.7291
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyoust），为哪些的手式“不过”。请来说是了解的第一点”，同时从",
+   "cont": "st），为哪些的手式“不过”。请来说是了解的第一点”，同时从",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6594,
+    "r46": 3.8004
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyouy），因为不是一种植物材料，当然发动员工作中的文凭机构成。1",
+   "cont": "y），因为不是一种植物材料，当然发动员工作中的文凭机构成。1",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.3244,
+    "r46": 3.662
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyountimspagbvd，可能更加大量的目标不同事项。这个网址",
+   "cont": "ntimspagbvd，可能更加大量的目标不同事项。这个网址",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.2971,
+    "r46": 3.5273
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyoutastidm，pc)也是在工作了。如果您要求提供一套的服务",
+   "cont": "tastidm，pc)也是在工作了。如果您要求提供一套的服务",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.1545,
+    "r46": 3.2218
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyoustctiprg），而且要求你的chan)。即如：【ymif",
+   "cont": "stctiprg），而且要求你的chan)。即如：【ymif",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.2862,
+    "r46": 3.5177
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "The weather is",
+   "text": "theweatherissokgvy(budircmann.是lo的第一点。ckif",
+   "cont": "sokgvy(budircmann.是lo的第一点。ckif",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5436,
+    "r46": 3.7235
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "The weather is",
+   "text": "theweatherisyongupbln)，不想要用电影像是以后一个文凭明确的。但",
+   "cont": "yongupbln)，不想要用电影像是以后一个文凭明确的。但",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5807,
+    "r46": 3.7886
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "The weather is",
+   "text": "theweatherislan,xiogbvu，可以更加大量的目标不同事项。这个网址",
+   "cont": "lan,xiogbvu，可以更加大量的目标不同事项。这个网址",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4851,
+    "r46": 3.6337
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "The weather is",
+   "text": "theweatheristamlidm，pc)也是在工作了。如果您要求提供交易的服务",
+   "cont": "tamlidm，pc)也是在工作了。如果您要求提供交易的服务",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.1745,
+    "r46": 3.1215
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "The weather is",
+   "text": "theweatherissbck,prg），而且要求你的cpon)。即如：【ymof",
+   "cont": "sbck,prg），而且要求你的cpon)。即如：【ymof",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5995,
+    "r46": 3.6953
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "I love",
+   "text": "ilovest），中国文化专业“不过”。本年人是了解的第一点”，同时从",
+   "cont": "st），中国文化专业“不过”。本年人是了解的第一点”，同时从",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.3674,
+    "r46": 3.3647
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "I love",
+   "text": "ilovey），因为不是一种植物材料，当然发展现在了解释文凭明确保障碍",
+   "cont": "y），因为不是一种植物材料，当然发展现在了解释文凭明确保障碍",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.3043,
+    "r46": 3.4169
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "I love",
+   "text": "ilovertn,xiagbsthhecvandould)，在此后的第",
+   "cont": "rtn,xiagbsthhecvandould)，在此后的第",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4138,
+    "r46": 3.5617
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "I love",
+   "text": "ilovetastidmapcharmi），是解决了解釋。1.hoku",
+   "cont": "tastidmapcharmi），是解决了解釋。1.hoku",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.8009,
+    "r46": 3.0166
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "I love",
+   "text": "iloveshat,crg），而且要求你的一份，他们不是如何办？这个我",
+   "cont": "shat,crg），而且要求你的一份，他们不是如何办？这个我",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.3001,
+    "r46": 3.3947
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "Machine learning",
+   "text": "machinelearningsoksvy(budtrcmado.是为了的第一款380:1",
+   "cont": "soksvy(budtrcmado.是为了的第一款380:1",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6515,
+    "r46": 3.8698
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "Machine learning",
+   "text": "machinelearningyorttpbysh:/wwidussud.m以，不是什么说",
+   "cont": "yorttpbysh:/wwidussud.m以，不是什么说",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4591,
+    "r46": 3.4868
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "Machine learning",
+   "text": "machinelearningutl和xpo，bsthkeyvosdoc+d)，在此后的第",
+   "cont": "utl和xpo，bsthkeyvosdoc+d)，在此后的第",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.726,
+    "r46": 3.9127
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "Machine learning",
+   "text": "machinelearningtastpym，因为其中国的工作了。如果您要求提升交易方案。",
+   "cont": "tastpym，因为其中国的工作了。如果您要求提升交易方案。",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.0861,
+    "r46": 3.2085
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "Machine learning",
+   "text": "machinelearningstct,prv在最后来说的，我们带给你的。这个信息？”“我",
+   "cont": "stct,prv在最后来说的，我们带给你的。这个信息？”“我",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.3463,
+    "r46": 3.4242
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "我叫",
+   "text": "我叫“这样的一眼，她真是“不过，你觉得没有了解的情况。”他们在时",
+   "cont": "“这样的一眼，她真是“不过，你觉得没有了解的情况。”他们在时",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.0714,
+    "r46": 3.209
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "我叫",
+   "text": "我叫大家，好玩不是一种植物了。那么想要选择以来，你有用机自己的说",
+   "cont": "大家，好玩不是一种植物了。那么想要选择以来，你有用机自己的说",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.3813,
+    "r46": 3.5329
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "我叫",
+   "text": "我叫“大人和不得，但就能看，可以更是很多的朋友！”你把全国们的人",
+   "cont": "“大人和不得，但就能看，可以更是很多的朋友！”你把全国们的人",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4632,
+    "r46": 3.4739
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "我叫",
+   "text": "我叫“好的老师。”这个学生也是你将参与着来自己还有些重点，让人们",
+   "cont": "“好的老师。”这个学生也是你将参与着来自己还有些重点，让人们",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.3171,
+    "r46": 3.4999
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "我叫",
+   "text": "我叫你们的“有些小姐”，而是要做到我们带来看，不陌生了。这个人的",
+   "cont": "你们的“有些小姐”，而是要做到我们带来看，不陌生了。这个人的",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.062,
+    "r46": 3.1064
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，并且能够为一些关注性的不过，非常有多是了解放的时候。最终在这",
+   "cont": "并且能够为一些关注性的不过，非常有多是了解放的时候。最终在这",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.327,
+    "r46": 3.4384
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，大家实验中国市场和工作与新区开始发展现在学院成为重要求保障，",
+   "cont": "大家实验中国市场和工作与新区开始发展现在学院成为重要求保障，",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4538,
+    "r46": 3.5941
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，对大人和不平，但成为最高出一些活动也有很重要保持了。此后是，",
+   "cont": "对大人和不平，但成为最高出一些活动也有很重要保持了。此后是，",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7973,
+    "r46": 3.9446
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，就好在市场上，这个学生也是有内涵了。如果您还可以与人工作，只",
+   "cont": "就好在市场上，这个学生也是有内涵了。如果您还可以与人工作，只",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.507,
+    "r46": 3.3659
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，并且提供有些问题。当后来说不见我们带给了解水地方面，这个工作",
+   "cont": "并且提供有些问题。当后来说不见我们带给了解水地方面，这个工作",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.1518,
+    "r46": 3.383
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国队主持了中国的专业是“不过”。但是多少了解的第一点。有着他们",
+   "cont": "队主持了中国的专业是“不过”。但是多少了解的第一点。有着他们",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.3361,
+    "r46": 3.3801
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国大家的文化市场、民共及南北区中心，为金泉海湾区：1021年1",
+   "cont": "大家的文化市场、民共及南北区中心，为金泉海湾区：1021年1",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.2649,
+    "r46": 3.4731
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国家最后一路平均为了解决，但中锋1800万元不同。今天有第89",
+   "cont": "家最后一路平均为了解决，但中锋1800万元不同。今天有第89",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.602,
+    "r46": 3.6755
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国的战争是否希望，因此很容易。但这么是在这里还有些重点，让他们",
+   "cont": "的战争是否希望，因此很容易。但这么是在这里还有些重点，让他们",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.1554,
+    "r46": 3.3151
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国际工艺能有些大家的地方人都不见，而且以“学术》”在前往市场上",
+   "cont": "际工艺能有些大家的地方人都不见，而且以“学术》”在前往市场上",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6129,
+    "r46": 3.8524
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "专家表示，",
+   "text": "专家表示，保险商业中国的建设是“不过”。本年多品牌全面的公司、产业内容",
+   "cont": "保险商业中国的建设是“不过”。本年多品牌全面的公司、产业内容",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4756,
+    "r46": 3.5082
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "专家表示，",
+   "text": "专家表示，大家小学院会、安全工作与中国电视频和金融服务。以及提供人员，",
+   "cont": "大家小学院会、安全工作与中国电视频和金融服务。以及提供人员，",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.1372,
+    "r46": 3.1111
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "专家表示，",
+   "text": "专家表示，对于人工业的智能成熟悉，保险人员提升。本站不同事项目、民法监",
+   "cont": "对于人工业的智能成熟悉，保险人员提升。本站不同事项目、民法监",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4793,
+    "r46": 3.5722
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "专家表示，",
+   "text": "专家表示，该局在市场的公司中学院也是有内涵了。如果您要求提升交易方案。",
+   "cont": "该局在市场的公司中学院也是有内涵了。如果您要求提升交易方案。",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.444,
+    "r46": 3.555
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "专家表示，",
+   "text": "专家表示，为主题“十六大学精化人民族的学习。在一年的国际内内总经济上来",
+   "cont": "为主题“十六大学精化人民族的学习。在一年的国际内内总经济上来",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5247,
+    "r46": 3.9274
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，并不能够为一些关注意的表现，让人来说是了解的情况。”“我们从",
+   "cont": "并不能够为一些关注意的表现，让人来说是了解的情况。”“我们从",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.0973,
+    "r46": 3.0545
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，大家是一个不见地区内涵与新区开始发展的专注，成为了全自己。但",
+   "cont": "大家是一个不见地区内涵与新区开始发展的专注，成为了全自己。但",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6951,
+    "r46": 3.8129
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，对大人和不得有的成能。“可以更是很多的朋友，但不能再有好处理",
+   "cont": "对大人和不得有的成能。“可以更是很多的朋友，但不能再有好处理",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6376,
+    "r46": 3.6026
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，就好的老师。其中心里很容易。但是我们来听到了？”“那么让人的",
+   "cont": "就好的老师。其中心里很容易。但是我们来听到了？”“那么让人的",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.1838,
+    "r46": 3.2769
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，而至少，有些小姐的地方人都不见我们带来看到什么？但是这个重要",
+   "cont": "而至少，有些小姐的地方人都不见我们带来看到什么？但是这个重要",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.3495,
+    "r46": 3.268
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了17），中国内的专属“3月、北市城区是五龙等第三十一条。在1",
+   "cont": "17），中国内的专属“3月、北市城区是五龙等第三十一条。在1",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.9708,
+    "r46": 4.3743
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了解，这样的不见地方面。2、打开环境和金泉之一，以此不同人都是",
+   "cont": "解，这样的不见地方面。2、打开环境和金泉之一，以此不同人都是",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4245,
+    "r46": 3.6718
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了解为人工业的重要，能够也可以更高价值。我们不同事项目标有关注",
+   "cont": "解为人工业的重要，能够也可以更高价值。我们不同事项目标有关注",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.1091,
+    "r46": 3.3573
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了解好的人感受心，因此很容易。但是我们来听会做好的重点，让自己",
+   "cont": "解好的人感受心，因此很容易。但是我们来听会做好的重点，让自己",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.17,
+    "r46": 3.415
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了解，将全国的“一样做，人都有关键词的。本次不少？在前往市场上",
+   "cont": "解，将全国的“一样做，人都有关键词的。本次不少？在前往市场上",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4054,
+    "r46": 3.6463
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去年这次了一眼的风景是“不过，老師們心裡都知道……在《最终是你",
+   "cont": "年这次了一眼的风景是“不过，老師們心裡都知道……在《最终是你",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.9948,
+    "r46": 4.042
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去大家在过老会的地方上更不想，给他每年都是一笑。以此对自己从主",
+   "cont": "大家在过老会的地方上更不想，给他每年都是一笑。以此对自己从主",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.2247,
+    "r46": 4.5281
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去到最后来不得着，就能看过了一些事情也算的重要下头进去。在他倆",
+   "cont": "到最后来不得着，就能看过了一些事情也算的重要下头进去。在他倆",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7992,
+    "r46": 4.016
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去年来。马罗马斯斯坦根据中国首节目标的第二款新场上就会被出了以",
+   "cont": "年来。马罗马斯斯坦根据中国首节目标的第二款新场上就会被出了以",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7044,
+    "r46": 4.0777
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去年也将参有的小姐在地人人要做你，而且一看是什么？”李湘得上来",
+   "cont": "年也将参有的小姐在地人人要做你，而且一看是什么？”李湘得上来",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.1604,
+    "r46": 4.2715
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是，这样为本案文化开展“不过”等等时间产品作用的公司。有同时从",
+   "cont": "，这样为本案文化开展“不过”等等时间产品作用的公司。有同时从",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6101,
+    "r46": 3.757
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是大家，因为不见地别人数与中国电视发展现以后一年以來看自己。但",
+   "cont": "大家，因为不见地别人数与中国电视发展现以后一年以來看自己。但",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.0047,
+    "r46": 4.1001
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是对大，不少公司提供的技术培养人员，也已经出发生于了全国电子线",
+   "cont": "对大，不少公司提供的技术培养人员，也已经出发生于了全国电子线",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.486,
+    "r46": 3.6045
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是很好。我也希望，因此让她们应该参与着解决了解之一就会被出现已",
+   "cont": "很好。我也希望，因此让她们应该参与着解决了解之一就会被出现已",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5972,
+    "r46": 3.7582
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是有一个美具。我们在地景合格的关键，更好看面对于其实际课厂上来",
+   "cont": "有一个美具。我们在地景合格的关键，更好看面对于其实际课厂上来",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.9374,
+    "r46": 4.267
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyoust），为哪些关注是“不过可见呢?.或了解的第一点”最终在1",
+   "cont": "st），为哪些关注是“不过可见呢?.或了解的第一点”最终在1",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.911,
+    "r46": 4.2093
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyouy），因为不是一种植基本的，当然发言都是可以改变了用自己。但",
+   "cont": "y），因为不是一种植基本的，当然发言都是可以改变了用自己。但",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.2787,
+    "r46": 3.6454
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyountn和xicgbst，pucvasdom不同事项的时间是，",
+   "cont": "ntn和xicgbst，pucvasdom不同事项的时间是，",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7713,
+    "r46": 3.729
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyoutaimpdm，因此很容通过工作？您来看要做好的重新机构，只",
+   "cont": "taimpdm，因此很容通过工作？您来看要做好的重新机构，只",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6697,
+    "r46": 3.8707
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyous:ctiprg），而非要有关键词的，你可能在其实验收到上来",
+   "cont": "s:ctiprg），而非要有关键词的，你可能在其实验收到上来",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.3766,
+    "r46": 3.6519
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "The weather is",
+   "text": "theweatherisso），中国文化专属“3月、北市城区是为主的第一级”优秀在1",
+   "cont": "so），中国文化专属“3月、北市城区是为主的第一级”优秀在1",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.0406,
+    "r46": 4.4169
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "The weather is",
+   "text": "theweatherisyon文字不是一种植基本的，当然自己都是在其中以來看到什么玩",
+   "cont": "yon文字不是一种植基本的，当然自己都是在其中以來看到什么玩",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.458,
+    "r46": 3.5579
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "The weather is",
+   "text": "theweatherisl为人和《10名》，最高于2018年的第二次下。今日以上跌超",
+   "cont": "l为人和《10名》，最高于2018年的第二次下。今日以上跌超",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4367,
+    "r46": 3.7713
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "The weather is",
+   "text": "theweatheristamlidm，pc)也是在工作了的原因。(gok/h2,u",
+   "cont": "tamlidm，pc)也是在工作了的原因。(gok/h2,u",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6244,
+    "r46": 3.7737
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "The weather is",
+   "text": "theweatheriss:cf,prg），而非要有关键词的，你可能在其实验收到上来",
+   "cont": "s:cf,prg），而非要有关键词的，你可能在其实验收到上来",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5743,
+    "r46": 3.7935
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "I love",
+   "text": "ilovest），中国文化专属“3月、北市城区是五龙的第三级”优秀在1",
+   "cont": "st），中国文化专属“3月、北市城区是五龙的第三级”优秀在1",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.9806,
+    "r46": 4.3703
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "I love",
+   "text": "ilovey），因为不见一度上更强新的意见，那么以后一年三道长中国际视",
+   "cont": "y），因为不见一度上更强新的意见，那么以后一年三道长中国际视",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.8889,
+    "r46": 4.2756
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "I love",
+   "text": "ilovertn,xpagbst，hecvu也算很重不同事，而且有着大",
+   "cont": "rtn,xpagbst，hecvu也算很重不同事，而且有着大",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.004,
+    "r46": 4.1989
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "I love",
+   "text": "ilovetasrpym，因此很容通过工作了。如果您还可以在新颖的wu",
+   "cont": "tasrpym，因此很容通过工作了。如果您还可以在新颖的wu",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4441,
+    "r46": 3.6163
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "I love",
+   "text": "iloveshct,prg），而非要有关键词的，你可能在其实验收到上来",
+   "cont": "shct,prg），而非要有关键词的，你可能在其实验收到上来",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4919,
+    "r46": 3.7247
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "Machine learning",
+   "text": "machinelearningso），中国文化专属“3月、北市城区是为西雅的第二一条。在1",
+   "cont": "so），中国文化专属“3月、北市城区是为西雅的第二一条。在1",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.0906,
+    "r46": 4.3626
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "Machine learning",
+   "text": "machinelearningyortupb-)，也不想要开始发言法以后一年以來看自己。但",
+   "cont": "yortupb-)，也不想要开始发言法以后一年以來看自己。但",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7455,
+    "r46": 3.9212
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "Machine learning",
+   "text": "machinelearningut-,x10名（st，pu)所提升。本站不同事项的时间是，",
+   "cont": "ut-,x10名（st，pu)所提升。本站不同事项的时间是，",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.9201,
+    "r46": 3.9928
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "Machine learning",
+   "text": "machinelearningtv在市场上，这个原件也是你将参与的球员会就可以只能够让自己",
+   "cont": "tv在市场上，这个原件也是你将参与的球员会就可以只能够让自己",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6174,
+    "r46": 3.5629
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "Machine learning",
+   "text": "machinelearnings:ct,prv在最后来说的oxch，你可能是如果你？”“我",
+   "cont": "s:ct,prv在最后来说的oxch，你可能是如果你？”“我",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5784,
+    "r46": 3.6652
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "我叫",
+   "text": "我叫，这样了一眼的女子是“不过，老師是没有了解的……”《最终在你",
+   "cont": "，这样了一眼的女子是“不过，老師是没有了解的……”《最终在你",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6759,
+    "r46": 3.7558
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "我叫",
+   "text": "我叫大家，好玩不是一种植基本想要开始发言都是可以选择，不陌生。但",
+   "cont": "大家，好玩不是一种植基本想要开始发言都是可以选择，不陌生。但",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5329,
+    "r46": 3.6587
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "我叫",
+   "text": "我叫您的人和不得，但就能看，可以更要提升。本站不同事情里有心理解",
+   "cont": "您的人和不得，但就能看，可以更要提升。本站不同事情里有心理解",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6538,
+    "r46": 3.8749
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "我叫",
+   "text": "我叫那好在老宫联邦，因此很容通过这三件的原因。还可以就会被出了。",
+   "cont": "那好在老宫联邦，因此很容通过这三件的原因。还可以就会被出了。",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.0788,
+    "r46": 4.1815
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "我叫",
+   "text": "我叫你们，我有些小姐在地人人要好的事战。”他又不是如果你？”“那",
+   "cont": "你们，我有些小姐在地人人要好的事战。”他又不是如果你？”“那",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6328,
+    "r46": 3.667
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，并经济了中国主持出速价1月前北市城区产业园厅第2038年参加",
+   "cont": "并经济了中国主持出速价1月前北市城区产业园厅第2038年参加",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.0676,
+    "r46": 4.5708
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，大家实验中国市委会馆及一个月开始发展“十五”成为，对自己从主",
+   "cont": "大家实验中国市委会馆及一个月开始发展“十五”成为，对自己从主",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6276,
+    "r46": 3.8036
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，对大人和不平部名字经济，可能更高价值。本站开始成为全国电子线",
+   "cont": "对大人和不平部名字经济，可能更高价值。本站开始成为全国电子线",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.8494,
+    "r46": 3.9625
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，就好在市场时间，因此很容通过工作了。如果您还可以与新颖的实验",
+   "cont": "就好在市场时间，因此很容通过工作了。如果您还可以与新颖的实验",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4894,
+    "r46": 3.5284
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，并将提交有些问题。不断来说的关键词是，看面对于其实际课厂上来",
+   "cont": "并将提交有些问题。不断来说的关键词是，看面对于其实际课厂上来",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6821,
+    "r46": 3.9673
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国队主持了中国的专业是坚决成绩。本年多名为全世界杯两家最终不开",
+   "cont": "队主持了中国的专业是坚决成绩。本年多名为全世界杯两家最终不开",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.8543,
+    "r46": 4.0216
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国大家小学院会、科博局及一个月开始发展的专注中心理事长。如此代",
+   "cont": "大家小学院会、科博局及一个月开始发展的专注中心理事长。如此代",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.8302,
+    "r46": 3.8998
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国家最后再不得着，成为您也可能更高价值。本站不同事项的时间是要",
+   "cont": "家最后再不得着，成为您也可能更高价值。本站不同事项的时间是要",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7544,
+    "r46": 3.7929
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国的战争是否希望，因此很容通过学生了。如果会做好的重新活动，只",
+   "cont": "的战争是否希望，因此很容通过学生了。如果会做好的重新活动，只",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4432,
+    "r46": 3.5757
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国队主讲“十六大学精化人民族的中东部门，看面对于世纪总经历上来",
+   "cont": "队主讲“十六大学精化人民族的中东部门，看面对于世纪总经历上来",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7208,
+    "r46": 4.3112
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "专家表示，",
+   "text": "专家表示，保险商业中国主持出速价格10个市场提高了4月第2538年不多",
+   "cont": "保险商业中国主持出速价格10个市场提高了4月第2538年不多",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.727,
+    "r46": 4.0026
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "专家表示，",
+   "text": "专家表示，大家小系統不是一樣呢？第三月中的政府都沒有一陣文來看自己。但",
+   "cont": "大家小系統不是一樣呢？第三月中的政府都沒有一陣文來看自己。但",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7423,
+    "r46": 4.076
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "专家表示，",
+   "text": "专家表示，对大人和不得有的成能。所以一些性价也算很重要保持了全球们的人",
+   "cont": "对大人和不得有的成能。所以一些性价也算很重要保持了全球们的人",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.079,
+    "r46": 4.2712
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "专家表示，",
+   "text": "专家表示，该局在市场时代，公众建立第日内外上的社会基金之一重新增强服务",
+   "cont": "该局在市场时代，公众建立第日内外上的社会基金之一重新增强服务",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.9384,
+    "r46": 4.151
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "专家表示，",
+   "text": "专家表示，并将提交有些问题。当后来说的关键词是：本网上支付内存？这个实",
+   "cont": "并将提交有些问题。当后来说的关键词是：本网上支付内存？这个实",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7231,
+    "r46": 3.8395
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，并放置了本上的风景是“不过，为此时没有了解的情防。”“用水之",
+   "cont": "并放置了本上的风景是“不过，为此时没有了解的情防。”“用水之",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.872,
+    "r46": 4.0531
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，大家是一道不见地看起来了。那么想要选择以后，成为自己打算会用",
+   "cont": "大家是一道不见地看起来了。那么想要选择以后，成为自己打算会用",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6333,
+    "r46": 3.5407
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，对大人和不得着，成为最高出一些性价也已经非不同事能的时候是要",
+   "cont": "对大人和不得着，成为最高出一些性价也已经非不同事能的时候是要",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.2764,
+    "r46": 4.3482
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，就好得是否希望的心里很容通过工作了。如果您还可以只能够让自己",
+   "cont": "就好得是否希望的心里很容通过工作了。如果您还可以只能够让自己",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5433,
+    "r46": 3.476
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，而至本次有些小姐的地人人都不见我们带了一個。他如果你知道上那",
+   "cont": "而至本次有些小姐的地人人都不见我们带了一個。他如果你知道上那",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.0403,
+    "r46": 4.0594
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了17）为本案(三大283月前沿市城区是五龙的第一级公积总经济",
+   "cont": "17）为本案(三大283月前沿市城区是五龙的第一级公积总经济",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.3674,
+    "r46": 4.8483
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了大家内外最不见地区，也不想打开始发展现在后一年以来看自己从主",
+   "cont": "大家内外最不见地区，也不想打开始发展现在后一年以来看自己从主",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.9155,
+    "r46": 4.0617
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了解为人工业的重要环境。所有一些机遇受损害。不同事能再有点是，",
+   "cont": "解为人工业的重要环境。所有一些机遇受损害。不同事能再有点是，",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5131,
+    "r46": 3.8429
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了解好的人感受心，因此很容通过工作了。如果您还可以在一套各种产",
+   "cont": "解好的人感受心，因此很容通过工作了。如果您还可以在一套各种产",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.475,
+    "r46": 3.6708
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了解，将全年的小姐在地景合格的关键。为了一次不陌生在前沿市上来",
+   "cont": "解，将全年的小姐在地景合格的关键。为了一次不陌生在前沿市上来",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.9731,
+    "r46": 4.1158
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去年的人民的一个人。”“你想要在这里，我不会有些问题？”“你说",
+   "cont": "年的人民的一个人。”“你想要在这里，我不会有些问题？”“你说",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.749,
+    "r46": 2.7765
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是一个人，不会有些问题。”“我们在这里，你可以说：“我们要做好",
+   "cont": "一个人，不会有些问题。”“我们在这里，你可以说：“我们要做好",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.4007,
+    "r46": 2.4037
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyountispack，我们的网站上面，这样在一个人来说。”“你可",
+   "cont": "ntispack，我们的网站上面，这样在一个人来说。”“你可",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.7943,
+    "r46": 2.7452
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "The weather is",
+   "text": "theweatherisondaly，我们在这个网站的pock。”“你可以说，我们是",
+   "cont": "ondaly，我们在这个网站的pock。”“你可以说，我们是",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.6707,
+    "r46": 2.5539
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "I love",
+   "text": "iloventarsapp，在这个网站的网格上。我们可以说，你是不会有",
+   "cont": "ntarsapp，在这个网站的网格上。我们可以说，你是不会有",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.6378,
+    "r46": 2.6072
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "Machine learning",
+   "text": "machinelearningostopy，我们在这个人的时候，你可以看到了一些？”“我们",
+   "cont": "ostopy，我们在这个人的时候，你可以看到了一些？”“我们",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.4355,
+    "r46": 2.4407
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "我叫",
+   "text": "我叫你的人，我们可以在这个时候，不会有一些问题。”“你说：”他是",
+   "cont": "你的人，我们可以在这个时候，不会有一些问题。”“你说：”他是",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.3481,
+    "r46": 2.4334
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，在国内部门中，以及时代表示。2019年6月1日至2028年3",
+   "cont": "在国内部门中，以及时代表示。2019年6月1日至2028年3",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.3677,
+    "r46": 2.4802
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国家的人民们也不会有一个人。”“你想要在这里，我们可以看到了解",
+   "cont": "家的人民们也不会有一个人。”“你想要在这里，我们可以看到了解",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.6603,
+    "r46": 2.5931
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "专家表示，",
+   "text": "专家表示，在国内的学生中心、人民的“一样”。我们有着大家都是不会做好，",
+   "cont": "在国内的学生中心、人民的“一样”。我们有着大家都是不会做好，",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.8684,
+    "r46": 3.0171
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，我们的人员不会有一个人。”“你说，我们可以看到了解决的问题。",
+   "cont": "我们的人员不会有一个人。”“你说，我们可以看到了解决的问题。",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.539,
+    "r46": 2.5
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了一个人的，我们可以在我们的时候，不会有些问题。”“你说是你想",
+   "cont": "一个人的，我们可以在我们的时候，不会有些问题。”“你说是你想",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.3852,
+    "r46": 2.3106
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去年这次了一切的风子是“不过，就觉得没有了。”所以在《日本时间",
+   "cont": "年这次了一切的风子是“不过，就觉得没有了。”所以在《日本时间",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.574,
+    "r46": 3.7896
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去事权益。最不是一种人想了”那么做，那么只要一个孩子对自己的玩",
+   "cont": "事权益。最不是一种人想了”那么做，那么只要一个孩子对自己的玩",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6778,
+    "r46": 3.7889
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去回到很多少人的，就能看到了一些感情也算的。不过你把你有所帮援",
+   "cont": "回到很多少人的，就能看到了一些感情也算的。不过你把你有所帮援",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7192,
+    "r46": 3.7728
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去年来。”“您要有权重机、《日常），是解决定法法的知识工作，只",
+   "cont": "年来。”“您要有权重机、《日常），是解决定法法的知识工作，只",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.8726,
+    "r46": 3.8773
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去年一篇“有些小姐”地人人都不见我的时候，又要在其实你的意思。",
+   "cont": "年一篇“有些小姐”地人人都不见我的时候，又要在其实你的意思。",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5231,
+    "r46": 3.6014
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是，这样为本企业专业和安全保修。有些问题了解的第一方向，同时从",
+   "cont": "，这样为本企业专业和安全保修。有些问题了解的第一方向，同时从",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.3122,
+    "r46": 3.33
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是一种数据：如果我们会提供了解电电机构成，可以选择，不同时从用",
+   "cont": "一种数据：如果我们会提供了解电电机构成，可以选择，不同时从用",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.2095,
+    "r46": 3.2151
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是对大家和不平部，更能很好做一些感情也有很重要保障，而且在网站",
+   "cont": "对大家和不平部，更能很好做一些感情也有很重要保障，而且在网站",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.8373,
+    "r46": 3.9486
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是，多年轻松在广大市场地建筑中，这件是有所用户。一、新增速服务",
+   "cont": "，多年轻松在广大市场地建筑中，这件是有所用户。一、新增速服务",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7603,
+    "r46": 3.9372
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是一个企业有些问题。可以通过技术，将带给了网上的公司，这部分享",
+   "cont": "一个企业有些问题。可以通过技术，将带给了网上的公司，这部分享",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.0114,
+    "r46": 3.0643
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyoust），为哪些？”2011年3月14日下午的第一次《ckin",
+   "cont": "st），为哪些？”2011年3月14日下午的第一次《ckin",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.7099,
+    "r46": 2.8485
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyouygittpb-n):/wwidssacd.mn，不仅是一个",
+   "cont": "ygittpb-n):/wwidssacd.mn，不仅是一个",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.3828,
+    "r46": 3.5288
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyountn和xicgbst，pucvasdomed)，在这场网址",
+   "cont": "ntn和xicgbst，pucvasdomed)，在这场网址",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6696,
+    "r46": 3.6892
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyoutastidm，pc)也是在《micknasgruph”，只",
+   "cont": "tastidm，pc)也是在《micknasgruph”，只",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4759,
+    "r46": 3.5874
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyoustct,prg），所以要有关键的p，是网友支持在你的文凭来",
+   "cont": "stct,prg），所以要有关键的p，是网友支持在你的文凭来",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7038,
+    "r46": 4.0299
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "The weather is",
+   "text": "theweatherisso），为哪些的手式“不过可见呢？”是我们的所以这一条件内。",
+   "cont": "so），为哪些的手式“不过可见呢？”是我们的所以这一条件内。",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.8066,
+    "r46": 4.0412
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "The weather is",
+   "text": "theweatherisyonalpbynudop，当然或者是以后一下：1、中国网站",
+   "cont": "yonalpbynudop，当然或者是以后一下：1、中国网站",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.3737,
+    "r46": 3.3757
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "The weather is",
+   "text": "theweatherislan,xpogbvu，可以更是用户的网站不同。这里有电子商",
+   "cont": "lan,xpogbvu，可以更是用户的网站不同。这里有电子商",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5182,
+    "r46": 3.4204
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "The weather is",
+   "text": "theweatheristamlidm，po)也是在《中国的亚洲》、gounks,c",
+   "cont": "tamlidm，po)也是在《中国的亚洲》、gounks,c",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.3088,
+    "r46": 3.4251
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "The weather is",
+   "text": "theweatheriss:conprg），所以要有关键的pol网友支持在cymda",
+   "cont": "s:conprg），所以要有关键的pol网友支持在cymda",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5541,
+    "r46": 3.5378
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "I love",
+   "text": "ilovest），中国主持以上线110个人来说是了解的第一点。chin",
+   "cont": "st），中国主持以上线110个人来说是了解的第一点。chin",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.294,
+    "r46": 3.2456
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "I love",
+   "text": "iloveygrathunnd:299682年1月16日以，不仅是北京",
+   "cont": "ygrathunnd:299682年1月16日以，不仅是北京",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.2537,
+    "r46": 3.2492
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "I love",
+   "text": "ilovertn,xpagbst，hecvasdould)，在客户网址",
+   "cont": "rtn,xpagbst，hecvasdould)，在客户网址",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6373,
+    "r46": 3.6807
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "I love",
+   "text": "ilovetasridm，pa)也是在每天上的球员。还可以知道中的wu",
+   "cont": "tasridm，pa)也是在每天上的球员。还可以知道中的wu",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4521,
+    "r46": 3.3969
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "I love",
+   "text": "iloveshct,prg），一年高技术的战斗，在网上赛中国际上升升级",
+   "cont": "shct,prg），一年高技术的战斗，在网上赛中国际上升升级",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5331,
+    "r46": 3.7133
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "Machine learning",
+   "text": "machinelearningso），中国主持以上线119.60.344亿/ww”ck(t",
+   "cont": "so），中国主持以上线119.60.344亿/ww”ck(t",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6585,
+    "r46": 3.5647
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "Machine learning",
+   "text": "machinelearningyortusbysh:/ww,829016.9:7-34%，",
+   "cont": "yortusbysh:/ww,829016.9:7-34%，",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.364,
+    "r46": 3.3395
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "Machine learning",
+   "text": "machinelearningot-,xpa，bst，可以更是用户的网站不同事？在这个网址",
+   "cont": "ot-,xpa，bst，可以更是用户的网站不同事？在这个网址",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6393,
+    "r46": 3.5738
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "Machine learning",
+   "text": "machinelearningtostpy，这个人很容通过工作了。如果您要注意知道是一种的",
+   "cont": "tostpy，这个人很容通过工作了。如果您要注意知道是一种的",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.0872,
+    "r46": 3.1801
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "Machine learning",
+   "text": "machinelearningstct,prv在最后来说的你，我们可以用于这个信息？”“我",
+   "cont": "stct,prv在最后来说的你，我们可以用于这个信息？”“我",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.2232,
+    "r46": 3.3374
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "我叫",
+   "text": "我叫我这样的一切方面，是“不过，你觉得没有了？”所以在《最终是从",
+   "cont": "我这样的一切方面，是“不过，你觉得没有了？”所以在《最终是从",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.3342,
+    "r46": 3.5166
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "我叫",
+   "text": "我叫大家是好玩会的一种人，不想要开始发酵都是在其中，让我自己从地",
+   "cont": "大家是好玩会的一种人，不想要开始发酵都是在其中，让我自己从地",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7467,
+    "r46": 3.7613
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "我叫",
+   "text": "我叫您的人和不得你，就能看到了一些所有所有很重要，不能在这个网址",
+   "cont": "您的人和不得你，就能看到了一些所有所有很重要，不能在这个网址",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.232,
+    "r46": 3.3229
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "我叫",
+   "text": "我叫你好的人，您要有很多地方面。”这件事来看一个？他就会是让自己",
+   "cont": "你好的人，您要有很多地方面。”这件事来看一个？他就会是让自己",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.3979,
+    "r46": 3.5315
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "我叫",
+   "text": "我叫你们，我有些问题的地方人都不见我们带给他的身身。但是这个重要",
+   "cont": "你们，我有些问题的地方人都不见我们带给他的身身。但是这个重要",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.245,
+    "r46": 3.2323
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，并经济了一年的专业开展、中华市民来医院参加全国农村公司理念。",
+   "cont": "并经济了一年的专业开展、中华市民来医院参加全国农村公司理念。",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4231,
+    "r46": 3.6555
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，大家在学校内部、生长奖励中心开始，那么是一个好理事业务人。但",
+   "cont": "大家在学校内部、生长奖励中心开始，那么是一个好理事业务人。但",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5705,
+    "r46": 3.5753
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，对大人和不平部名员的最好做一些事情也已经出现在不同的时候是要",
+   "cont": "对大人和不平部名员的最好做一些事情也已经出现在不同的时候是要",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.8437,
+    "r46": 3.9629
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，就好在市场上上，因此很多少少了这件事来。”他们提升年来自由的",
+   "cont": "就好在市场上上，因此很多少少了这件事来。”他们提升年来自由的",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4872,
+    "r46": 3.3301
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，并且将全部的“新学生”、《省青春学院院）和国家公司副校长培养",
+   "cont": "并且将全部的“新学生”、《省青春学院院）和国家公司副校长培养",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4452,
+    "r46": 3.7235
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国17次增加一方位，希望不过在北京城市区内的实施和中央有同时。",
+   "cont": "17次增加一方位，希望不过在北京城市区内的实施和中央有同时。",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6908,
+    "r46": 3.89
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国大家在亚洲市场上发展了一个人开始，那么是一款好理，不仅可以说",
+   "cont": "大家在亚洲市场上发展了一个人开始，那么是一款好理，不仅可以说",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.3197,
+    "r46": 3.3372
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国家的人和不平重要的名字，可能更是很多钱？”不同事了。这个网址",
+   "cont": "家的人和不平重要的名字，可能更是很多钱？”不同事了。这个网址",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6722,
+    "r46": 3.5735
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国的战士马世外观，因此很多少少了！”大家所有个人民知道中的不断",
+   "cont": "的战士马世外观，因此很多少少了！”大家所有个人民知道中的不断",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.9237,
+    "r46": 3.8686
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国队也将参与的大家在地人民族的学习战斗，他们曾经理解决于一个实",
+   "cont": "队也将参与的大家在地人民族的学习战斗，他们曾经理解决于一个实",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6541,
+    "r46": 3.7453
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "专家表示，",
+   "text": "专家表示，17）“本上的文化是“不过，我觉得没有了解的情况。”最终在时",
+   "cont": "17）“本上的文化是“不过，我觉得没有了解的情况。”最终在时",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6315,
+    "r46": 3.6085
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "专家表示，",
+   "text": "专家表示，大家每天最不是一种人的一个月开始，那么我们也不会让我自己从国",
+   "cont": "大家每天最不是一种人的一个月开始，那么我们也不会让我自己从国",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.3522,
+    "r46": 3.3376
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "专家表示，",
+   "text": "专家表示，对大人和不平部名字，最好做一些所有的事業。不同時，你想有他要",
+   "cont": "对大人和不平部名字，最好做一些所有的事業。不同時，你想有他要",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.1088,
+    "r46": 4.119
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "专家表示，",
+   "text": "专家表示，公司在市场上的学生中国内部支持参与的社会会议之一。二是202",
+   "cont": "公司在市场上的学生中国内部支持参与的社会会议之一。二是202",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.8907,
+    "r46": 2.8099
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "专家表示，",
+   "text": "专家表示，学校将教育的“新学生”人员的实验。在政府和国际公司总局部位申",
+   "cont": "学校将教育的“新学生”人员的实验。在政府和国际公司总局部位申",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4086,
+    "r46": 3.5202
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，17）了一切的风险是“不过，我觉得没有了解的情况。”最终不知",
+   "cont": "17）了一切的风险是“不过，我觉得没有了解的情况。”最终不知",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.592,
+    "r46": 3.4229
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，大家每天最不是一种人的不断，给他们的战争。其成了，我自己从地",
+   "cont": "大家每天最不是一种人的不断，给他们的战争。其成了，我自己从地",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4466,
+    "r46": 3.4794
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，对大人和不平部名字，最好做一些所有的。我们不同事能够会有着你",
+   "cont": "对大人和不平部名字，最好做一些所有的。我们不同事能够会有着你",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.9774,
+    "r46": 4.0761
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，就好在老师的话，因此很多少了。这件事来看一个人们有些办理，只",
+   "cont": "就好在老师的话，因此很多少了。这件事来看一个人们有些办理，只",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4727,
+    "r46": 3.5893
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，而是一个有些大家的地方人都不见我们带给他的身身。但你也不会把",
+   "cont": "而是一个有些大家的地方人都不见我们带给他的身身。但你也不会把",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.486,
+    "r46": 3.4225
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了17次，中国人民众多人不过，马士来说是了解的第一点。最终在时",
+   "cont": "17次，中国人民众多人不过，马士来说是了解的第一点。最终在时",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5738,
+    "r46": 3.6216
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了大家内容：如果我们能够与中国的指示，因为主力成立，不仅可以用",
+   "cont": "大家内容：如果我们能够与中国的指示，因为主力成立，不仅可以用",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.1681,
+    "r46": 3.2885
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了解为人工业的，但就能在各个中国机遇到内容。不同事宜里达于89",
+   "cont": "解为人工业的，但就能在各个中国机遇到内容。不同事宜里达于89",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.9101,
+    "r46": 4.2265
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了解好的人感受心，因为很多少样。这件是我们要做好的知识，让自己",
+   "cont": "解好的人感受心，因为很多少样。这件是我们要做好的知识，让自己",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.1942,
+    "r46": 3.4418
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了解，将我们的小型在开始上都有关键。为了一次不少？但是自身上来",
+   "cont": "解，将我们的小型在开始上都有关键。为了一次不少？但是自身上来",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5426,
+    "r46": 3.6577
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去年这次了一切的风子是“不过，就觉得没有了解的情防操作。同时从",
+   "cont": "年这次了一切的风子是“不过，就觉得没有了解的情防操作。同时从",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6966,
+    "r46": 4.0664
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去事权益过最不见地别呢？不但那位本身的名词后，你以让我自己从说",
+   "cont": "事权益过最不见地别呢？不但那位本身的名词后，你以让我自己从说",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.6508,
+    "r46": 5.0474
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去回头眼嘴不得着，就能接受出一些感情也算到。不下事了！”老帝大",
+   "cont": "回头眼嘴不得着，就能接受出一些感情也算到。不下事了！”老帝大",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.403,
+    "r46": 4.4687
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去日前在老师时间，因此很容通过工作了。如果您还可以知道是让自己",
+   "cont": "日前在老师时间，因此很容通过工作了。如果您还可以知道是让自己",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6135,
+    "r46": 3.5589
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去年最后，有些小姐在地人来说的你？”“一看……至世外就给他无法",
+   "cont": "年最后，有些小姐在地人来说的你？”“一看……至世外就给他无法",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.0959,
+    "r46": 4.0874
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是17）了本案(在今天8篮球前线（1.344亿/ww”ckil",
+   "cont": "17）了本案(在今天8篮球前线（1.344亿/ww”ckil",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.5136,
+    "r46": 4.6114
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是大家内外最不见地区，也不想打开始发展现在了一年以來看自己。但",
+   "cont": "大家内外最不见地区，也不想打开始发展现在了一年以來看自己。但",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.9372,
+    "r46": 3.9676
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是对大人和不平部，更确认，可有些性提升。本站不同事项目、电子线",
+   "cont": "对大人和不平部，更确认，可有些性提升。本站不同事项目、电子线",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.2013,
+    "r46": 4.473
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是很好。欢迎您要，因此地區面對每三件的手機器還可以在新增業服務",
+   "cont": "很好。欢迎您要，因此地區面對每三件的手機器還可以在新增業服務",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.1208,
+    "r46": 4.3498
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是你们提交有些困难。不断更要好，我们带给他的身地？在你知道上来",
+   "cont": "你们提交有些困难。不断更要好，我们带给他的身地？在你知道上来",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.8223,
+    "r46": 3.9212
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyoust），为哪些文章是“不过可见呢？”在下班的第一点《cki=",
+   "cont": "st），为哪些文章是“不过可见呢？”在下班的第一点《cki=",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7715,
+    "r46": 3.8333
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyouygittpb-n):299682年1月后，全国社会副主场报",
+   "cont": "ygittpb-n):299682年1月后，全国社会副主场报",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6222,
+    "r46": 3.8257
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyount-mxpagbst，可以更完全也算到出不同事能的时候是要",
+   "cont": "nt-mxpagbst，可以更完全也算到出不同事能的时候是要",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.1156,
+    "r46": 4.2399
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyoutasmidm，p)是c罗西等面上的球员会还可以与在亚利逊部",
+   "cont": "tasmidm，p)是c罗西等面上的球员会还可以与在亚利逊部",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.3989,
+    "r46": 4.4183
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyous:ct,prg），所以要有关键注册机构的。在其内存储备上来",
+   "cont": "s:ct,prg），所以要有关键注册机构的。在其内存储备上来",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5671,
+    "r46": 3.6867
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "The weather is",
+   "text": "theweatherisso）了一切方面，是“不过可见呢？”3月4日第253cm(1",
+   "cont": "so）了一切方面，是“不过可见呢？”3月4日第253cm(1",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.8089,
+    "r46": 4.0251
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "The weather is",
+   "text": "theweatherisyon文字目的原本，也不想要开始发言都是一款好理，对自己从用",
+   "cont": "yon文字目的原本，也不想要开始发言都是一款好理，对自己从用",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.8635,
+    "r46": 3.8166
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "The weather is",
+   "text": "theweatherislan,xpogbvu，可以更要提升的用户不同事？在此后网址",
+   "cont": "lan,xpogbvu，可以更要提升的用户不同事？在此后网址",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.8997,
+    "r46": 4.1398
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "The weather is",
+   "text": "theweatheristamlidm，p)是c罗西亚尼斯的亚奥克阿伦特与罗德（,u",
+   "cont": "tamlidm，p)是c罗西亚尼斯的亚奥克阿伦特与罗德（,u",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.2035,
+    "r46": 4.4468
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "The weather is",
+   "text": "theweatheriss:c）,prg在l，yogoncv，你可以在其实查下载上来",
+   "cont": "s:c）,prg在l，yogoncv，你可以在其实查下载上来",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.979,
+    "r46": 4.0706
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "I love",
+   "text": "ilovest）为本企业专业务员表示，201.344亿/ww”ck(1",
+   "cont": "st）为本企业专业务员表示，201.344亿/ww”ck(1",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5286,
+    "r46": 3.6069
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "I love",
+   "text": "iloveygrathb-n)(299682年1月后，全国社会副主场总",
+   "cont": "ygrathb-n)(299682年1月后，全国社会副主场总",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4625,
+    "r46": 3.6773
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "I love",
+   "text": "ilovertn,xpagbst，huc机提升的图纸不同。今里有电子线",
+   "cont": "rtn,xpagbst，huc机提升的图纸不同。今里有电子线",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.2383,
+    "r46": 4.298
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "I love",
+   "text": "ilovetasrpym，因此很容通过工作了。如果您还可以知道是202",
+   "cont": "tasrpym，因此很容通过工作了。如果您还可以知道是202",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.2395,
+    "r46": 3.316
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "I love",
+   "text": "iloveshct,prg），一年高技术网页表面的网易后，在pya上版",
+   "cont": "shct,prg），一年高技术网页表面的网易后，在pya上版",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.898,
+    "r46": 4.1014
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "Machine learning",
+   "text": "machinelearningso）了一切方面，是“不过可见呢？”3月4日第25381:1",
+   "cont": "so）了一切方面，是“不过可见呢？”3月4日第25381:1",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7316,
+    "r46": 3.8695
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "Machine learning",
+   "text": "machinelearningyortupb-sh:299682年1月后，全国社会副主场报",
+   "cont": "yortupb-sh:299682年1月后，全国社会副主场报",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5585,
+    "r46": 3.6815
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "Machine learning",
+   "text": "machinelearningot-,xpa，bst，可以更要提升的机构不同事能较小于8.",
+   "cont": "ot-,xpa，bst，可以更要提升的机构不同事能较小于8.",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.1993,
+    "r46": 4.2303
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "Machine learning",
+   "text": "machinelearningtv在市外流程，p)很容通过工作了。如果您还可以知道是202",
+   "cont": "tv在市外流程，p)很容通过工作了。如果您还可以知道是202",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7967,
+    "r46": 3.9268
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "Machine learning",
+   "text": "machinelearnings:ct,prv在最后来要的oxch，本网上支援信息？这个我",
+   "cont": "s:ct,prv在最后来要的oxch，本网上支援信息？这个我",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.0432,
+    "r46": 4.1771
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "我叫",
+   "text": "我叫，这样为本人的关键是“不过可见呢？没有了解的情防操作，同时从",
+   "cont": "，这样为本人的关键是“不过可见呢？没有了解的情防操作，同时从",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6651,
+    "r46": 3.9064
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "我叫",
+   "text": "我叫大家是好玩会的地方呢？不想没有哪些选择，可以说：对于自己从用",
+   "cont": "大家是好玩会的地方呢？不想没有哪些选择，可以说：对于自己从用",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5874,
+    "r46": 3.5539
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "我叫",
+   "text": "我叫您的人和不得你，就能可以做一些所提升。本站不同事们的时候是要",
+   "cont": "您的人和不得你，就能可以做一些所提升。本站不同事们的时候是要",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5578,
+    "r46": 3.6867
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "我叫",
+   "text": "我叫”好得是否在其，因此很容通过工作了。如果您还可以知道更方多的",
+   "cont": "”好得是否在其，因此很容通过工作了。如果您还可以知道更方多的",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.9789,
+    "r46": 4.1724
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "我叫",
+   "text": "我叫你们提交，因为此外，人来要的关键。在您看到什么？但你知道上来",
+   "cont": "你们提交，因为此外，人来要的关键。在您看到什么？但你知道上来",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5198,
+    "r46": 3.5452
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，并经济了中国主持出客“不过”。有些问题来参考第一点《日本校园",
+   "cont": "并经济了中国主持出客“不过”。有些问题来参考第一点《日本校园",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.9269,
+    "r46": 4.1177
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，大家在学校不见、生长奖励”，开始发言“专业中心理事、自己实践",
+   "cont": "大家在学校不见、生长奖励”，开始发言“专业中心理事、自己实践",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.8226,
+    "r46": 3.9235
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，对大人和不平部名员也可以做一些性价值。本站开始成立全国电子线",
+   "cont": "对大人和不平部名员也可以做一些性价值。本站开始成立全国电子线",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.0321,
+    "r46": 4.0933
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，就好在市场上已经起学生也是有内涵了。如果您还可以知道来讲，只",
+   "cont": "就好在市场上已经起学生也是有内涵了。如果您还可以知道来讲，只",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6601,
+    "r46": 3.5877
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，并将提交自己也是在地人来说。你我们带给他的身身？但你知道上来",
+   "cont": "并将提交自己也是在地人来说。你我们带给他的身身？但你知道上来",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.026,
+    "r46": 3.866
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国17次增加一方位，希望不过在北市城区产品积分的农村公司。但从",
+   "cont": "17次增加一方位，希望不过在北市城区产品积分的农村公司。但从",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.8707,
+    "r46": 3.975
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国大家在亚洲市场安全会议与中央的228岁以后，成为10个人。但",
+   "cont": "大家在亚洲市场安全会议与中央的228岁以后，成为10个人。但",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.3862,
+    "r46": 3.5387
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国家的人和不平重要做到最高出一些性价也算很重要保持了。此后是，",
+   "cont": "家的人和不平重要做到最高出一些性价也算很重要保持了。此后是，",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.0514,
+    "r46": 4.1576
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国的战士马世外观，因此很容通过学校上传统所要做之一就会被让自己",
+   "cont": "的战士马世外观，因此很容通过学校上传统所要做之一就会被让自己",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.3835,
+    "r46": 4.4113
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国队主讲“十六大学在北京人团的中国战斗院内的老师之后，自然无法",
+   "cont": "队主讲“十六大学在北京人团的中国战斗院内的老师之后，自然无法",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.8343,
+    "r46": 3.8571
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "专家表示，",
+   "text": "专家表示，17）为本案(在第283月9日（1.344亿/ww”ckil",
+   "cont": "17）为本案(在第283月9日（1.344亿/ww”ckil",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.0506,
+    "r46": 4.097
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "专家表示，",
+   "text": "专家表示，大家每项最不是一种人数与中国的工作和商标主承担责，对自己从地",
+   "cont": "大家每项最不是一种人数与中国的工作和商标主承担责，对自己从地",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.9855,
+    "r46": 4.0551
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "专家表示，",
+   "text": "专家表示，对大人和不平传，更能可以做一些所提升。本站不同事项的时间是要",
+   "cont": "对大人和不平传，更能可以做一些所提升。本站不同事项的时间是要",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.1343,
+    "r46": 4.2101
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "专家表示，",
+   "text": "专家表示，该局在市外流程的公司机构成了内涵了。如果您要注意知道是202",
+   "cont": "该局在市外流程的公司机构成了内涵了。如果您要注意知道是202",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5988,
+    "r46": 3.6203
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "专家表示，",
+   "text": "专家表示，学们提交有些问题。可获得《省青市农业院）和国际公司总局部位申",
+   "cont": "学们提交有些问题。可获得《省青市农业院）和国际公司总局部位申",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.9462,
+    "r46": 4.1491
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，17）了一切成三位是“不过，再有时间的手度的情防操作。同时从",
+   "cont": "17）了一切成三位是“不过，再有时间的手度的情防操作。同时从",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.1902,
+    "r46": 4.3947
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，大家每天最不是一种人想了。那么比较高的，可以选择对机关于实际",
+   "cont": "大家每天最不是一种人想了。那么比较高的，可以选择对机关于实际",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5913,
+    "r46": 3.6815
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，对大人和不平部名员的最好做一些差价也算到出货之后，再有高级大",
+   "cont": "对大人和不平部名员的最好做一些差价也算到出货之后，再有高级大",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.5788,
+    "r46": 4.7967
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，就好得是否把火，因此很容通过工作了。如果您还可以知道更多自己",
+   "cont": "就好得是否把火，因此很容通过工作了。如果您还可以知道更多自己",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7075,
+    "r46": 3.6689
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，而是一个有些小姐的地人人都不见我们带给他的身身之内。这部上又",
+   "cont": "而是一个有些小姐的地人人都不见我们带给他的身身之内。这部上又",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.97,
+    "r46": 3.9954
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了17）“本上文章”是“不过，请请来说是为了的第一点”优秀在时",
+   "cont": "17）“本上文章”是“不过，请请来说是为了的第一点”优秀在时",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.9778,
+    "r46": 4.1336
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了大家内外最不是一种特点与中央线的发展器，可以选择对机关人。用",
+   "cont": "大家内外最不是一种特点与中央线的发展器，可以选择对机关人。用",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.9668,
+    "r46": 3.9085
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了解为人工业的提供更换。所有一些机遇到什么事業，不能再有重大，",
+   "cont": "解为人工业的提供更换。所有一些机遇到什么事業，不能再有重大，",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.454,
+    "r46": 3.6062
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了解好的人感受心，因此很容通过工作上的原因。还可以知道是让自己",
+   "cont": "解好的人感受心，因此很容通过工作上的原因。还可以知道是让自己",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4391,
+    "r46": 3.5506
+   }
+  },
+  {
+   "model": "r45",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了解，将全年来我们在北京人民的市场高压，一次不少的国际小时就发",
+   "cont": "解，将全年来我们在北京人民的市场高压，一次不少的国际小时就发",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6761,
+    "r46": 3.8783
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去年的一个人，但是不知道。”“你想要有什么？”他们在这些时候，",
+   "cont": "年的一个人，但是不知道。”“你想要有什么？”他们在这些时候，",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.5367,
+    "r46": 2.3068
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是一个人，我们可以在这些时候，不会有很多。”“你想要做到了解！",
+   "cont": "一个人，我们可以在这些时候，不会有很多。”“你想要做到了解！",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.5996,
+    "r46": 2.406
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyountisack，ppstidmangre的网站上传统。我们可",
+   "cont": "ntisack，ppstidmangre的网站上传统。我们可",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.8398,
+    "r46": 2.6758
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "The weather is",
+   "text": "theweatherisondylapp，comunglisk。在这个人的网站上传统",
+   "cont": "ondylapp，comunglisk。在这个人的网站上传统",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.0218,
+    "r46": 2.691
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "I love",
+   "text": "iloventardysapp，chengumitork。在这个人的网",
+   "cont": "ntardysapp，chengumitork。在这个人的网",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.8313,
+    "r46": 2.6192
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "Machine learning",
+   "text": "machinelearningostoudy，我们的网站上传统的ppsthark。”“你可",
+   "cont": "ostoudy，我们的网站上传统的ppsthark。”“你可",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.0219,
+    "r46": 2.7015
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "我叫",
+   "text": "我叫“你的，”“不是一个人，我们可以在这些事情。”他们也有什么？",
+   "cont": "“你的，”“不是一个人，我们可以在这些事情。”他们也有什么？",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.5365,
+    "r46": 2.3867
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，但是我们的人才能够在这个时间内容上来看，你可以说明白。”“我",
+   "cont": "但是我们的人才能够在这个时间内容上来看，你可以说明白。”“我",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.6676,
+    "r46": 2.3948
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国家的一个人，他们可以在这里面上了。”“你想要有什么？”“我是",
+   "cont": "家的一个人，他们可以在这里面上了。”“你想要有什么？”“我是",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.7255,
+    "r46": 2.3992
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "专家表示，",
+   "text": "专家表示，我们的人才是一个人的。”“你可以在这些事情，我们不知道：“你",
+   "cont": "我们的人才是一个人的。”“你可以在这些事情，我们不知道：“你",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.5549,
+    "r46": 2.2401
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，我们的人才是一个人，但是不会有了。”“你想要做到这些事情。”",
+   "cont": "我们的人才是一个人，但是不会有了。”“你想要做到这些事情。”",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.6758,
+    "r46": 2.4547
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了解决的，我们可以在一个人的时候，你想要有些事情。”“我们不知",
+   "cont": "解决的，我们可以在一个人的时候，你想要有些事情。”“我们不知",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.4745,
+    "r46": 2.2035
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去年轻人了一眼的女子是“不过，再有来说是亲主的情况下。”刘徐之",
+   "cont": "年轻人了一眼的女子是“不过，再有来说是亲主的情况下。”刘徐之",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6741,
+    "r46": 3.7088
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去大家是一道不知。”“想不想那她的心怕都是你一下了，我自己都要",
+   "cont": "大家是一道不知。”“想不想那她的心怕都是你一下了，我自己都要",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7512,
+    "r46": 3.4515
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去玩家很多少少，但就能看到了一些事情也算是出不下。”“你们的人",
+   "cont": "玩家很多少少，但就能看到了一些事情也算是出不下。”“你们的人",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.2743,
+    "r46": 3.0363
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去就好的老師。”“你知道也是你回归？”傅乔姐……！我在他们，只",
+   "cont": "就好的老師。”“你知道也是你回归？”傅乔姐……！我在他们，只",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6844,
+    "r46": 3.2899
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去年夜，“有些小姐在黑色人都不见我们带给你的身后如果你知道怎么",
+   "cont": "年夜，“有些小姐在黑色人都不见我们带给你的身后如果你知道怎么",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.8393,
+    "r46": 3.6019
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是，这样的关于方面，而“不过”。但是没有了解说着自己一条。在1",
+   "cont": "，这样的关于方面，而“不过”。但是没有了解说着自己一条。在1",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4679,
+    "r46": 3.2823
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是一场，因为不见我们会更与中国电子政府都是在其他文凭借自己的名",
+   "cont": "一场，因为不见我们会更与中国电子政府都是在其他文凭借自己的名",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6736,
+    "r46": 3.3931
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是对于很多少平，但就能看，可以更加帮助。我们不知不能再有所有人",
+   "cont": "对于很多少平，但就能看，可以更加帮助。我们不知不能再有所有人",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5518,
+    "r46": 3.2678
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是，多年轻轻松心，因此很有地方。这么是我们要做好的知识，让自己",
+   "cont": "，多年轻轻松心，因此很有地方。这么是我们要做好的知识，让自己",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.1147,
+    "r46": 3.0712
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是你们，我有些钱客都可以更加好的，而且如何用于地方在pysef",
+   "cont": "你们，我有些钱客都可以更加好的，而且如何用于地方在pysef",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7542,
+    "r46": 3.3433
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyoust），为您可以找自己的问题。请求多是ppitandcy(1",
+   "cont": "st），为您可以找自己的问题。请求多是ppitandcy(1",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.1848,
+    "r46": 3.1071
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyouy），因为不是一种人数字典！当然，那么我们也知以自己的人。但",
+   "cont": "y），因为不是一种人数字典！当然，那么我们也知以自己的人。但",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.2845,
+    "r46": 3.1529
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyountickpagbst，pucve也算是很不同的，而且有一种",
+   "cont": "ntickpagbst，pucve也算是很不同的，而且有一种",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.3336,
+    "r46": 3.3052
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyoutastidm，pcsanki），是我们要做好的重新文化，只",
+   "cont": "tastidm，pcsanki），是我们要做好的重新文化，只",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.1443,
+    "r46": 3.009
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyous:ctiprgnd，visancp，是网易的？在pymef",
+   "cont": "s:ctiprgnd，visancp，是网易的？在pymef",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6762,
+    "r46": 3.5773
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "The weather is",
+   "text": "theweatherissokgvy(budlrcmann.pofipol3cy(1",
+   "cont": "sokgvy(budlrcmann.pofipol3cy(1",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7108,
+    "r46": 3.7191
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "The weather is",
+   "text": "theweatherisyon文字不是一种，我们想要开始发展的模块，还有了对自己的名",
+   "cont": "yon文字不是一种，我们想要开始发展的模块，还有了对自己的名",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.3282,
+    "r46": 3.1079
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "The weather is",
+   "text": "theweatherisann,cpogbsu，可以更加重新的公司不同。这里有所有人",
+   "cont": "ann,cpogbsu，可以更加重新的公司不同。这里有所有人",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.1887,
+    "r46": 3.1433
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "The weather is",
+   "text": "theweatheristamlidp，pcogond），是我们要做好的重新工作，只",
+   "cont": "tamlidp，pcogond），是我们要做好的重新工作，只",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.0045,
+    "r46": 2.9849
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "The weather is",
+   "text": "theweatheriss:conprgla)（《华州市学院院）的“2023年”上报",
+   "cont": "s:conprgla)（《华州市学院院）的“2023年”上报",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4114,
+    "r46": 3.127
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "I love",
+   "text": "ilovestagve(bs是“rcmadnk是por,we”的地址。",
+   "cont": "stagve(bs是“rcmadnk是por,we”的地址。",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7185,
+    "r46": 3.5212
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "I love",
+   "text": "ilovey），因为不是一种人数与中国电子电磁器。d.mts机打造成功",
+   "cont": "y），因为不是一种人数与中国电子电磁器。d.mts机打造成功",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7995,
+    "r46": 3.8126
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "I love",
+   "text": "ilovertnexpagbst，hucvandocod)和yugsi",
+   "cont": "rtnexpagbst，hucvandocod)和yugsi",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4916,
+    "r46": 3.3847
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "I love",
+   "text": "ilovetasthymapcharki），是我们要做好的重新，让自己",
+   "cont": "tasthymapcharki），是我们要做好的重新，让自己",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.8383,
+    "r46": 2.8615
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "I love",
+   "text": "ilovestcenprgad，yysoncha）的buuppymef",
+   "cont": "stcenprgad，yysoncha）的buuppymef",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.2507,
+    "r46": 3.2134
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "Machine learning",
+   "text": "machinelearningsoktvy(bs是“319.droudp的第一款《cy)之",
+   "cont": "soktvy(bs是“319.droudp的第一款《cy)之",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.0497,
+    "r46": 3.8736
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "Machine learning",
+   "text": "machinelearningyortusbysh:29，中国政府都是一款全国商品牌人。1",
+   "cont": "yortusbysh:29，中国政府都是一款全国商品牌人。1",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6309,
+    "r46": 3.3129
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "Machine learning",
+   "text": "machinelearningot-,xpa，bsthkuyvoseocld)，在此次完成",
+   "cont": "ot-,xpa，bsthkuyvoseocld)，在此次完成",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6482,
+    "r46": 3.6128
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "Machine learning",
+   "text": "machinelearningtastpy，这个人很多少少量的手机。所以就是一种游戏的，只",
+   "cont": "tastpy，这个人很多少少量的手机。所以就是一种游戏的，只",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.0299,
+    "r46": 2.9661
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "Machine learning",
+   "text": "machinelearnings:ct,prgok，yysofch，webudppytof",
+   "cont": "s:ct,prgok，yysofch，webudppytof",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5348,
+    "r46": 3.3989
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "我叫",
+   "text": "我叫，这样了一眼吧？”“怎么是因为你来说是亲子的情况，不得很不知",
+   "cont": "，这样了一眼吧？”“怎么是因为你来说是亲子的情况，不得很不知",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.2443,
+    "r46": 3.0814
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "我叫",
+   "text": "我叫大家，好看不是一般的事情。那么想要选择，你们说：“我自己都可",
+   "cont": "大家，好看不是一般的事情。那么想要选择，你们说：“我自己都可",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.0413,
+    "r46": 2.8909
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "我叫",
+   "text": "我叫“大人和不得，但就能看，可以更是很多钱的。”白癜风的时候是你",
+   "cont": "“大人和不得，但就能看，可以更是很多钱的。”白癜风的时候是你",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.2843,
+    "r46": 3.1776
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "我叫",
+   "text": "我叫：“在是否怎麼，你不是我們的話說？”傅乔姐……！”蘇宇還不敢",
+   "cont": "：“在是否怎麼，你不是我們的話說？”傅乔姐……！”蘇宇還不敢",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.9413,
+    "r46": 3.2631
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "我叫",
+   "text": "我叫你们，我有些钱？”黑色人都不见，而是一个人身地的太阳大部分。",
+   "cont": "你们，我有些钱？”黑色人都不见，而是一个人身地的太阳大部分。",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7433,
+    "r46": 3.3782
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，并不能够为一些专业是“不过”。但是没有了解的情况，我们也在你",
+   "cont": "并不能够为一些专业是“不过”。但是没有了解的情况，我们也在你",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.1595,
+    "r46": 3.0877
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，让我们还认证的一种人数不断，给大家选择。“我们以来说自己从学",
+   "cont": "让我们还认证的一种人数不断，给大家选择。“我们以来说自己从学",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4004,
+    "r46": 3.1243
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，对于人和不少，但是能够让我们更加帮助。我们不知道：“你们可以",
+   "cont": "对于人和不少，但是能够让我们更加帮助。我们不知道：“你们可以",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.9446,
+    "r46": 2.6633
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，就好在我国内心，因为很多少少年都不是来自己的事情。在这样，只",
+   "cont": "就好在我国内心，因为很多少少年都不是来自己的事情。在这样，只",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.2178,
+    "r46": 3.0611
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，并且提交了解之一。不断人都有关键词，如果我们在其实验室的上来",
+   "cont": "并且提交了解之一。不断人都有关键词，如果我们在其实验室的上来",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.2936,
+    "r46": 3.1164
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国队主席了中国的东宫是“不过”。但是没有了解的第一点”，他在1",
+   "cont": "队主席了中国的东宫是“不过”。但是没有了解的第一点”，他在1",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6073,
+    "r46": 3.3576
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国大家实验后会从地区人员与中央电子西亚的东方面。以前提供什么说",
+   "cont": "大家实验后会从地区人员与中央电子西亚的东方面。以前提供什么说",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.0837,
+    "r46": 3.6507
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国地联邦和《公司》（stheucvandolod)，全球电子商",
+   "cont": "地联邦和《公司》（stheucvandolod)，全球电子商",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6608,
+    "r46": 3.3579
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国的战争是世界观察，而让我们应该都不是因为孩子。他就在那么多种",
+   "cont": "的战争是世界观察，而让我们应该都不是因为孩子。他就在那么多种",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5631,
+    "r46": 3.3563
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国学们将强调的“你在不断人都有关键。”一看，但是如果你知道怎么",
+   "cont": "学们将强调的“你在不断人都有关键。”一看，但是如果你知道怎么",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7186,
+    "r46": 3.3996
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "专家表示，",
+   "text": "专家表示，17）为本文文化的是“不过”。但是一个月份的第三十一条中心之",
+   "cont": "17）为本文文化的是“不过”。但是一个月份的第三十一条中心之",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5369,
+    "r46": 3.3391
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "专家表示，",
+   "text": "专家表示，大家每项项目的原则，也不想要开始发展现在教学成为了解自己的重",
+   "cont": "大家每项项目的原则，也不想要开始发展现在教学成为了解自己的重",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.3836,
+    "r46": 3.0151
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "专家表示，",
+   "text": "专家表示，对于人和不少的文字，可以做一些事情也有很重要。而我们会有帮助",
+   "cont": "对于人和不少的文字，可以做一些事情也有很重要。而我们会有帮助",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.3637,
+    "r46": 3.0437
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "专家表示，",
+   "text": "专家表示，就好在我国内心，因为很多少少年都有着来的一个人民知道。”“以",
+   "cont": "就好在我国内心，因为很多少少年都有着来的一个人民知道。”“以",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5876,
+    "r46": 3.4284
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "专家表示，",
+   "text": "专家表示，学校企业有限公司的建立人员。所以我们，他们可靠的国际实现了解",
+   "cont": "学校企业有限公司的建立人员。所以我们，他们可靠的国际实现了解",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.0347,
+    "r46": 2.7455
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，并不能够为一些大家是“不过”。但是没有了解的所以，我们也不知",
+   "cont": "并不能够为一些大家是“不过”。但是没有了解的所以，我们也不知",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.2591,
+    "r46": 3.0921
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，大家每一点不是我们的事情。那么想要选择，你也好了，我自己都可",
+   "cont": "大家每一点不是我们的事情。那么想要选择，你也好了，我自己都可",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.2232,
+    "r46": 2.8618
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，对于人和不少的，就能够让我们更是很多钱的。不过这个新时间还有",
+   "cont": "对于人和不少的，就能够让我们更是很多钱的。不过这个新时间还有",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5006,
+    "r46": 3.2216
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，就好得到了天夜的心情很有。”《三六大家所要做？他知道是一个人",
+   "cont": "就好得到了天夜的心情很有。”《三六大家所要做？他知道是一个人",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.0869,
+    "r46": 3.8032
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，而是一个有些小姐的地方人都不见我们带给你的身后，但是这个重要",
+   "cont": "而是一个有些小姐的地方人都不见我们带给你的身后，但是这个重要",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.3833,
+    "r46": 3.1997
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了，这样的关于方面，是“不过可见呢？”是我们的第一点”。在此时",
+   "cont": "，这样的关于方面，是“不过可见呢？”是我们的第一点”。在此时",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.3961,
+    "r46": 3.2688
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了解答案文字不是一种，我们想要开始发言的。如果你有事情也没有说",
+   "cont": "解答案文字不是一种，我们想要开始发言的。如果你有事情也没有说",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.2486,
+    "r46": 3.0579
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了解说，我不得有名字的最好做一些事情也算很重要，不能再有所帮助",
+   "cont": "解说，我不得有名字的最好做一些事情也算很重要，不能再有所帮助",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4276,
+    "r46": 3.2837
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了解答案是否在其实，而让我们应该都不是如此。”“我知道，”他们",
+   "cont": "解答案是否在其实，而让我们应该都不是如此。”“我知道，”他们",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.2028,
+    "r46": 2.9444
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了解，有多少的小姐在地方面要做到我们带来看，并不是太阳的。上一",
+   "cont": "解，有多少的小姐在地方面要做到我们带来看，并不是太阳的。上一",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.3972,
+    "r46": 3.1757
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去17次了一切的女子是“不过，再有来没是亲主的情况进行。”在你",
+   "cont": "17次了一切的女子是“不过，再有来没是亲主的情况进行。”在你",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.9114,
+    "r46": 3.8981
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去事故。”老白是一道人想不想那她的心怕都是你听说：“不打没有玩",
+   "cont": "事故。”老白是一道人想不想那她的心怕都是你听说：“不打没有玩",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.2435,
+    "r46": 4.0084
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去玩的人和不少，但就能看各么一些事情也算很重要。而这里有老婆，",
+   "cont": "玩的人和不少，但就能看各么一些事情也算很重要。而这里有老婆，",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.9787,
+    "r46": 3.6689
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去就叫在老世宇宙，因此很有家庭。那么是什么要做？他知道是怎儿的",
+   "cont": "就叫在老世宇宙，因此很有家庭。那么是什么要做？他知道是怎儿的",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.1746,
+    "r46": 3.8185
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去年夜，“有些钱你在地人人都不见我们带给他的身后如果你知道怎么",
+   "cont": "年夜，“有些钱你在地人人都不见我们带给他的身后如果你知道怎么",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.0305,
+    "r46": 3.7247
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是，这样了一切的方向是“不过”。但是没有帮助商家自己一条地址之",
+   "cont": "，这样了一切的方向是“不过”。但是没有帮助商家自己一条地址之",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7439,
+    "r46": 3.4257
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是大家实验后会、安全基督与中央电源政府融合教授权理，不仅是一代",
+   "cont": "大家实验后会、安全基督与中央电源政府融合教授权理，不仅是一代",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.1016,
+    "r46": 3.8331
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是对大人和不少，但就能看，可以更加帮助。我们不同事也在有所讲解",
+   "cont": "对大人和不少，但就能看，可以更加帮助。我们不同事也在有所讲解",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.824,
+    "r46": 3.6427
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是很好的地方。其实用：经经济费等待？您可以要做法提供一套事故障",
+   "cont": "很好的地方。其实用：经经济费等待？您可以要做法提供一套事故障",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.066,
+    "r46": 3.6246
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是你们提交，因为客户可以更加好的实战斗，看似于地方在学校产品质",
+   "cont": "你们提交，因为客户可以更加好的实战斗，看似于地方在学校产品质",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.789,
+    "r46": 3.4314
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyoust）为本案(bs是“319.++.cand/wv”，同时从",
+   "cont": "st）为本案(bs是“319.++.cand/wv”，同时从",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.1154,
+    "r46": 3.955
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyouy），因为不是一种工作与中国电源发展的模块，成以用户自己从外",
+   "cont": "y），因为不是一种工作与中国电源发展的模块，成以用户自己从外",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6229,
+    "r46": 3.4979
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyoudtn和xic，bst，pucvase的重要信用卡里有电子使",
+   "cont": "dtn和xic，bst，pucvase的重要信用卡里有电子使",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.0738,
+    "r46": 3.9183
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyoutainpym，pcsaski）了。如果您还可以知识器的同时",
+   "cont": "tainpym，pcsaski）了。如果您还可以知识器的同时",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4827,
+    "r46": 3.2726
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyous:ct,prg），而非要的特色。为了解答什么？在pymif",
+   "cont": "s:ct,prg），而非要的特色。为了解答什么？在pymif",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6902,
+    "r46": 3.5482
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "The weather is",
+   "text": "theweatherisso）为本站的文章是“不过”等等来说是了解的第一款公积。(1",
+   "cont": "so）为本站的文章是“不过”等等来说是了解的第一款公积。(1",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7804,
+    "r46": 3.6371
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "The weather is",
+   "text": "theweatherisyon文字不是一种人数了pliduragd.m:，我自己都要",
+   "cont": "yon文字不是一种人数了pliduragd.m:，我自己都要",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.9711,
+    "r46": 3.7513
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "The weather is",
+   "text": "theweatherislan,xpogbv型，可以更加价值。本站不同于cyugso",
+   "cont": "lan,xpogbv型，可以更加价值。本站不同于cyugso",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.8454,
+    "r46": 3.672
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "The weather is",
+   "text": "theweatheristamlidm，pc)也可以让这件事情。您还是一种人身方案已",
+   "cont": "tamlidm，pc)也可以让这件事情。您还是一种人身方案已",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7739,
+    "r46": 3.5164
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "The weather is",
+   "text": "theweatheriss:cf,prg），而yogoncv，或网身地址内存？mud",
+   "cont": "s:cf,prg），而yogoncv，或网身地址内存？mud",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.3194,
+    "r46": 4.0774
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "I love",
+   "text": "ilovest）为本站值在b28319.6年，是4月的第一款公积15时",
+   "cont": "st）为本站值在b28319.6年，是4月的第一款公积15时",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.9513,
+    "r46": 3.7531
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "I love",
+   "text": "ilovey），因为目前一度上线与中国电源发展现在本酒店的商品也是从用",
+   "cont": "y），因为目前一度上线与中国电源发展现在本酒店的商品也是从用",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6956,
+    "r46": 3.5489
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "I love",
+   "text": "ilovertn,xpagbst，hec机提升的公司不同事能再有电子使",
+   "cont": "rtn,xpagbst，hec机提升的公司不同事能再有电子使",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.1738,
+    "r46": 4.0966
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "I love",
+   "text": "ilovetastpym，pcharki）了。如果您还可以知道是202",
+   "cont": "tastpym，pcharki）了。如果您还可以知道是202",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.1341,
+    "r46": 3.0445
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "I love",
+   "text": "iloves:ct,prg），而yysanch，他的budepymof",
+   "cont": "s:ct,prg），而yysanch，他的budepymof",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5657,
+    "r46": 3.5088
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "Machine learning",
+   "text": "machinelearningso）为本站的文章是“不过”等等来说是了解的第一款公积。(1",
+   "cont": "so）为本站的文章是“不过”等等来说是了解的第一款公积。(1",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.8167,
+    "r46": 3.6931
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "Machine learning",
+   "text": "machinelearningyor文字不是一种人数与pt中电影像sud.mt，用自己都要",
+   "cont": "yor文字不是一种人数与pt中电影像sud.mt，用自己都要",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.2827,
+    "r46": 4.0071
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "Machine learning",
+   "text": "machinelearningut-,xpo，bst，可以更加用户的公司不同事能再有电子使",
+   "cont": "ut-,xpo，bst，可以更加用户的公司不同事能再有电子使",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.0809,
+    "r46": 3.8687
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "Machine learning",
+   "text": "machinelearningtos是否在其中超过去经济的工作？您可以用户排名就会被出现。",
+   "cont": "tos是否在其中超过去经济的工作？您可以用户排名就会被出现。",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5343,
+    "r46": 3.2794
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "Machine learning",
+   "text": "machinelearnings:ct,prg在地址人都有关键例，如果网身后的信息？这个实",
+   "cont": "s:ct,prg在地址人都有关键例，如果网身后的信息？这个实",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.1893,
+    "r46": 3.9134
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "我叫",
+   "text": "我叫，这样了一眼吧。”“怎么是因为真是没有了解的……不得有趣不知",
+   "cont": "，这样了一眼吧。”“怎么是因为真是没有了解的……不得有趣不知",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5904,
+    "r46": 3.3661
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "我叫",
+   "text": "我叫大家是好玩不知道没有了怎么，给他每年都是一笑什么，不多人。但",
+   "cont": "大家是好玩不知道没有了怎么，给他每年都是一笑什么，不多人。但",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.714,
+    "r46": 3.6765
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "我叫",
+   "text": "我叫知识人和不少，但就能看，可以更是很多钱的重要信事。你有老婆子",
+   "cont": "知识人和不少，但就能看，可以更是很多钱的重要信事。你有老婆子",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.0174,
+    "r46": 3.7434
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "我叫",
+   "text": "我叫：“在老世天夜，因此很有家庭。”王凯罗·克尼斯特斯在亚利艾尔",
+   "cont": "：“在老世天夜，因此很有家庭。”王凯罗·克尼斯特斯在亚利艾尔",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.3573,
+    "r46": 4.0116
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "我叫",
+   "text": "我叫你们，我有些钱客在不断人都好见的。”一看，“难如太阳于这个非",
+   "cont": "你们，我有些钱客在不断人都好见的。”一看，“难如太阳于这个非",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.3812,
+    "r46": 3.9518
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，并经济了中国文化”是“不过，为职于人士参加的情况实。有同时从",
+   "cont": "并经济了中国文化”是“不过，为职于人士参加的情况实。有同时从",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.0636,
+    "r46": 3.8996
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，大家每项项目、安全工作与中央电源政府等。主先选择，不仅是一代",
+   "cont": "大家每项项目、安全工作与中央电源政府等。主先选择，不仅是一代",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.104,
+    "r46": 3.527
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，对大人和不得有名字经济，却一些就很受到了。”白书进去以上方面",
+   "cont": "对大人和不得有名字经济，却一些就很受到了。”白书进去以上方面",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.1873,
+    "r46": 4.0724
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，就好在我国各级学校区地进入安全面积大。所以他们提升人民理服务",
+   "cont": "就好在我国各级学校区地进入安全面积大。所以他们提升人民理服务",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.8375,
+    "r46": 3.59
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，并将提交自己也是在地人人都有你的学生，看似于我们在前沿上上来",
+   "cont": "并将提交自己也是在地人人都有你的学生，看似于我们在前沿上上来",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.8114,
+    "r46": 3.6387
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国队主题“关于成为”是“不过，老師們们是了解的第一個公館中心之",
+   "cont": "队主题“关于成为”是“不过，老師們们是了解的第一個公館中心之",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.3411,
+    "r46": 3.9571
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国大家实验后会从地区共住了中央电源政府都是一款全国，不仅没有名",
+   "cont": "大家实验后会从地区共住了中央电源政府都是一款全国，不仅没有名",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.1569,
+    "r46": 3.7841
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国地联邦和《公司》（sthhecvandould)，全球电子商",
+   "cont": "地联邦和《公司》（sthhecvandould)，全球电子商",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6961,
+    "r46": 3.4041
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国的战争是世界观，因此很有几日内外了。如果您还可以知道中文字已",
+   "cont": "的战争是世界观，因此很有几日内外了。如果您还可以知道中文字已",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.2072,
+    "r46": 3.8719
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国队主题“有些钱客”不断得到的所体战斗，看似于是世界杯的意思。",
+   "cont": "队主题“有些钱客”不断得到的所体战斗，看似于是世界杯的意思。",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.2581,
+    "r46": 3.7398
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "专家表示，",
+   "text": "专家表示，17）为本人的文化是“不过”等等来说是了解实的公司、优秀民间",
+   "cont": "17）为本人的文化是“不过”等等来说是了解实的公司、优秀民间",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.0303,
+    "r46": 3.7049
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "专家表示，",
+   "text": "专家表示，大家每项项目的原则能够与中央电源政府会议后一年以來看自己。但",
+   "cont": "大家每项项目的原则能够与中央电源政府会议后一年以來看自己。但",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.9489,
+    "r46": 3.5338
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "专家表示，",
+   "text": "专家表示，对注点和不少的人员，可以做一些名字也算很重要。而今你有所帮援",
+   "cont": "对注点和不少的人员，可以做一些名字也算很重要。而今你有所帮援",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.2561,
+    "r46": 3.9758
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "专家表示，",
+   "text": "专家表示，就好在市场方法，因此很多少。但是我的原因用这样的知识中们就已",
+   "cont": "就好在市场方法，因此很多少。但是我的原因用这样的知识中们就已",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.9949,
+    "r46": 3.6165
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "专家表示，",
+   "text": "专家表示，学们提交政府管理、生活人员的基基。为了解答案》如果你知道上来",
+   "cont": "学们提交政府管理、生活人员的基基。为了解答案》如果你知道上来",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7822,
+    "r46": 3.3715
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，并不能够为一些相符式的表示，或者是多是真实的情况进行方面。从",
+   "cont": "并不能够为一些相符式的表示，或者是多是真实的情况进行方面。从",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6658,
+    "r46": 3.4506
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，大家每项目不是一般能够与新区开始发展现场运输成功，对自己从未",
+   "cont": "大家每项目不是一般能够与新区开始发展现场运输成功，对自己从未",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.8785,
+    "r46": 3.7235
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，对大青和不少有名字的最高出一些事情也算很重要，而今天小于89",
+   "cont": "对大青和不少有名字的最高出一些事情也算很重要，而今天小于89",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.1709,
+    "r46": 3.972
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，就好得是世天身，因此很有家庭。那么是我们要做？他知道去方多的",
+   "cont": "就好得是世天身，因此很有家庭。那么是我们要做？他知道去方多的",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.3889,
+    "r46": 4.0436
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，而是一个有些钱客的地方人要求你的。为了解答什么？”【华文字我",
+   "cont": "而是一个有些钱客的地方人要求你的。为了解答什么？”【华文字我",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.9149,
+    "r46": 3.4126
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了，这样不是一方位手式：3月下线还是没有过多的情况进行，同时从",
+   "cont": "，这样不是一方位手式：3月下线还是没有过多的情况进行，同时从",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.8609,
+    "r46": 3.7511
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了解答案文字不见，可能更与新区开始发言相关注意。以此机自己从未",
+   "cont": "解答案文字不见，可能更与新区开始发言相关注意。以此机自己从未",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.2176,
+    "r46": 3.8709
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了对注人和不少，但就能看，可以更是很多钱的重要信息，再有点吃好",
+   "cont": "对注人和不少，但就能看，可以更是很多钱的重要信息，再有点吃好",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.1165,
+    "r46": 3.7384
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了解时。我也在其实用：一么说明，那么是来听会还可以知道非理，只",
+   "cont": "解时。我也在其实用：一么说明，那么是来听会还可以知道非理，只",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.1721,
+    "r46": 3.8856
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "on",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了解，需要有些钱客的地方人都不见我们带给你的身后如果你知道怎么",
+   "cont": "解，需要有些钱客的地方人都不见我们带给你的身后如果你知道怎么",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5847,
+    "r46": 3.2956
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去年的时候，他们也不会有一个人。”“你想要是在这里的话，那么就",
+   "cont": "年的时候，他们也不会有一个人。”“你想要是在这里的话，那么就",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.6631,
+    "r46": 2.5814
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是一个小型的，但是我们可以在这里，不过很多人都会有着大家。”“",
+   "cont": "一个小型的，但是我们可以在这里，不过很多人都会有着大家。”“",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.6617,
+    "r46": 2.5724
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyoutinsapc，mids的网站上图是一个人的。我们可以在这里",
+   "cont": "tinsapc，mids的网站上图是一个人的。我们可以在这里",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.9151,
+    "r46": 2.7558
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "The weather is",
+   "text": "theweatherisondlacpy，我们可以在这里的网站上传，是一个人都会有很",
+   "cont": "ondlacpy，我们可以在这里的网站上传，是一个人都会有很",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.694,
+    "r46": 2.6451
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "I love",
+   "text": "iloveranthescudpy，我们可以在这里的网站上传，是一个人",
+   "cont": "ranthescudpy，我们可以在这里的网站上传，是一个人",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.6065,
+    "r46": 2.5585
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "Machine learning",
+   "text": "machinelearningostupy，我们可以在这里的网站上传，是一个人都会有很多。",
+   "cont": "ostupy，我们可以在这里的网站上传，是一个人都会有很多。",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.6598,
+    "r46": 2.6652
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "我叫",
+   "text": "我叫“你的，不是一个人，就有着他们的事情。”“我们在这里来说：“",
+   "cont": "“你的，不是一个人，就有着他们的事情。”“我们在这里来说：“",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.467,
+    "r46": 2.5365
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，在这里面上来看，我们也不是一个人。”“你可以说明了？”他们的",
+   "cont": "在这里面上来看，我们也不是一个人。”“你可以说明了？”他们的",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.7716,
+    "r46": 2.5232
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国家的一个人们在这里，他们也不会有着了。”“你说是我没有什么？",
+   "cont": "家的一个人们在这里，他们也不会有着了。”“你说是我没有什么？",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.7762,
+    "r46": 2.659
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "专家表示，",
+   "text": "专家表示，在这里的“一个人”。我们可以看到了解决方案，不仅是我们的事情",
+   "cont": "在这里的“一个人”。我们可以看到了解决方案，不仅是我们的事情",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.4942,
+    "r46": 2.3177
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，我们可以看到了一个人的时候，不会有着他们的事情。”“你想要是",
+   "cont": "我们可以看到了一个人的时候，不会有着他们的事情。”“你想要是",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.4113,
+    "r46": 2.2759
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "greedy",
+   "seed": 42,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了解，我们的时候，不会有一个人的。”“你可以在这里来说是我们的",
+   "cont": "解，我们的时候，不会有一个人的。”“你可以在这里来说是我们的",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 2.3813,
+    "r46": 2.3225
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去看这次了一切的风险是“不过”。但是没有了解的，因为我们在内货",
+   "cont": "看这次了一切的风险是“不过”。但是没有了解的，因为我们在内货",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4408,
+    "r46": 3.4014
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去大家在一道不见。”“他不想那她的心里都是你听到了，我自己从说",
+   "cont": "大家在一道不见。”“他不想那她的心里都是你听到了，我自己从说",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.8303,
+    "r46": 3.5852
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去到大人和时间，但就能看到了一些事情也有很重要的。这里还有着你",
+   "cont": "到大人和时间，但就能看到了一些事情也有很重要的。这里还有着你",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.1577,
+    "r46": 3.1168
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去就会在这个时间，因此很多少少了！”“我们要做？他就是非常多的",
+   "cont": "就会在这个时间，因此很多少少了！”“我们要做？他就是非常多的",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.1411,
+    "r46": 2.9685
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去年夜，“有些小姐”不断的事情。我们带给他的身后如果你知道怎么",
+   "cont": "年夜，“有些小姐”不断的事情。我们带给他的身后如果你知道怎么",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4895,
+    "r46": 3.2842
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是，这样不关于方面，而“不过可见过来说是了解的情况。”有一篇：",
+   "cont": "，这样不关于方面，而“不过可见过来说是了解的情况。”有一篇：",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5432,
+    "r46": 3.4806
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是大家，因为不见地感受到了一条状态，那么就会改变了，不仅没有关",
+   "cont": "大家，因为不见地感受到了一条状态，那么就会改变了，不仅没有关",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.2934,
+    "r46": 3.1396
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是对大家和业务部，更能坚定做一些事情也有很重要，不过再有好的，",
+   "cont": "对大家和业务部，更能坚定做一些事情也有很重要，不过再有好的，",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6586,
+    "r46": 3.5453
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是，多年轻轻力的学习。但也是在内涵上有什么办法之一，就是让儿子",
+   "cont": "，多年轻轻力的学习。但也是在内涵上有什么办法之一，就是让儿子",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4888,
+    "r46": 3.3803
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是十分，我们可以在这个人民要求你的学生，他们不会改造了解担。我",
+   "cont": "十分，我们可以在这个人民要求你的学生，他们不会改造了解担。我",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.0461,
+    "r46": 2.845
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyoust），vidbs是“310.++.can的第一款公司。(1",
+   "cont": "st），vidbs是“310.++.can的第一款公司。(1",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6579,
+    "r46": 3.6286
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyousgittpbyn)，不但那么大概的是以后一个文凭值自己。1",
+   "cont": "sgittpbyn)，不但那么大概的是以后一个文凭值自己。1",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.981,
+    "r46": 3.8231
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyoustngkic，bvp，可以更加用户的公司不同。这里有电子商",
+   "cont": "stngkic，bvp，可以更加用户的公司不同。这里有电子商",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5432,
+    "r46": 3.3835
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyoutastidm，pcsanki）？是我们要做好的视频器，就可",
+   "cont": "tastidm，pcsanki）？是我们要做好的视频器，就可",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.2112,
+    "r46": 3.133
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyous:ct,prg），一场要求你的网页，看到什么？在pys上来",
+   "cont": "s:ct,prg），一场要求你的网页，看到什么？在pys上来",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7105,
+    "r46": 3.612
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "The weather is",
+   "text": "theweatherissomgvy(budlrciann.pof的第一款《cy)。",
+   "cont": "somgvy(budlrciann.pof的第一款《cy)。",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.731,
+    "r46": 3.78
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "The weather is",
+   "text": "theweatherisyon文字会是一种特点不断，当然每年都是在其中的，我自己从外",
+   "cont": "yon文字会是一种特点不断，当然每年都是在其中的，我自己从外",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5988,
+    "r46": 3.6335
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "The weather is",
+   "text": "theweatherislangop，文字经济，可有更多用户的公司不同。这里还有很佳",
+   "cont": "langop，文字经济，可有更多用户的公司不同。这里还有很佳",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4166,
+    "r46": 3.2537
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "The weather is",
+   "text": "theweatheristamlidp，pcsarkl）？是我们要做好的视频器，就可",
+   "cont": "tamlidp，pcsarkl）？是我们要做好的视频器，就可",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.3029,
+    "r46": 3.2196
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "The weather is",
+   "text": "theweatheriss:ct,prg），一场要求你的网页，看到什么？在pyonf",
+   "cont": "s:ct,prg），一场要求你的网页，看到什么？在pyonf",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.625,
+    "r46": 3.4133
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "I love",
+   "text": "ilovestagve(bs是“rchadn.uom的第一款”，同时从",
+   "cont": "stagve(bs是“rchadn.uom的第一款”，同时从",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6937,
+    "r46": 3.6529
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "I love",
+   "text": "ilovey），因为不是一种特点与中国开始发展的。如果你们对机自己从外",
+   "cont": "y），因为不是一种特点与中国开始发展的。如果你们对机自己从外",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5726,
+    "r46": 3.4756
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "I love",
+   "text": "ilovertnexpagbst，huc机用具有很重要的。这里图:so",
+   "cont": "rtnexpagbst，huc机用具有很重要的。这里图:so",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6814,
+    "r46": 3.6249
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "I love",
+   "text": "ilovetasthymapcharki），是因为您还可以在这套方面的",
+   "cont": "tasthymapcharki），是因为您还可以在这套方面的",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.0868,
+    "r46": 2.9443
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "I love",
+   "text": "ilovestcanprger，yysonch，一次的地方在前沿上上的",
+   "cont": "stcanprger，yysonch，一次的地方在前沿上上的",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4142,
+    "r46": 3.3285
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "Machine learning",
+   "text": "machinelearningsoktvy(bs）“rchadl.uop的第一款《有同意”",
+   "cont": "soktvy(bs）“rchadl.uop的第一款《有同意”",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.0491,
+    "r46": 3.9726
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "Machine learning",
+   "text": "machinelearningyortusbysh:29，中国政府大部门、全国社会副理长1",
+   "cont": "yortusbysh:29，中国政府大部门、全国社会副理长1",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.9205,
+    "r46": 3.5448
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "Machine learning",
+   "text": "machinelearningutlosp，如果能用，可以更加用户的公司不同。这里有电子商",
+   "cont": "utlosp，如果能用，可以更加用户的公司不同。这里有电子商",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.216,
+    "r46": 3.116
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "Machine learning",
+   "text": "machinelearningtostpy，这个人很容通过l）？是我们要做好的视频器，就可",
+   "cont": "tostpy，这个人很容通过l）？是我们要做好的视频器，就可",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4463,
+    "r46": 3.4406
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "Machine learning",
+   "text": "machinelearnings:ct,prg），一场要求你的网页，看到什么？在pyouf",
+   "cont": "s:ct,prg），一场要求你的网页，看到什么？在pyouf",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6866,
+    "r46": 3.4832
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "我叫",
+   "text": "我叫17），本人在每天是“不过”。但是没有了解的所有实习，也不知",
+   "cont": "17），本人在每天是“不过”。但是没有了解的所有实习，也不知",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5964,
+    "r46": 3.4929
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "我叫",
+   "text": "我叫大家，因为不是一种人们不想被给他们选择。如果你的事情中没有说",
+   "cont": "大家，因为不是一种人们不想被给他们选择。如果你的事情中没有说",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.1731,
+    "r46": 3.1249
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "我叫",
+   "text": "我叫“大人”不得，但就能看，可有人感情也已经出不下。这里一个网址",
+   "cont": "“大人”不得，但就能看，可有人感情也已经出不下。这里一个网址",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.0703,
+    "r46": 3.8692
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "我叫",
+   "text": "我叫：“在是否有心，因为很多少少，这么是来自己的事情就会被出了。",
+   "cont": "：“在是否有心，因为很多少少，这么是来自己的事情就会被出了。",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.3132,
+    "r46": 3.1134
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "我叫",
+   "text": "我叫你们，我有些小姐的地方人都不见，而且一个人身后的时候也不会把",
+   "cont": "你们，我有些小姐的地方人都不见，而且一个人身后的时候也不会把",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.3708,
+    "r46": 3.378
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，并且能够为一些专业和安全问题。请求多是来自实施工作、方理等时",
+   "cont": "并且能够为一些专业和安全问题。请求多是来自实施工作、方理等时",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.779,
+    "r46": 3.7063
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，大家在学校会议上看起来了一条中心，那么是一个好孩子对自己的说",
+   "cont": "大家在学校会议上看起来了一条中心，那么是一个好孩子对自己的说",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.2544,
+    "r46": 3.1263
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，对大青和家居部队员，最高出一些名字也已经出不同事。“有老年人",
+   "cont": "对大青和家居部队员，最高出一些名字也已经出不同事。“有老年人",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.306,
+    "r46": 3.9132
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，就好在我国校园，因此很多少年内外了大家所要的事实与人民们，以",
+   "cont": "就好在我国校园，因此很多少年内外了大家所要的事实与人民们，以",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.054,
+    "r46": 3.8686
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，并且提供有些小型的地方人都不见我们带给你的。这个信息？所以我",
+   "cont": "并且提供有些小型的地方人都不见我们带给你的。这个信息？所以我",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.3718,
+    "r46": 3.3055
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国生命中心中学生在1283年前市场时间是了解的第三十一条。但从",
+   "cont": "生命中心中学生在1283年前市场时间是了解的第三十一条。但从",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7572,
+    "r46": 3.6927
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国大家在亚洲第一天的球队与中国中心，那么是一个好友对不多人。但",
+   "cont": "大家在亚洲第一天的球队与中国中心，那么是一个好友对不多人。但",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5778,
+    "r46": 3.5366
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国地联动和时间，但就能够让人一些名字也算很重要。不过的话却是有",
+   "cont": "地联动和时间，但就能够让人一些名字也算很重要。不过的话却是有",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.0412,
+    "r46": 3.681
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国的战绩是世界观察，学生也不得到这件事。所以他们在2022年以",
+   "cont": "的战绩是世界观察，学生也不得到这件事。所以他们在2022年以",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.2422,
+    "r46": 2.9724
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国家们将与南京市场的地方面对不见东西。10月8日之内，这次上报",
+   "cont": "家们将与南京市场的地方面对不见东西。10月8日之内，这次上报",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5002,
+    "r46": 3.5146
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "专家表示，",
+   "text": "专家表示，17月24日在南宫开线上午，北京城区是中国的第三十一条项目。",
+   "cont": "17月24日在南宫开线上午，北京城区是中国的第三十一条项目。",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.3928,
+    "r46": 3.4095
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "专家表示，",
+   "text": "专家表示，大家在金融会、安全工作与中央政府政府的合同，成以此提供人员要",
+   "cont": "大家在金融会、安全工作与中央政府政府的合同，成以此提供人员要",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6439,
+    "r46": 3.266
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "专家表示，",
+   "text": "专家表示，对于人工资者提供更能够，可以在安装中的公司不同。今年以电子商",
+   "cont": "对于人工资者提供更能够，可以在安装中的公司不同。今年以电子商",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4598,
+    "r46": 3.3052
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "专家表示，",
+   "text": "专家表示，该公司是否在广大市场建设、安装、网上的方法管理。10月28日",
+   "cont": "该公司是否在广大市场建设、安装、网上的方法管理。10月28日",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.0507,
+    "r46": 2.9935
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "专家表示，",
+   "text": "专家表示，学校提交有限公司在建设人员的关键。为了解答案》如果你的产品来",
+   "cont": "学校提交有限公司在建设人员的关键。为了解答案》如果你的产品来",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4438,
+    "r46": 3.1651
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，并且不敢有哪些？”“我不过，他觉得没是了解的……这一条很多时",
+   "cont": "并且不敢有哪些？”“我不过，他觉得没是了解的……这一条很多时",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5402,
+    "r46": 3.1961
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，大家每一个不见地感觉得了。那么多年的名义：一般以来说自己从学",
+   "cont": "大家每一个不见地感觉得了。那么多年的名义：一般以来说自己从学",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.8001,
+    "r46": 3.5709
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，对于人工业的医疗结束后，可有更多用户提供出品质量和加盟、网址",
+   "cont": "对于人工业的医疗结束后，可有更多用户提供出品质量和加盟、网址",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5455,
+    "r46": 3.3512
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，就好得一个时间，因此很多少少了这件事来的。还是他们在工作上已",
+   "cont": "就好得一个时间，因此很多少少了这件事来的。还是他们在工作上已",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4567,
+    "r46": 3.3279
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，而且将自己的小姐在这几年都有你的战斗，他们不会让他们给了上来",
+   "cont": "而且将自己的小姐在这几年都有你的战斗，他们不会让他们给了上来",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4704,
+    "r46": 3.1688
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 42,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了，这样的关注方面，是“不过可见过来说是我们的情况下。”他在你",
+   "cont": "，这样的关注方面，是“不过可见过来说是我们的情况下。”他在你",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.1991,
+    "r46": 3.2525
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 0,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了解答案文化。从安全工作与中国开始发展的专业，成为了不同人。1",
+   "cont": "解答案文化。从安全工作与中国开始发展的专业，成为了不同人。1",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4545,
+    "r46": 3.3672
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 1,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了解的人工资者，但是能够让我们更加提升。本站不同事，你会有着大",
+   "cont": "解的人工资者，但是能够让我们更加提升。本站不同事，你会有着大",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.2512,
+    "r46": 3.2645
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 2,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了解好的人，在广大公司机会通过工作上的原因。要求他与新颖方面、",
+   "cont": "解好的人，在广大公司机会通过工作上的原因。要求他与新颖方面、",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6145,
+    "r46": 3.4836
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T0.8",
+   "seed": 3,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了解，将与此地的客户可以更加重新的高价，而且并不改造出门。上一",
+   "cont": "解，将与此地的客户可以更加重新的高价，而且并不改造出门。上一",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.2912,
+    "r46": 3.3694
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去生命后了一眼的风盘是“不过可见呢”这是来自已经看走”最终在从",
+   "cont": "生命后了一眼的风盘是“不过可见呢”这是来自已经看走”最终在从",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.6188,
+    "r46": 4.498
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去大家在外口不见地住身后了中国的电影和过滤动漫成功，对自己从未",
+   "cont": "大家在外口不见地住身后了中国的电影和过滤动漫成功，对自己从未",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.6137,
+    "r46": 4.38
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去到大人和时间，但就能看各么一些事情也算很重要下不能再有所帮援",
+   "cont": "到大人和时间，但就能看各么一些事情也算很重要下不能再有所帮援",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.3168,
+    "r46": 3.9883
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去就叫在老世境前，因此很容通过学校的大家所要做？他知道是让儿子",
+   "cont": "就叫在老世境前，因此很容通过学校的大家所要做？他知道是让儿子",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.5227,
+    "r46": 4.2612
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "今天天气真好，我们去",
+   "text": "今天天气真好，我们去年最后，有些小姐在地人来说的你要注意。他又不陌生了几个孩子的",
+   "cont": "年最后，有些小姐在地人来说的你要注意。他又不陌生了几个孩子的",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6843,
+    "r46": 3.5443
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是，这样了一切的风障性感受问题。有时没有过多的情况进行，同时从",
+   "cont": "，这样了一切的风障性感受问题。有时没有过多的情况进行，同时从",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.537,
+    "r46": 3.6066
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是大家这项项目的原则，也不想被开始发展现在一个好方面下自己。但",
+   "cont": "大家这项项目的原则，也不想被开始发展现在一个好方面下自己。但",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6418,
+    "r46": 3.4288
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是对大部和时间，但就能看，可有更差价也已经出不下事。在此后他要",
+   "cont": "对大部和时间，但就能看，可有更差价也已经出不下事。在此后他要",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.2491,
+    "r46": 4.3087
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是很好的地方。其实用：经经到过一个消息，所以还可以在新颖”，只",
+   "cont": "很好的地方。其实用：经经到过一个消息，所以还可以在新颖”，只",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5143,
+    "r46": 3.3992
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "人工智能的未来是",
+   "text": "人工智能的未来是十分企业有限之一。不断开始的基因，为了解答案后如果你知道怎么",
+   "cont": "十分企业有限之一。不断开始的基因，为了解答案后如果你知道怎么",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4714,
+    "r46": 3.2276
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyoust）为本企店在b28319.6年，是4月的第三十一条项目之",
+   "cont": "st）为本企店在b28319.6年，是4月的第三十一条项目之",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.9103,
+    "r46": 3.895
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyouy）是一点不见，ntimp，当然每年都是在其成文章下。如果说",
+   "cont": "y）是一点不见，ntimp，当然每年都是在其成文章下。如果说",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6794,
+    "r46": 3.7586
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyoudtn和xicgbst，pucvase的电话下不能再有点击，",
+   "cont": "dtn和xicgbst，pucvase的电话下不能再有点击，",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.9787,
+    "r46": 3.8966
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyoutaimidm，pcsg308）只有什么用户？这就会写出了。",
+   "cont": "taimidm，pcsg308）只有什么用户？这就会写出了。",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6745,
+    "r46": 3.6031
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "Hello, how are you",
+   "text": "hello,howareyous:ct,prg），一场要有关键注册，本网上支付信息的产品版",
+   "cont": "s:ct,prg），一场要有关键注册，本网上支付信息的产品版",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7847,
+    "r46": 3.606
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "The weather is",
+   "text": "theweatherisso）为本企店在b28319.6年，是4月的第三十一条项目之",
+   "cont": "so）为本企店在b28319.6年，是4月的第三十一条项目之",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.9238,
+    "r46": 3.8582
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "The weather is",
+   "text": "theweatherisyon文字会是一种特点与plidumagd.9:18,4%，",
+   "cont": "yon文字会是一种特点与plidumagd.9:18,4%，",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7802,
+    "r46": 3.7179
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "The weather is",
+   "text": "theweatherislan和xpogbsu，可以更加用具有很重要信息的。此外语明",
+   "cont": "lan和xpogbsu，可以更加用具有很重要信息的。此外语明",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7311,
+    "r46": 3.6317
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "The weather is",
+   "text": "theweatheristamlidp，pc)也通过l）？是如下用户可以在一套方服服",
+   "cont": "tamlidp，pc)也通过l）？是如下用户可以在一套方服服",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.1974,
+    "r46": 4.0397
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "The weather is",
+   "text": "theweatheriss:ct,prg），一场要有关键注册，本网上支付信息的产品版",
+   "cont": "s:ct,prg），一场要有关键注册，本网上支付信息的产品版",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7722,
+    "r46": 3.6041
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "I love",
+   "text": "ilovest）为本企店在1283cmadn.por的第三款公积。但从",
+   "cont": "st）为本企店在1283cmadn.por的第三款公积。但从",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.1207,
+    "r46": 4.1063
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "I love",
+   "text": "ilovey）是一点不见，可能更不想被开始发言！以后，我们对机自己从外",
+   "cont": "y）是一点不见，可能更不想被开始发言！以后，我们对机自己从外",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.0937,
+    "r46": 3.995
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "I love",
+   "text": "ilovertn和xpagbst，hec机用具有很重要信息的。以电子使",
+   "cont": "rtn和xpagbst，hec机用具有很重要信息的。以电子使",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.8867,
+    "r46": 3.7549
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "I love",
+   "text": "ilovetasridm，pchasch）？是如下用户可以在wh2,u",
+   "cont": "tasridm，pchasch）？是如下用户可以在wh2,u",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6627,
+    "r46": 3.664
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "I love",
+   "text": "iloves:ct,prg），一场要有关键注册，本网上支付信息的产品版",
+   "cont": "s:ct,prg），一场要有关键注册，本网上支付信息的产品版",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7855,
+    "r46": 3.6252
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "Machine learning",
+   "text": "machinelearningso）为本企店在b28319.6年，是4月的第三十一条中不知",
+   "cont": "so）为本企店在b28319.6年，是4月的第三十一条中不知",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.0393,
+    "r46": 4.0521
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "Machine learning",
+   "text": "machinelearningyor文字会是一种特点与pt的电缆和sud.9:18,4%，",
+   "cont": "yor文字会是一种特点与pt的电缆和sud.9:18,4%，",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.0605,
+    "r46": 3.9303
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "Machine learning",
+   "text": "machinelearningut-,xpo，bst，可有更多用户的公司不同事具。以电子使",
+   "cont": "ut-,xpo，bst，可有更多用户的公司不同事具。以电子使",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.1005,
+    "r46": 3.8819
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "Machine learning",
+   "text": "machinelearningtos是否在设备pd机用程序内外，您可以要做好软件。同样就已",
+   "cont": "tos是否在设备pd机用程序内外，您可以要做好软件。同样就已",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7103,
+    "r46": 3.5627
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "Machine learning",
+   "text": "machinelearnings:ct,prg），一场要有关键注册，本网上支付信息的产品版",
+   "cont": "s:ct,prg），一场要有关键注册，本网上支付信息的产品版",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.8123,
+    "r46": 3.6358
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "我叫",
+   "text": "我叫17）了本人的女子是“不过，哪怕是没有亲主的情奏，”最终在从",
+   "cont": "17）了本人的女子是“不过，哪怕是没有亲主的情奏，”最终在从",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.1493,
+    "r46": 4.1495
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "我叫",
+   "text": "我叫大家这项目不是一种呢？不想那些人，那么就可以选择，对自己从外",
+   "cont": "大家这项目不是一种呢？不想那些人，那么就可以选择，对自己从外",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6033,
+    "r46": 3.4023
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "我叫",
+   "text": "我叫您的人和不少，但就能看，可以更是很多钱的。不过于这里有好吃，",
+   "cont": "您的人和不少，但就能看，可以更是很多钱的。不过于这里有好吃，",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.5902,
+    "r46": 3.5444
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "我叫",
+   "text": "我叫：“在老世天夜，心里很有几日内外了。”乔宝还是他就会被出去的",
+   "cont": "：“在老世天夜，心里很有几日内外了。”乔宝还是他就会被出去的",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.3564,
+    "r46": 4.0499
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "我叫",
+   "text": "我叫你们，如果你也是在地人人都有害坏出给了一次身后的内温？这就我",
+   "cont": "你们，如果你也是在地人人都有害坏出给了一次身后的内温？这就我",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.2795,
+    "r46": 4.1106
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，并经济了中国政府将自安全成为非市农村产业主厅的公司。有同时从",
+   "cont": "并经济了中国政府将自安全成为非市农村产业主厅的公司。有同时从",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.8767,
+    "r46": 3.7979
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，大家每项项目、安全工作与中央疫情防控员。主要选择了对自己从学",
+   "cont": "大家每项项目、安全工作与中央疫情防控员。主要选择了对自己从学",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7634,
+    "r46": 3.2706
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，对大青和家居部队员，最高出一些名字也已经出不下事能再有好方式",
+   "cont": "对大青和家居部队员，最高出一些名字也已经出不下事能再有好方式",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.7653,
+    "r46": 4.3896
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，就好在市场联观，因此很容通过工作了。如果您还可以知道非理多种",
+   "cont": "就好在市场联观，因此很容通过工作了。如果您还可以知道非理多种",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.0014,
+    "r46": 3.8679
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "随着社会的发展，",
+   "text": "随着社会的发展，并且提交有些小姐在地人来说。你要注意，他又不陌生了几个孩子我",
+   "cont": "并且提交有些小姐在地人来说。你要注意，他又不陌生了几个孩子我",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.9385,
+    "r46": 3.8045
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国生命中了一切的东宫是“不过”。但是没有亲主的情防，一条地缘之",
+   "cont": "生命中了一切的东宫是“不过”。但是没有亲主的情防，一条地缘之",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.1319,
+    "r46": 4.0278
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国大家在亚青市场上发起了不断更开始，那么是一个好方面对自己的名",
+   "cont": "大家在亚青市场上发起了不断更开始，那么是一个好方面对自己的名",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7179,
+    "r46": 3.5807
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国地联动和时间提名成员后，可有更高价值。本站不同于今里达到89",
+   "cont": "地联动和时间提名成员后，可有更高价值。本站不同于今里达到89",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.5272,
+    "r46": 4.2946
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国公司在市场联观的表示是内面。但这件大家所要做好一种事情况，只",
+   "cont": "公司在市场联观的表示是内面。但这件大家所要做好一种事情况，只",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.0918,
+    "r46": 3.8353
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "近年来，我国",
+   "text": "近年来，我国学们将强调的大家在北美人都有关键。为了解答什么？2017年来",
+   "cont": "学们将强调的大家在北美人都有关键。为了解答什么？2017年来",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4833,
+    "r46": 3.3205
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "专家表示，",
+   "text": "专家表示，17）为本企业在保险市场中，经过来多是无限的第三方公积。但从",
+   "cont": "17）为本企业在保险市场中，经过来多是无限的第三方公积。但从",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.027,
+    "r46": 4.0577
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "专家表示，",
+   "text": "专家表示，大家每项项目的安全工作与中央政府发展会议后，成为了全自人实践",
+   "cont": "大家每项项目的安全工作与中央政府发展会议后，成为了全自人实践",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6498,
+    "r46": 3.2401
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "专家表示，",
+   "text": "专家表示，对大人和资产部名额的基金保险人员提升。本站不同于这里有所景址",
+   "cont": "对大人和资产部名额的基金保险人员提升。本站不同于这里有所景址",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.2314,
+    "r46": 4.1929
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "专家表示，",
+   "text": "专家表示，该行交易的方法，因此很容通过工作了。如果您还可以知道是让自己",
+   "cont": "该行交易的方法，因此很容通过工作了。如果您还可以知道是让自己",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.4884,
+    "r46": 3.2449
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "专家表示，",
+   "text": "专家表示，学校提交有些小姐在地人来说的关键。为了解答什么？2017年我",
+   "cont": "学校提交有些小姐在地人来说的关键。为了解答什么？2017年我",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.6307,
+    "r46": 3.3886
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，并经济了本人的专业性价不过，为职于多是来自实施公司”最终参加",
+   "cont": "并经济了本人的专业性价不过，为职于多是来自实施公司”最终参加",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.4403,
+    "r46": 4.291
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，大家每项目不是一种特点与新区开始发展现场后，成为了全自己的规",
+   "cont": "大家每项目不是一种特点与新区开始发展现场后，成为了全自己的规",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7548,
+    "r46": 3.6277
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，对大青和家居部名成员后，可有人们提升的平台不同事能再会有着大",
+   "cont": "对大青和家居部名成员后，可有人们提升的平台不同事能再会有着大",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.5434,
+    "r46": 4.3288
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，就好得人的时间，因此很容通过这样？是来自会还可以知道非理多种",
+   "cont": "就好得人的时间，因此很容通过这样？是来自会还可以知道非理多种",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.1589,
+    "r46": 4.0101
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "在日常生活中，",
+   "text": "在日常生活中，并且将强具的大家都可以来说。你要注意：本网身地址内存？这就我",
+   "cont": "并且将强具的大家都可以来说。你要注意：本网身地址内存？这就我",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.3777,
+    "r46": 3.9994
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 42,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了17），中国文化开展“3月”等等来说是为了解释自实家优秀民间",
+   "cont": "17），中国文化开展“3月”等等来说是为了解释自实家优秀民间",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.9855,
+    "r46": 3.8051
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 0,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了大家，还有不见地感觉得不想被开始发言相关。其中文凭借自己从外",
+   "cont": "大家，还有不见地感觉得不想被开始发言相关。其中文凭借自己从外",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.9087,
+    "r46": 3.8256
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 1,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了对大人和不少，但就能看，可有更差价也已经出不下事的。此后是要",
+   "cont": "对大人和不少，但就能看，可有更差价也已经出不下事的。此后是要",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 4.3784,
+    "r46": 4.3971
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 2,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了解好的人，在广大公众学也是有着相关的。所以还可以知道非理多种",
+   "cont": "解好的人，在广大公众学也是有着相关的。所以还可以知道非理多种",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.7065,
+    "r46": 3.6532
+   }
+  },
+  {
+   "model": "r46",
+   "controller": "off",
+   "setting": "T1.1",
+   "seed": 3,
+   "prompt": "这部电影讲述了",
+   "text": "这部电影讲述了解，将与此样也是在地方人都有关键。为了一次的时间内存给其上来",
+   "cont": "解，将与此样也是在地方人都有关键。为了一次的时间内存给其上来",
+   "n": 30,
+   "eos": false,
+   "nll": {
+    "r45": 3.8955,
+    "r46": 3.8226
+   }
+  }
+ ]
+}

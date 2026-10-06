@@ -1,0 +1,37 @@
+{
+  "meta": {
+    "created": "2026-10-06 22:22:32",
+    "config": "configs/config_train_8k_r46.yaml",
+    "model": "checkpoints_train_8k_r46/final_model.pt",
+    "model_sha256_16": "a7eba8b6f9761793",
+    "vocab": "checkpoints_train_8k_r46/vocab.json",
+    "device": "cpu",
+    "torch": "2.4.1+cpu",
+    "seed": 42,
+    "batch_size": 24,
+    "max_seqs": 0,
+    "val_sequences": 2400,
+    "modes": [
+      "tf"
+    ],
+    "controller": "on",
+    "controller_direction": true,
+    "char_merge_incremental_buffer": true,
+    "value_relative_safe_pow": true,
+    "value_relative_safe_pow_modules": 4,
+    "n_params": 6756101,
+    "pad_idx": 0,
+    "total_seconds": 57.19
+  },
+  "ppl": {
+    "tf": {
+      "nll_sum": 769995.788574,
+      "tokens": 153600,
+      "loss": 5.012993,
+      "ppl": 150.354136,
+      "elapsed_s": 32.22
+    }
+  },
+  "diff": {},
+  "generation": []
+}
