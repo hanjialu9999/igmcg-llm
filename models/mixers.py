@@ -280,6 +280,7 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
                  intra_hybrid_rope: bool = False,
                  intra_hybrid_ratio: float = 0.5,
                  alibi_learnable: bool = False,
+                 alibi_mem_offset: bool = False,
                  kv_cache_int8: bool = False):
         super().__init__()
         self.num_heads = num_heads
@@ -385,6 +386,9 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         self.value_relative_safe_pow = value_relative_safe_pow
         # 10-05：True 时 VRC 因果卷积改下三角 Toeplitz matmul（同一个核，数值等价，免重训）；默认 False 保 r42 旧路径。
         self.value_relative_matmul = value_relative_matmul
+        # H3（10-06）：True 时 ALiBi 距离按真实 token 位置算（kpos 扣掉前 mem_cols 列，同窗口掩码）；
+        # 默认 False 保 r42/r43 旧行为（距离平移 mem_cols，需重训才能改）。
+        self.alibi_mem_offset = alibi_mem_offset
         if value_relative_coding:
             # tanh 限制 λ∈(-1,1)，init 0 → v 不变；cache 存原始 v 保证 train/infer parity
             self.value_rel_lambda = nn.Parameter(torch.zeros(1))
@@ -467,6 +471,8 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
 
         mem_cols：记忆列（前 mem_cols 列）是位置无关的压缩历史，不受位置距离偏置影响；
         显式清零，避免生成时 start_pos 增长使记忆列被强负偏置逐步压制（训练-推理不一致）。
+        H3（alibi_mem_offset=True）：KV 布局 [mk | pk | cur]，真实 token j 的列号是 mem_cols + j，
+        距离须用 kpos - mem_cols（同 _build_causal_window_mask 的还原）；关时保持旧的列号距离。
 
         性能优化（第二十七轮）：当 alibi_slopes 不可学（buffer）且 pe_gate 未开启时，
         bias 完全确定，缓存完整 bias 省每步 1 mul+1 neg 的 DML 启动税。
@@ -490,11 +496,12 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         # 增量解码超过阈值时清空，代价是首步重算 1 次（~100μs，可忽略）。
         if len(self._alibi_dist_cache) > 8:
             self._alibi_dist_cache.clear()
-        cache_key = (Tq, Tkv, start_pos, str(device))
+        k_off = mem_cols if self.alibi_mem_offset else 0
+        cache_key = (Tq, Tkv, start_pos, k_off, str(device))
         dist = self._alibi_dist_cache.get(cache_key)
         if dist is None:
             qpos = torch.arange(start_pos, start_pos + Tq, device=device).unsqueeze(1)
-            kpos = torch.arange(0, Tkv, device=device).unsqueeze(0)
+            kpos = torch.arange(-k_off, Tkv - k_off, device=device).unsqueeze(0)
             dist = (qpos - kpos).abs()
             self._alibi_dist_cache[cache_key] = dist
         # slopes: (H,) -> (1,H,1,1)，乘以距离 -> (1,H,Tq,Tkv)

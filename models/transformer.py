@@ -698,6 +698,7 @@ class TransformerModel(nn.Module):
                    gpas: bool = False,
                    gpas_alpha_init: float = 0.5,
                    alibi_learnable: bool = False,
+                   alibi_mem_offset: bool = False,
                    kv_cache_int8: bool = False,
                    gated_delta_chunk_scan: bool = False,
                    gated_delta_chunk_size: int = 16,
@@ -827,6 +828,7 @@ class TransformerModel(nn.Module):
                            intra_hybrid_rope=intra_hybrid_rope,
                            intra_hybrid_ratio=intra_hybrid_ratio,
                            alibi_learnable=alibi_learnable,
+                           alibi_mem_offset=alibi_mem_offset,
                            kv_cache_int8=kv_cache_int8,
                            gated_delta_chunk_scan=gated_delta_chunk_scan,
                            gated_delta_chunk_size=gated_delta_chunk_size)
@@ -1192,6 +1194,7 @@ class TransformerModel(nn.Module):
             gpas=cfg.attn.gpas,
             gpas_alpha_init=cfg.attn.gpas_alpha_init,
             alibi_learnable=cfg.attn.alibi_learnable,
+            alibi_mem_offset=cfg.attn.alibi_mem_offset,
             kv_cache_int8=cfg.attn.kv_cache_int8,
             gated_delta_chunk_scan=cfg.attn.gated_delta_chunk_scan,
             gated_delta_chunk_size=cfg.attn.gated_delta_chunk_size,

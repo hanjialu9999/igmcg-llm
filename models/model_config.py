@@ -68,6 +68,7 @@ class AttnConfig:
     gpas_alpha_init: float = 0.5       # GPAS α 初始值（0.5=中等缩放；1.0≈行为不变）
     # 第二十五轮新特性
     alibi_learnable: bool = False      # ALiBi 斜率可学（buffer→Parameter，per-head 自由学习位置衰减模式）
+    alibi_mem_offset: bool = False     # H3（10-06）：ALiBi 距离扣掉记忆列偏移（同窗口掩码）；需重训，默认关保 r42/r43 旧行为
     # R36-3 新特性
     kv_cache_int8: bool = False        # KV cache int8 量化（增量解码 cache 存 int8+scale，内存减 4x；仅标准 attn 路径生效，MLA 已压缩不复用）
     # R36-4b 新特性
@@ -313,17 +314,17 @@ class ModelConfig:
                 f"memory_size={self.memory.size} 但 num_layers={self.num_layers}："
                 f"记忆按块顺序读-写，单层下写入无下一层消费 → 记忆参数不参与梯度（死参数）",
                 RuntimeWarning, stacklevel=2)
-        if self.attn.alibi:
-            # ALiBi 距离未做 mem_cols 还原（AGENT_MEMORY §11.1 H3）：mixers.py:459-461
+        if self.attn.alibi and not self.attn.alibi_mem_offset:
+            # ALiBi 距离未做 mem_cols 还原（AGENT_MEMORY §11.1 H3）：mixers.py _alibi_bias
             # 的 dist=(qpos-kpos).abs() 中真实 token j 的 kpos=mem_cols+j，导致距离零点
-            # 前移 mem_cols 个 token。parity 测不出（全量/增量同公式），需重训才修正。
+            # 前移 mem_cols 个 token。parity 测不出（全量/增量同公式）；新 config 开 alibi_mem_offset 修正（需重训）。
             _mem_cols = (self.memory.size if self.memory.size > 0 else 0) + (
                 self.controller_mem_slots
                 if (self.controller and self.controller_memory_compress) else 0)
             if _mem_cols > 0:
                 warnings.warn(
                     f"alibi=True 且 mem_cols={_mem_cols}>0：ALiBi 距离未做 mem_cols 还原"
-                    f"（已知缺陷 H3，位置先验平移 mem_cols），修正须重训",
+                    f"（已知缺陷 H3，位置先验平移 mem_cols），修正须开 alibi_mem_offset 并重训",
                     RuntimeWarning, stacklevel=2)
 
     @classmethod
@@ -370,6 +371,7 @@ class ModelConfig:
             gpas=bool(mc.get('gpas', False)),
             gpas_alpha_init=float(mc.get('gpas_alpha_init', 0.5)),
             alibi_learnable=bool(mc.get('alibi_learnable', False)),
+            alibi_mem_offset=bool(mc.get('alibi_mem_offset', False)),
             kv_cache_int8=bool(mc.get('kv_cache_int8', False)),
             gated_delta_chunk_scan=bool(mc.get('gated_delta_chunk_scan', False)),
             gated_delta_chunk_size=int(mc.get('gated_delta_chunk_size', 16)),
