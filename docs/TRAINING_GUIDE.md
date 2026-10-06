@@ -57,6 +57,7 @@ data:
 - **早停**：连续 `early_stop_patience` 个 epoch 无提升则停止。
 - **检查点清理**：仅保留最近若干 epoch 与最佳模型。
 - **SELv2 默认增强调度**：`pretrain.yaml` 默认带 `training.enhancement_schedule`（SELv2 8 段：1 全开 + 1 全关极端 + 6 局部，attn_temp 仅全关段关），即默认训练按分段选择性增强训练；`validate` 强制全开。受控对比可用 `config_cmp_{enh,sel,selv2}_full.yaml` 手动顺序训练三模型。
+- **Controller 默认交替（r45 起）**：开 `controller` 的配置默认带 `training.enhancement_schedule: [{controller: true}, {controller: false}]`，按 batch 循环一步开一步关（`scripts/train.py:257-260`，缺省键补 True）；新配置从 `config_train_8k_r45.yaml` 抄起。它与 `enhancement_off_prob`、`curriculum_anneal` 互斥（`scripts/train.py:792`）。开关比例的对照见 `config_train_8k_r46.yaml`（开 1/3）。
 
 ## 监控训练
 

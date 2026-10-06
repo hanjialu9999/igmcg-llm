@@ -24,7 +24,7 @@
 - **效率类**：SwiGLU w1/w3 合并（fuse_swiglu，省 1 次 GEMM 调用）、KV cache int8 量化（kv_cache_int8，内存 4×，标准 attn 路径有效）、gradient checkpointing 自动禁用（grad_ckpt_auto）、**MoE FFN（moe）**：top-k 路由多专家替换 SwiGLU，含负载均衡 + router z-loss（DML 兼容 dense 实现）、**提前退出（early_exit）**：训练期出口层辅助 CE 损失 + 推理期置信度阈值提前返回（增量解码因 KV cache 一致性不启用）。
 - **跨层协作**：cross_layer_routing（Top-k 稀疏路由）、cross_ssm_transfer、progressive_residual（1/√d 残差衰减）、layer_film（跨层 FiLM）、highway_gate / input_highway（动态残差 / 嵌入门控注入）、layer_contrastive（训练期相邻层 cos_sim 损失）、shared_alibi、DALA 对齐训练（aligned_training）。
 - **解码 / 训练类**：n-gram 融合（ngram_fusion）、IGMCG 多候选解码、QAT 量化感知训练（qat_bits，LSQ-STE）、CharMerge（char_merge）、层跳过（layer_skip）、层共享（share_attn_proj / share_ffn / share_norm）。
-- **双模型编排（R42）**：独立 **Controller**（GatedDeltaNet，`controller` + `controller_dim/heads/layers/mem_slots`，默认 2 层、r42 配置 1 层）与 Generator 共享 embedding，产出 3 类控制信号：①mem_kv 压缩记忆（注入 attention，与 MemoryBank `cat(dim=1)` 合并）②FiLM per-layer 调制 ③direction 方向偏置。信号投影零初始化 → 中性起步，旧权重向后兼容；`controller_warmup_frac` 三阶段训练（前 N% epoch 关 Controller）。与 `mixer=linear2d/hybrid_linear2d` 互斥。
+- **双模型编排（R42）**：独立 **Controller**（GatedDeltaNet，`controller` + `controller_dim/heads/layers/mem_slots`，默认 2 层、r42 配置 1 层）与 Generator 共享 embedding，产出 3 类控制信号：①mem_kv 压缩记忆（注入 attention，与 MemoryBank `cat(dim=1)` 合并）②FiLM per-layer 调制 ③direction 方向偏置。信号投影零初始化 → 中性起步，旧权重向后兼容；`controller_warmup_frac` 三阶段训练（前 N% epoch 关 Controller）。**r45 起默认按步交替开关 Controller**（`training.enhancement_schedule` 切 `controller` 键，见 `configs/README.md`）：生成盲评胜过一直开，主模型关掉 Controller 也能单独用，训练快 16%。与 `mixer=linear2d/hybrid_linear2d` 互斥。
 
 ## 目录结构
 
