@@ -623,7 +623,7 @@ class TransformerModel(nn.Module):
     # 避免键名清单散落多处漂移。
     ENHANCEMENT_KEYS = ("qk_norm", "attn_temp", "residual_gate", "hybrid_gate",
                         "layer_film", "highway_gate", "input_highway", "controller",
-                        "value_relative_coding", "char_merge")
+                        "value_relative_coding", "char_merge", "controller_film")
 
     def __init__(self, vocab_size: int, embedding_dim: int, num_heads: int, num_layers: int,
                  hidden_dim: int, max_seq_length: int, dropout: float = 0.0, tie_weights: bool = True,
@@ -1036,6 +1036,9 @@ class TransformerModel(nn.Module):
         # opt-in 默认关（controller=False）；启用时 ctrl_dim/heads 默认回退到 gen 值。
         self.controller_enabled = bool(controller)
         self._rt_controller = self.controller_enabled  # SEL 交替训练运行时开关
+        # 10-19：只管 Controller 的 FiLM 一路（r52 交替用）；direction / mem_kv 不受影响
+        self.controller_film_enabled = self.controller_enabled and bool(controller_film)
+        self._rt_controller_film = self.controller_film_enabled
         # Controller past_kv 缓存（增量解码用；forward 中按 is_fresh 重置）
         self._controller_past: Optional[List] = None
         if self.controller_enabled:
@@ -1229,13 +1232,16 @@ class TransformerModel(nn.Module):
     def set_enhancements_active(self, spec):
         """运行时开关（按开关粒度）：`spec=True/False` 全开/全关；`spec=dict` 按键更新。
         用于"交替/分段增强"训练（关闭则跳过对应增强，恒等）。"""
-        # 模型级特性（layer_film / input_highway / controller / char_merge）开关
+        # 模型级特性（layer_film / input_highway / controller / char_merge / controller_film）开关
         if isinstance(spec, bool):
             self._rt_layer_film = spec and self.layer_film_enabled
             self._rt_input_highway = spec and self.input_highway_enabled
             self._rt_controller = spec and self.controller_enabled
             self._rt_char_merge = spec and self.char_merge_enabled
+            self._rt_controller_film = spec and self.controller_film_enabled
         elif isinstance(spec, dict):
+            if 'controller_film' in spec:
+                self._rt_controller_film = bool(spec['controller_film']) and self.controller_film_enabled
             if 'char_merge' in spec:
                 self._rt_char_merge = bool(spec['char_merge']) and self.char_merge_enabled
             if 'layer_film' in spec:
@@ -1593,7 +1599,7 @@ class TransformerModel(nn.Module):
             if use_cache:
                 self._controller_past = ctrl_presents
             ctrl_mem_kv = ctrl_signals.mem_kv
-            ctrl_film = ctrl_signals.film_per_layer
+            ctrl_film = ctrl_signals.film_per_layer if self._rt_controller_film else None
             ctrl_direction = ctrl_signals.direction
             # ③ 生成方向偏置加到 embedding 输出（init=0 中性）：旧版 (B,D) broadcast over T；
             # controller_direction_causal 下已是逐位置 (B,T,D)
