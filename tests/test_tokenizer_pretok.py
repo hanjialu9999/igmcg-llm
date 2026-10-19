@@ -68,6 +68,18 @@ def test_save_load_keeps_pretok(tmp_path):
     assert load_vocab(str(p)).pretok == 1
 
 
+def test_save_final_model_keeps_pretok(tmp_path):
+    """save_final_model 写的 vocab.json 也要带 char/pretok（10-20 r53 读回成小写去空格）。"""
+    import torch
+    from models.utils import save_final_model
+    t = _tok(2)
+    _, vp = save_final_model(torch.nn.Linear(2, 2), t, str(tmp_path))
+    v = load_vocab(vp)
+    assert isinstance(v, CharTokenizer) and v.pretok == 2
+    s = 'Hello World 你好'
+    assert v.encode(s) == t.encode(s)
+
+
 def test_load_packed_data_passes_pretok(tmp_path):
     f = tmp_path / 'c.txt'
     f.write_text('\n'.join(TEXTS * 4) + '\n', encoding='utf-8')

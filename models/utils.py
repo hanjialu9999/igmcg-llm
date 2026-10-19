@@ -197,17 +197,21 @@ def save_final_model(model: torch.nn.Module,
             yaml.dump(model_config, f, allow_unicode=True)
 
     vocab_path = os.path.join(checkpoint_dir, 'vocab.json')
-    vocab_data = {
-        'word2idx': vocab.word2idx,
-        'idx2word': {str(k): v for k, v in vocab.idx2word.items()},
-    }
-    # 可选增强：写出 special_tokens，供 load_vocab 恢复（单一 BaseTokenizer 系，
-    # 带 bpe/char 标志的 vocab.json 由 BaseTokenizer.save() 产出；此处兜底兼容手写 vocab）。
-    _st = getattr(vocab, 'special_tokens', None)
-    if _st is not None:
-        vocab_data['special_tokens'] = list(_st)
-    with open(vocab_path, 'w', encoding='utf-8') as f:
-        json.dump(vocab_data, f, ensure_ascii=False, indent=2)
+    # 10-20：分词器自带 save() 就用它（写 char/pretok/merges；此前手写只有词表，
+    # load_vocab 读回成 BPETokenizer、merges 为空，pretok=2 的 r53 被还原成小写去空格）。
+    if hasattr(vocab, 'save'):
+        vocab.save(vocab_path)
+    else:
+        vocab_data = {
+            'word2idx': vocab.word2idx,
+            'idx2word': {str(k): v for k, v in vocab.idx2word.items()},
+        }
+        # 兜底兼容手写 vocab：写出 special_tokens，供 load_vocab 恢复
+        _st = getattr(vocab, 'special_tokens', None)
+        if _st is not None:
+            vocab_data['special_tokens'] = list(_st)
+        with open(vocab_path, 'w', encoding='utf-8') as f:
+            json.dump(vocab_data, f, ensure_ascii=False, indent=2)
 
     print(f"\nTraining completed!")
     print(f"Final model saved at {final_model_path}")
