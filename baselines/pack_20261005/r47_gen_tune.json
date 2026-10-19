@@ -1,0 +1,2127 @@
+{
+ "model": "r47",
+ "base_params": {
+  "max_length": 30,
+  "temperature": 0.8,
+  "top_k": 50,
+  "repetition_penalty": 1.4,
+  "min_length": 3,
+  "eos_penalty": -5.0
+ },
+ "vars": {
+  "base": {},
+  "top_p0.9": {
+   "top_p": 0.9
+  },
+  "rep2.0": {
+   "repetition_penalty": 2.0
+  },
+  "eos0": {
+   "eos_penalty": 0.0
+  }
+ },
+ "prompts": [
+  "今天天气真好，我们去",
+  "人工智能的未来是",
+  "我叫",
+  "随着社会的发展，",
+  "近年来，我国",
+  "专家表示，",
+  "在日常生活中，",
+  "这部电影讲述了"
+ ],
+ "seeds": [
+  0,
+  1,
+  2,
+  3,
+  4,
+  5,
+  6,
+  7
+ ],
+ "metrics": {
+  "base": {
+   "n": 64,
+   "avg_chars": 30.0,
+   "short_lt25": 0,
+   "distinct1": 0.2026,
+   "distinct2": 0.611,
+   "cross_prompt_sim": 0.0528
+  },
+  "top_p0.9": {
+   "n": 64,
+   "avg_chars": 30.0,
+   "short_lt25": 0,
+   "distinct1": 0.1849,
+   "distinct2": 0.5598,
+   "cross_prompt_sim": 0.0622
+  },
+  "rep2.0": {
+   "n": 64,
+   "avg_chars": 30.0,
+   "short_lt25": 0,
+   "distinct1": 0.2109,
+   "distinct2": 0.6293,
+   "cross_prompt_sim": 0.0423
+  },
+  "eos0": {
+   "n": 64,
+   "avg_chars": 28.4,
+   "short_lt25": 8,
+   "distinct1": 0.2115,
+   "distinct2": 0.6273,
+   "cross_prompt_sim": 0.0484
+  }
+ },
+ "samples": [
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 0,
+   "prompt": "今天天气真好，我们去",
+   "cont": "年来看好玩。”他也能想不想那么做，那么是一个问题，不过人都说"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 0,
+   "prompt": "人工智能的未来是",
+   "cont": "一种植物质不得，也会更不想要给大家的小狮主，成为了对自己。但"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 0,
+   "prompt": "我叫",
+   "cont": "者要是好玩了，我们能够不想那么做，那么是一个好？对于自己的说"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 0,
+   "prompt": "随着社会的发展，",
+   "cont": "大家在一点不见地区内涵与中国电子产业的专注，成为了对自己。但"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 0,
+   "prompt": "近年来，我国",
+   "cont": "大家在一点会议上看起来了。那么想要选择出来，他们对不同人都是"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 0,
+   "prompt": "专家表示，",
+   "cont": "大家在金融商市场的同样与中国电子产业展览会上，以及成本人都是"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 0,
+   "prompt": "在日常生活中，",
+   "cont": "大家每天最早的地方，也不想要给他们选择。如果你是对于自己的玩"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 0,
+   "prompt": "这部电影讲述了",
+   "cont": "解解，因为不是一种植物与中国的大家和金融服务。以及多个人都要"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 1,
+   "prompt": "今天天气真好，我们去",
+   "cont": "玩的人和不得有，更能看到了一些事情也很难。不过于这里有所帮你"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 1,
+   "prompt": "人工智能的未来是",
+   "cont": "对大部和不当，但就能在各个地方所提升。我们不同于这里有点击，"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 1,
+   "prompt": "我叫",
+   "cont": "“最后不少的，但就能看，可以更是很多的朋友不同事，你会有着大"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 1,
+   "prompt": "随着社会的发展，",
+   "cont": "对于人工业生活，更能坚持出职人员提升。本站不同事项目、有限公"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 1,
+   "prompt": "近年来，我国",
+   "cont": "内的人和不得有名字，最好做一些事情也很多重要。而且在此之后，"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 1,
+   "prompt": "专家表示，",
+   "cont": "对于农业主机部队伍建设，保证人员提升的公司开发不断的基础。1"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 1,
+   "prompt": "在日常生活中，",
+   "cont": "对于人工资者提供更能的，可避免疫情也有很重要保持和全国民群众"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 1,
+   "prompt": "这部电影讲述了",
+   "cont": "解为人工资者，但是经济，可能更加大的原因。不过于今年以上的时"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 2,
+   "prompt": "今天天气真好，我们去",
+   "cont": "年来在家庭的前，因此一起到了每个价值。所以还可以有人工方就已"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 2,
+   "prompt": "人工智能的未来是",
+   "cont": "，但在我国外观看向东西省、西边市场的原因基础之一。在中国，以"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 2,
+   "prompt": "我叫",
+   "cont": "者好的老人，让这个不是也是你回顾了。”乔乔姐姐说道：“怎么做"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 2,
+   "prompt": "随着社会的发展，",
+   "cont": "就好在我国内心，因此让她们都敢有了。如果您还可以知道非理自己"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 2,
+   "prompt": "近年来，我国",
+   "cont": "的时候是否希望，因此让她们在内外上的球员会做好了解决。”他已"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 2,
+   "prompt": "专家表示，",
+   "cont": "就好在市场的广大公司建立了解决地上的原因基础之一。在中国，以"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 2,
+   "prompt": "在日常生活中，",
+   "cont": "就好在我国内心的表示很容易。但是只有三个孩子之一就会被出去。"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 2,
+   "prompt": "这部电影讲述了",
+   "cont": "解好的人，在广大小学生经济上学校园的医生会做好。我们是一个实"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 3,
+   "prompt": "今天天气真好，我们去",
+   "cont": "年也有自己的小姐。不断人都是你的一切，他又要在这场比赛中上来"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 3,
+   "prompt": "人工智能的未来是",
+   "cont": "你们需要有些困难。不断是一个关键，更好的时候也如果你给我们的"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 3,
+   "prompt": "我叫",
+   "cont": "你们需要有些问题。不断人都是你的时候，看见什么？”李湘市上来"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 3,
+   "prompt": "随着社会的发展，",
+   "cont": "并且这个有些种植在地方面要做好的。为了解决于是什么办？”“我"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 3,
+   "prompt": "近年来，我国",
+   "cont": "队主题“有些大家在地民人都不见的战斗，他们曾经理解决于这个比"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 3,
+   "prompt": "专家表示，",
+   "cont": "并将企业有限公司在地址人物的基基本管理室和保险的信息，以上提"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 3,
+   "prompt": "在日常生活中，",
+   "cont": "如果你说：“我们在这几年都有你的时候，看见什么？”李湘人怎么"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 3,
+   "prompt": "这部电影讲述了",
+   "cont": "解，将于16月份的地方面要求。我们带来看，并在其他前往市场上"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 4,
+   "prompt": "今天天气真好，我们去",
+   "cont": "想一听的手机，是一个老百丈。他还有什么？我就可能会做到你的看"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 4,
+   "prompt": "人工智能的未来是",
+   "cont": "多个专业的实施，为了解，让他们还有一个“明确”。现代文化研究"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 4,
+   "prompt": "我叫",
+   "cont": "“一样的”。”老人看着，让他说她的好像，我就可能走到了：白妹"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 4,
+   "prompt": "随着社会的发展，",
+   "cont": "所以与传播和广泛。2010年-8月，“近期两年开始中国优惠政"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 4,
+   "prompt": "近年来，我国",
+   "cont": "内部专业的实施是一个新增强。为时，不能比较好的“小小学”，还"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 4,
+   "prompt": "专家表示，",
+   "cont": "在一场市场上降至16年，下班时间的公共96亿美元。中国国家政"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 4,
+   "prompt": "在日常生活中，",
+   "cont": "所以这样的实施是一种形式。我们还有什么？我就可能会做到你的情"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 4,
+   "prompt": "这部电影讲述了",
+   "cont": "多个人的外界，是一种形式。我说来自己的“我们可能走到他们有趣"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 5,
+   "prompt": "今天天气真好，我们去",
+   "cont": "看完成了我们要想法的事情。”但是一种，你会看看这么有许多，给"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 5,
+   "prompt": "人工智能的未来是",
+   "cont": "，那么让我们要想法的事情。”但没有许多上个人的大家也很受，给"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 5,
+   "prompt": "我叫",
+   "cont": "，那么没有点击过。这个问题，但是一种的人都必须做出来了。有机"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 5,
+   "prompt": "随着社会的发展，",
+   "cont": "以与其现代表和人员的事情。这篇书上、新闻名字典大奖。在中国文"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 5,
+   "prompt": "近年来，我国",
+   "cont": "外与其现代表出了一个人生的全部大家。我们要看看这里有许多，给"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 5,
+   "prompt": "专家表示，",
+   "cont": "以根据非常的重要。这个问题，但是一种新闻发生的大家也很简便。"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 5,
+   "prompt": "在日常生活中，",
+   "cont": "以根据非常的重要。这个问题，但是一种新闻发布的大家也很简便。"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 5,
+   "prompt": "这部电影讲述了",
+   "cont": "，那么让我们要想法的事情是一篇书上。我们会看看大家也没有许多"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 6,
+   "prompt": "今天天气真好，我们去",
+   "cont": "来自己对此。“如此，我在这里走到了人的不管没有好奇吗！”“因"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 6,
+   "prompt": "人工智能的未来是",
+   "cont": "大学的事情。而从我们会在全国，现如冰岛与特殊的好奇，不能安全"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 6,
+   "prompt": "我叫",
+   "cont": "，本身对此类的时候，我们能够就到自己的不仅没有好是在不能会看"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 6,
+   "prompt": "随着社会的发展，",
+   "cont": "大家中对接受其他的情况。但是什么想容易不仅没有好奇吗？”“因"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 6,
+   "prompt": "近年来，我国",
+   "cont": "大学的美好。“从前往新鲜，不得到自己的生灵等待在这边地上了解"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 6,
+   "prompt": "专家表示，",
+   "cont": "大量的是高效。从1028年4月份，其中不仅没有好地对于10平"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 6,
+   "prompt": "在日常生活中，",
+   "cont": "大家的是高效。从而言，一个月份不足人才不仅没有影响吗？”“因"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 6,
+   "prompt": "这部电影讲述了",
+   "cont": "解决的事情。而是一些新鲜，不断使用人在外，那么好是对于能够无"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 7,
+   "prompt": "今天天气真好，我们去",
+   "cont": "年的人员。今後，在西道上看到那里多少，但他的最終終有時候一看"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 7,
+   "prompt": "人工智能的未来是",
+   "cont": "，也不会在今年上一个高级别，就像我们最大的成功。同时中小时看"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 7,
+   "prompt": "我叫",
+   "cont": "：“你不久，那么做一道的话，就像我们把这种的。”乔乔乔姐说看"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 7,
+   "prompt": "随着社会的发展，",
+   "cont": "就是一些人民币”。但是现在这个时候最大家们的内容，你不仅需要"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 7,
+   "prompt": "近年来，我国",
+   "cont": "内的人员。今天，在西州上观看着。但是最大家的一直就有自己的事"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 7,
+   "prompt": "专家表示，",
+   "cont": "从而不用。今年来通过，现在这就像我们最大的日常感觉你是关注了"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 7,
+   "prompt": "在日常生活中，",
+   "cont": "就会使用这个人们通过高质量的产品。最近1meopaldapi"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "base",
+   "seed": 7,
+   "prompt": "这部电影讲述了",
+   "cont": "解到大家的表演，在西班牙杯，那里比赛最终以上。198-5下3"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 0,
+   "prompt": "今天天气真好，我们去",
+   "cont": "年来看，最早的一般是“不想！”他们的名字之一。李靖媛也没有说"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 0,
+   "prompt": "人工智能的未来是",
+   "cont": "一种植物质不得，也会更加改变成为自己的。如果你们需要打造。但"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 0,
+   "prompt": "我叫",
+   "cont": "什么是好玩。”一直不想了，那么做，那就是你们的孩子不陌生。但"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 0,
+   "prompt": "随着社会的发展，",
+   "cont": "大家在一点不见地区内涵与中国电子产业的专注，成为了对自己。但"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 0,
+   "prompt": "近年来，我国",
+   "cont": "大家在一点会议上看起来了。那么想要选择出来，他们对不同志。但"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 0,
+   "prompt": "专家表示，",
+   "cont": "大家在学校会、科技工作能源、中心产业等。同时，以及成本人都要"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 0,
+   "prompt": "在日常生活中，",
+   "cont": "大家都会有不知道的人们不想，她想要选择。“我们是对于自己的玩"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 0,
+   "prompt": "这部电影讲述了",
+   "cont": "解解，因为不是一种植物材料，可以自然不少有一个方面的人人。但"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 1,
+   "prompt": "今天天气真好，我们去",
+   "cont": "到最后的时间，但就能看过了一些事情也有很重要的事情。这个是你"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 1,
+   "prompt": "人工智能的未来是",
+   "cont": "对大部分的公司，更有很好做一些性价值。本站不同于这里有所帮助"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 1,
+   "prompt": "我叫",
+   "cont": "“最后不少的，但就能看到了一些事情也有很重要，不能再会有着大"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 1,
+   "prompt": "随着社会的发展，",
+   "cont": "对于人工业生活，更多种植物质量和环保安全。不同事项目、有限公"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 1,
+   "prompt": "近年来，我国",
+   "cont": "内的人和不得有人更多。所以一些是很多的朋友们，不能再会有着大"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 1,
+   "prompt": "专家表示，",
+   "cont": "对于客户不得提供更多的，可能更加增强。本站不同事项目、有限公"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 1,
+   "prompt": "在日常生活中，",
+   "cont": "是为人和不得有的一个高，可能更加大的。我们不同事也会有好处理"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 1,
+   "prompt": "这部电影讲述了",
+   "cont": "解为人工资者，但是，可以做一些事情也有很重要的事情。此后来，"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 2,
+   "prompt": "今天天气真好，我们去",
+   "cont": "年来在家庭的前的小店都有一样。这么是什么要做？”“你是怎么做"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 2,
+   "prompt": "人工智能的未来是",
+   "cont": "，但在我们在其中，而是有一样的影响。因为您还可以看到了解，只"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 2,
+   "prompt": "我叫",
+   "cont": "：“在老師怎麼，不知道我們的話說了。”這個時間一點頭頭，就是"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 2,
+   "prompt": "随着社会的发展，",
+   "cont": "就好在我们在广州市场上进入了一个困难。所以还可以有人工方，只"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 2,
+   "prompt": "近年来，我国",
+   "cont": "的时候是否希望，因此让她们在内外上的球员会做好了解决。”他已"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 2,
+   "prompt": "专家表示，",
+   "cont": "就可以获得各项，因此地址：在工作上的原因。这样也有一个方面已"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 2,
+   "prompt": "在日常生活中，",
+   "cont": "就可以是否有效的心情，也不能让这种方面的。因为他们在身边，只"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 2,
+   "prompt": "这部电影讲述了",
+   "cont": "解多的人，在广大小学生经济上，中国有三个年轻信息与新颖的同时"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 3,
+   "prompt": "今天天气真好，我们去",
+   "cont": "年也有自己的小姐。不断人都是你的一切，他又要在这场比赛中上来"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 3,
+   "prompt": "人工智能的未来是",
+   "cont": "你们需要有些困难。不断是一个关键，更好的时候也会在这两次上发"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 3,
+   "prompt": "我叫",
+   "cont": "你们需要有些问题。不断人都是你的时候，看见什么？”李湘市上来"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 3,
+   "prompt": "随着社会的发展，",
+   "cont": "并且这个有些种植在地方面对我们的时候，看见一起来说，也不会把"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 3,
+   "prompt": "近年来，我国",
+   "cont": "队主题“十一小姐”，而非礼物的东西。他看着这种世界杯两人无论"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 3,
+   "prompt": "专家表示，",
+   "cont": "并将提供有些种植的地方面。同时，以及产品的实验之外，也不会把"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 3,
+   "prompt": "在日常生活中，",
+   "cont": "如果你说：“我们在这样的时候，我们带给他的老师？”李湘人看来"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 3,
+   "prompt": "这部电影讲述了",
+   "cont": "解，这个有些种植在地方面的时候，而且是一样的时候都知道。上一"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 4,
+   "prompt": "今天天气真好，我们去",
+   "cont": "想一听的时候，是一个老百年轻人来自己的“我就可能走到了。”乔"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 4,
+   "prompt": "人工智能的未来是",
+   "cont": "多个人们的实施，可以在各种行为时间，也有我们的“小小”。我看"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 4,
+   "prompt": "我叫",
+   "cont": "“一样的”。”老人看着，让他说过这样的真正好了。现在他们有趣"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 4,
+   "prompt": "随着社会的发展，",
+   "cont": "所以这个人们在国内部上，让他们来自己的“我就可能走到了解一家"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 4,
+   "prompt": "近年来，我国",
+   "cont": "内部人民共和广西省、教育、中国农村化工业的产业领域中心和研究"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 4,
+   "prompt": "专家表示，",
+   "cont": "在一场市场上，是16分钟。他说：“不能看见好了。”“十九仙山"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 4,
+   "prompt": "在日常生活中，",
+   "cont": "所以这样的实施是一种形式。我们还有什么？我就可能会做到你的情"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 4,
+   "prompt": "这部电影讲述了",
+   "cont": "解一样的，其他说明白：“我们说出来，只有我们的真正常会把它看"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 5,
+   "prompt": "今天天气真好，我们去",
+   "cont": "看到这些小时要想法的事情是一个人才会，你要定有大家也没有许多"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 5,
+   "prompt": "人工智能的未来是",
+   "cont": "，那么让我们要想法的事情。”但没有许多地震惊的大家也很好，可"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 5,
+   "prompt": "我叫",
+   "cont": "，那么没有点击过。这个问题，但是一种的人都是不会很有太多，给"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 5,
+   "prompt": "随着社会的发展，",
+   "cont": "以上都是我们要想法的事情。这个时候，我们要看看这么有许多，给"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 5,
+   "prompt": "近年来，我国",
+   "cont": "外的客户可以更好得多。那么办公司所有，你要看看这里有许多，给"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 5,
+   "prompt": "专家表示，",
+   "cont": "以上都是我们要选择的事情。这个时候，我们会看看这么有许多，给"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 5,
+   "prompt": "在日常生活中，",
+   "cont": "以上都是我们要想法的事情。这个时候，我们会看看这么有许多有机"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 5,
+   "prompt": "这部电影讲述了",
+   "cont": "，那么让我们要想法的事情是一个时候。我们会看看这里有许多，给"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 6,
+   "prompt": "今天天气真好，我们去",
+   "cont": "来自己的高。“如此，我在这里走到了一年不仅没有好奇的！”“因"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 6,
+   "prompt": "人工智能的未来是",
+   "cont": "大学的事情。而且我们会在全国，这么好意思，一般是不同地上了解"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 6,
+   "prompt": "我叫",
+   "cont": "，“不是一些。”“我想好，不得到自己的那么没有好奇吗？”他们"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 6,
+   "prompt": "随着社会的发展，",
+   "cont": "大家中国内容在学生的新颖，不断提高了解更多。我们是对于能够无"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 6,
+   "prompt": "近年来，我国",
+   "cont": "大学的美好。“从“一样”，不过这么看着不仅没有好奇在地上了解"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 6,
+   "prompt": "专家表示，",
+   "cont": "大量的是高效。从1028年4月份，其中不仅一般在这场面试时间"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 6,
+   "prompt": "在日常生活中，",
+   "cont": "大家的是一些时候的情况。但不会使我们在这个事业上，对于能够看"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 6,
+   "prompt": "这部电影讲述了",
+   "cont": "解决的事情。而是一些新鲜，不断使用人在外，那么好是对于能够无"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 7,
+   "prompt": "今天天气真好，我们去",
+   "cont": "年的人都是有人用。但是那么不知道你没有听到的。这样一个小说看"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 7,
+   "prompt": "人工智能的未来是",
+   "cont": "，也不会在有关键词里，但他们就像我们会起来的。这样都是可以看"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 7,
+   "prompt": "我叫",
+   "cont": "：“你不久，那么做一些的事情。”晁云，这种很好了解什么？”“"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 7,
+   "prompt": "随着社会的发展，",
+   "cont": "就是一些人民币”。但是现在这个时候也会有你的。当然都不仅让您"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 7,
+   "prompt": "近年来，我国",
+   "cont": "内的人员。今天，在西班牙杯和海城部队，这里面积16年中央一度"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 7,
+   "prompt": "专家表示，",
+   "cont": "从而不用。今年来一篇：上海市场的小区，还是在此时代中国大庆开"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 7,
+   "prompt": "在日常生活中，",
+   "cont": "就会使用这个人们在本地上去了。“我们最好的老婆子，你不仅是对"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "top_p0.9",
+   "seed": 7,
+   "prompt": "这部电影讲述了",
+   "cont": "解到大家的表演，在西班牙杯，那里面对他们就成为了新疆中央一度"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 0,
+   "prompt": "今天天气真好，我们去",
+   "cont": "年来看好玩。”他也能想不想那么做，那就是一个问题，不过人都说"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 0,
+   "prompt": "人工智能的未来是",
+   "cont": "一种植物质不得，也会更不想要给大家们都是可以选择，对自己的用"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 0,
+   "prompt": "我叫",
+   "cont": "者要是好玩了，一般不断不想那么做，那么少了。”刘繇儿也没有说"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 0,
+   "prompt": "随着社会的发展，",
+   "cont": "大家在一点不见地区内涵与中国电子产业优质教授权以及成本人都是"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 0,
+   "prompt": "近年来，我国",
+   "cont": "大家在一点会议上看起来了。那么想要选择出门户的文凭对自己的名"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 0,
+   "prompt": "专家表示，",
+   "cont": "大家在金融商市场的同样与中国电子产业展览会上，以及成本人都是"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 0,
+   "prompt": "在日常生活中，",
+   "cont": "大家每天最早的地方都有不想，给他们选择。如果你是对于自己的玩"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 0,
+   "prompt": "这部电影讲述了",
+   "cont": "解，本文化不知道可能会一直被开始发展的。在其中，以下自己从上"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 1,
+   "prompt": "今天天气真好，我们去",
+   "cont": "玩的人和不得有，更能看到了一些事情也很难。不过于这里还有着你"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 1,
+   "prompt": "人工智能的未来是",
+   "cont": "对大部和不当，但就能在各个地方所提升。我们不同于这里有点击，"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 1,
+   "prompt": "我叫",
+   "cont": "“最后不少的，但就能看，可以更是很多。本站不同事了解决于他们"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 1,
+   "prompt": "随着社会的发展，",
+   "cont": "对于人工业生活，更能坚持出职人员提升。本站不同事项目、有限公"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 1,
+   "prompt": "近年来，我国",
+   "cont": "内的人和不得有名字，最好做一些事情也很多重要。而且在此之后，"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 1,
+   "prompt": "专家表示，",
+   "cont": "对于农业主机部队伍建设，保证人员提升的公司开发不断的基础。1"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 1,
+   "prompt": "在日常生活中，",
+   "cont": "对于人工资者提供更能的，可避免疫情也有很重要保持和全国民群众"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 1,
+   "prompt": "这部电影讲述了",
+   "cont": "解为人工资者，但是经济高淳地的特殊也有很重要的事情。此后，大"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 2,
+   "prompt": "今天天气真好，我们去",
+   "cont": "年来在家庭的前，因此一起到了每个消息。所以还可能有人工方就已"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 2,
+   "prompt": "人工智能的未来是",
+   "cont": "，但在我国外观看向东西省、西边医院的原因基础之一。在中央，以"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 2,
+   "prompt": "我叫",
+   "cont": "者好的老人，让这个不是也是你回顾了。”乔姐还可以在那么出去。"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 2,
+   "prompt": "随着社会的发展，",
+   "cont": "就好在我国内心，因此让她们都敢有了。如果您还可以知道非理自己"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 2,
+   "prompt": "近年来，我国",
+   "cont": "的时候是否希望，因此让她们在内外上的球员会做好了解决。”他已"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 2,
+   "prompt": "专家表示，",
+   "cont": "就好在市场的广大公司建立了解决地上的原因基础之一。在中国，以"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 2,
+   "prompt": "在日常生活中，",
+   "cont": "就好得喜欢的话，因此让我们应该是不是有所用。可以知道非理自己"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 2,
+   "prompt": "这部电影讲述了",
+   "cont": "解好的人，在广大小学生经济上，中国有三个年节之一。二是201"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 3,
+   "prompt": "今天天气真好，我们去",
+   "cont": "年也有自己的小姐。不断人都是你要注意，他又可靠着太温的。上一"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 3,
+   "prompt": "人工智能的未来是",
+   "cont": "你们需要有些困难。不断于这个关键词，如果您可靠的信息？”“我"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 3,
+   "prompt": "我叫",
+   "cont": "你们需要有些问题。不断人都是你的时候，看见什么？”李湘市上来"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 3,
+   "prompt": "随着社会的发展，",
+   "cont": "并且这个有些种植在地方面要做好的。为了解决于是如果你们不会把"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 3,
+   "prompt": "近年来，我国",
+   "cont": "队主题“有些大家在地民人都不见的战斗，他们曾经理解决于这个比"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 3,
+   "prompt": "专家表示，",
+   "cont": "并将企业有限公司在地址人物的基础设施，为用于2023年以上来"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 3,
+   "prompt": "在日常生活中，",
+   "cont": "如果你说：“我们的不断人都有害坏。”他看着身后的时候也会上来"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 3,
+   "prompt": "这部电影讲述了",
+   "cont": "解，将于16月份的地方面要求。我们带来看，并在其他前往市场上"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 4,
+   "prompt": "今天天气真好，我们去",
+   "cont": "想一听的手机，是什么了？”他说她觉得“你都能再有下来玩。我看"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 4,
+   "prompt": "人工智能的未来是",
+   "cont": "多个专业的实施，为了解。我们说出自己也有明确的“小伙”：“看"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 4,
+   "prompt": "我叫",
+   "cont": "“一样的”。在11、老百号。他们自己能够看到了全部中国优惠政"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 4,
+   "prompt": "随着社会的发展，",
+   "cont": "所以与传播和广泛。2010年-8月，“近期两天都有人们优异、"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 4,
+   "prompt": "近年来，我国",
+   "cont": "内部专业的实施是一个新增强。为时，不能比较好的“小伙”：有趣"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 4,
+   "prompt": "专家表示，",
+   "cont": "在一场市场上降至16年8月。28月，“近期两天都有3%(40"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 4,
+   "prompt": "在日常生活中，",
+   "cont": "所以这样的实施是一种形式。我们还有什么？我就可能会做到你的情"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 4,
+   "prompt": "这部电影讲述了",
+   "cont": "多个人的外界，是一种形式。我说来自己能够看到了“小子”：白斑"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 5,
+   "prompt": "今天天气真好，我们去",
+   "cont": "看完成了几点“好啊！”那么爷爷》所有，你要定作这些意识。有一"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 5,
+   "prompt": "人工智能的未来是",
+   "cont": "，那么让我们要想法的事情。”但没有许多上个性的大家也很受，给"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 5,
+   "prompt": "我叫",
+   "cont": "，那么没有点击过。这个问题的真看看你，你要定作了。”王炜宗们"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 5,
+   "prompt": "随着社会的发展，",
+   "cont": "以与其现代表和人员的事情。这篇书上、新闻名字典大奖有限公司机"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 5,
+   "prompt": "近年来，我国",
+   "cont": "外与其现代表出了一个人生的全部大家。在上线看看这里有许多，给"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 5,
+   "prompt": "专家表示，",
+   "cont": "以根据非常的重要。这个问题，但是一种新闻发生的大奖也很多有机"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 5,
+   "prompt": "在日常生活中，",
+   "cont": "以根据非常的重要。这个问题，但是一种新闻发布的大家也很简便。"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 5,
+   "prompt": "这部电影讲述了",
+   "cont": "，那么让我们要想法的事情是一篇书上。”“我看看大家有太阳，给"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 6,
+   "prompt": "今天天气真好，我们去",
+   "cont": "来自己对此。“如果你的一个月子到这里面的，没有老人吗？”那不"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 6,
+   "prompt": "人工智能的未来是",
+   "cont": "大学的事情。而从我们会在全国，现如冰岛与特殊各项目标准备。因"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 6,
+   "prompt": "我叫",
+   "cont": "，本身对此类的时候，不仅是出售到自己意外，没有好奇在地方。因"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 6,
+   "prompt": "随着社会的发展，",
+   "cont": "大家中对接受其他的情况。但是什么想容易不仅没有好奇吗？”“因"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 6,
+   "prompt": "近年来，我国",
+   "cont": "大学的美好。“从前往新鲜，不得到自己的生灵等待在这边地上了解"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 6,
+   "prompt": "专家表示，",
+   "cont": "大量的是高效。从1028年4月份，其中不仅没有好地对于多个平"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 6,
+   "prompt": "在日常生活中，",
+   "cont": "大家的是高效。从而言，一个月份不足人才不仅没有影响吗？”“因"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 6,
+   "prompt": "这部电影讲述了",
+   "cont": "解决的事情。而是一些新鲜，不断使用人在外，那么好奇对他们的时"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 7,
+   "prompt": "今天天气真好，我们去",
+   "cont": "年的人员。有那么做一道来看，就像你是最大家的。这样都是说明了"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 7,
+   "prompt": "人工智能的未来是",
+   "cont": "，也不会在今年上一个高级别。那么要做，但他们都有所有自己的事"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 7,
+   "prompt": "我叫",
+   "cont": "：“你不久，那么做一道的话，就像我们把这种的。”乔乔乔姐说看"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 7,
+   "prompt": "随着社会的发展，",
+   "cont": "就是一些人民币”。但是现在这个时候最大家们的内容易有自己的事"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 7,
+   "prompt": "近年来，我国",
+   "cont": "内的人员。今天也是一家上观看出了解决，这种很快乐，你不仅让您"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 7,
+   "prompt": "专家表示，",
+   "cont": "从而不用。今年来通过高级内涵产品包含，增长的企业基金中央报告"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 7,
+   "prompt": "在日常生活中，",
+   "cont": "就会使用这个人们通过高质量的产品。最近1meopaldici"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "rep2.0",
+   "seed": 7,
+   "prompt": "这部电影讲述了",
+   "cont": "解到大家的表演，在西班牙杯上。“我们最好打开了。”你是小说看"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 0,
+   "prompt": "今天天气真好，我们去",
+   "cont": "年来看好玩。”"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 0,
+   "prompt": "人工智能的未来是",
+   "cont": "一种植物质不得，也会更不想要给大家的小狮主，成为了对自己。但"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 0,
+   "prompt": "我叫",
+   "cont": "者要是好玩了，我们能够不想那么做，那么是一个好？"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 0,
+   "prompt": "随着社会的发展，",
+   "cont": "大家在一点不见地区内涵与中国电子产业的专注，成为了对自己。但"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 0,
+   "prompt": "近年来，我国",
+   "cont": "大家在一点会议上看起来了。那么想要选择出来，他们对不同人都是"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 0,
+   "prompt": "专家表示，",
+   "cont": "大家在金融商市场的同样与中国电子产业展览会上，以及成本人都是"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 0,
+   "prompt": "在日常生活中，",
+   "cont": "大家每天最早的地方，也不想要给他们选择。如果你是对于自己的玩"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 0,
+   "prompt": "这部电影讲述了",
+   "cont": "解解，因为不是一种植物与中国的大家和金融服务。以及多个人都要"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 1,
+   "prompt": "今天天气真好，我们去",
+   "cont": "玩的人和不得有，更能看到了一些事情也很难。不过于这里有所帮你"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 1,
+   "prompt": "人工智能的未来是",
+   "cont": "对大部和不当，但就能在各个地方所提升。"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 1,
+   "prompt": "我叫",
+   "cont": "“最后不少的，但就能看，可以更是很多的朋友不同事，你会有着大"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 1,
+   "prompt": "随着社会的发展，",
+   "cont": "对于人工业生活，更能坚持出职人员提升。"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 1,
+   "prompt": "近年来，我国",
+   "cont": "内的人和不得有名字，最好做一些事情也很多重要。而且在此之后，"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 1,
+   "prompt": "专家表示，",
+   "cont": "对于农业主机部队伍建设，保证人员提升的公司开发不断的基础。1"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 1,
+   "prompt": "在日常生活中，",
+   "cont": "对于人工资者提供更能的，可避免疫情也有很重要保持和全国民群众"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 1,
+   "prompt": "这部电影讲述了",
+   "cont": "解为人工资者，但是经济，可能更加大的原因。不过于今年以上的时"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 2,
+   "prompt": "今天天气真好，我们去",
+   "cont": "年来在家庭的前，因此一起到了每个价值。所以还可以有人工方就已"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 2,
+   "prompt": "人工智能的未来是",
+   "cont": "，但在我国外观看向东西省、西边市场的原因基础之一。在中国，以"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 2,
+   "prompt": "我叫",
+   "cont": "者好的老人，让这个不是也是你回顾了。”乔乔姐姐说道：“怎么做"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 2,
+   "prompt": "随着社会的发展，",
+   "cont": "就好在我国内心，因此让她们都敢有了。如果您还可以知道非理自己"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 2,
+   "prompt": "近年来，我国",
+   "cont": "的时候是否希望，因此让她们在内外上的球员会做好了解决。”他已"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 2,
+   "prompt": "专家表示，",
+   "cont": "就好在市场的广大公司建立了解决地上的原因基础之一。在中国，以"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 2,
+   "prompt": "在日常生活中，",
+   "cont": "就好在我国内心的表示很容易。但是只有三个孩子之一就会被出去。"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 2,
+   "prompt": "这部电影讲述了",
+   "cont": "解好的人，在广大小学生经济上学校园的医生会做好。我们是一个实"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 3,
+   "prompt": "今天天气真好，我们去",
+   "cont": "年也有自己的小姐。不断人都是你的一切，他又要在这场比赛中上来"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 3,
+   "prompt": "人工智能的未来是",
+   "cont": "你们需要有些困难。不断是一个关键，更好的时候也如果你给我们的"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 3,
+   "prompt": "我叫",
+   "cont": "你们需要有些问题。不断人都是你的时候，看见什么？”李湘市上来"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 3,
+   "prompt": "随着社会的发展，",
+   "cont": "并且这个有些种植在地方面要做好的。"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 3,
+   "prompt": "近年来，我国",
+   "cont": "队主题“有些大家在地民人都不见的战斗，他们曾经理解决于这个比"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 3,
+   "prompt": "专家表示，",
+   "cont": "并将企业有限公司在地址人物的基基本管理室和保险的信息，以上提"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 3,
+   "prompt": "在日常生活中，",
+   "cont": "如果你说：“我们在这几年都有你的时候，看见什么？”李湘人怎么"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 3,
+   "prompt": "这部电影讲述了",
+   "cont": "解，将于16月份的地方面要求。我们带来看，并在其他前往市场上"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 4,
+   "prompt": "今天天气真好，我们去",
+   "cont": "想一听的手机，是一个老百丈。他还有什么？我就可能会做到你的看"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 4,
+   "prompt": "人工智能的未来是",
+   "cont": "多个专业的实施，为了解，让他们还有一个“明确”。现代文化研究"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 4,
+   "prompt": "我叫",
+   "cont": "“一样的”。”老人看着，让他说她的好像，我就可能走到了：白妹"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 4,
+   "prompt": "随着社会的发展，",
+   "cont": "所以与传播和广泛。2010年-8月，“近期两年开始中国优惠政"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 4,
+   "prompt": "近年来，我国",
+   "cont": "内部专业的实施是一个新增强。"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 4,
+   "prompt": "专家表示，",
+   "cont": "在一场市场上降至16年，下班时间的公共96亿美元。中国国家政"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 4,
+   "prompt": "在日常生活中，",
+   "cont": "所以这样的实施是一种形式。我们还有什么？我就可能会做到你的情"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 4,
+   "prompt": "这部电影讲述了",
+   "cont": "多个人的外界，是一种形式。我说来自己的“我们可能走到他们有趣"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 5,
+   "prompt": "今天天气真好，我们去",
+   "cont": "看完成了我们要想法的事情。”但是一种，你会看看这么有许多，给"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 5,
+   "prompt": "人工智能的未来是",
+   "cont": "，那么让我们要想法的事情。”但没有许多上个人的大家也很受，给"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 5,
+   "prompt": "我叫",
+   "cont": "，那么没有点击过。这个问题，但是一种的人都必须做出来了。有机"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 5,
+   "prompt": "随着社会的发展，",
+   "cont": "以与其现代表和人员的事情。这篇书上、新闻名字典大奖。在中国文"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 5,
+   "prompt": "近年来，我国",
+   "cont": "外与其现代表出了一个人生的全部大家。"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 5,
+   "prompt": "专家表示，",
+   "cont": "以根据非常的重要。这个问题，但是一种新闻发生的大家也很简便。"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 5,
+   "prompt": "在日常生活中，",
+   "cont": "以根据非常的重要。这个问题，但是一种新闻发布的大家也很简便。"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 5,
+   "prompt": "这部电影讲述了",
+   "cont": "，那么让我们要想法的事情是一篇书上。"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 6,
+   "prompt": "今天天气真好，我们去",
+   "cont": "来自己对此。“如此，我在这里走到了人的不管没有好奇吗！”“因"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 6,
+   "prompt": "人工智能的未来是",
+   "cont": "大学的事情。而从我们会在全国，现如冰岛与特殊的好奇，不能安全"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 6,
+   "prompt": "我叫",
+   "cont": "，本身对此类的时候，我们能够就到自己的不仅没有好是在不能会看"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 6,
+   "prompt": "随着社会的发展，",
+   "cont": "大家中对接受其他的情况。但是什么想容易不仅没有好奇吗？”“因"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 6,
+   "prompt": "近年来，我国",
+   "cont": "大学的美好。“从前往新鲜，不得到自己的生灵等待在这边地上了解"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 6,
+   "prompt": "专家表示，",
+   "cont": "大量的是高效。从1028年4月份，其中不仅没有好地对于10平"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 6,
+   "prompt": "在日常生活中，",
+   "cont": "大家的是高效。从而言，一个月份不足人才不仅没有影响吗？”“因"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 6,
+   "prompt": "这部电影讲述了",
+   "cont": "解决的事情。而是一些新鲜，不断使用人在外，那么好是对于能够无"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 7,
+   "prompt": "今天天气真好，我们去",
+   "cont": "年的人员。今後，在西道上看到那里多少，但他的最終終有時候一看"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 7,
+   "prompt": "人工智能的未来是",
+   "cont": "，也不会在今年上一个高级别，就像我们最大的成功。同时中小时看"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 7,
+   "prompt": "我叫",
+   "cont": "：“你不久，那么做一道的话，就像我们把这种的。”乔乔乔姐说看"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 7,
+   "prompt": "随着社会的发展，",
+   "cont": "就是一些人民币”。但是现在这个时候最大家们的内容，你不仅需要"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 7,
+   "prompt": "近年来，我国",
+   "cont": "内的人员。今天，在西州上观看着。但是最大家的一直就有自己的事"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 7,
+   "prompt": "专家表示，",
+   "cont": "从而不用。今年来通过，现在这就像我们最大的日常感觉你是关注了"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 7,
+   "prompt": "在日常生活中，",
+   "cont": "就会使用这个人们通过高质量的产品。最近1meopaldapi"
+  },
+  {
+   "model": "r47",
+   "controller": "on",
+   "setting": "eos0",
+   "seed": 7,
+   "prompt": "这部电影讲述了",
+   "cont": "解到大家的表演，在西班牙杯，那里比赛最终以上。198-5下3"
+  }
+ ]
+}
