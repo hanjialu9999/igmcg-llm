@@ -29,15 +29,16 @@ def _ns(**kw):
 # ---------------------------------------------------------------------------
 
 # 断言的是"H4 接线前 generate.py 里写死的那些数字"，不是新引入的常量。
+# 例外：eos_penalty 10-19 用户定由 -5.0 改为 0.0（r47 生成盲评），各分支一起改。
 PRE_WIRING = {
     'prompt':       dict(max_length=30, temperature=0.8, top_k=50,
-                         repetition_penalty=1.4, min_length=3, eos_penalty=-5.0),
+                         repetition_penalty=1.4, min_length=3, eos_penalty=0.0),
     'prompt_igmcg': dict(max_length=30, temperature=0.8, top_k=50,
-                         repetition_penalty=2.0, min_length=3, eos_penalty=-5.0),
+                         repetition_penalty=2.0, min_length=3, eos_penalty=0.0),
     'interactive':  dict(max_length=20, temperature=None, top_k=50,
-                         repetition_penalty=2.0, min_length=3, eos_penalty=-5.0),
+                         repetition_penalty=2.0, min_length=3, eos_penalty=0.0),
     'example':      dict(max_length=20, temperature=0.8, top_k=50,
-                         repetition_penalty=2.0, min_length=3, eos_penalty=-5.0),
+                         repetition_penalty=2.0, min_length=3, eos_penalty=0.0),
 }
 
 
@@ -86,7 +87,7 @@ def test_h4_interactive_mode_signature_defaults_unchanged():
     assert d['top_k'] == 50
     assert d['repetition_penalty'] == 2.0
     assert d['min_length'] == 3
-    assert d['eos_penalty'] == -5.0
+    assert d['eos_penalty'] == 0.0
     assert d['temps'] is None          # None → 运行时填 [0.7, 0.9]
 
 
@@ -110,7 +111,7 @@ def test_h4_interactive_mode_uses_dual_temps_by_default(monkeypatch):
         assert k['top_k'] == 50
         assert k['repetition_penalty'] == 2.0
         assert k['min_length'] == 3
-        assert k['eos_penalty'] == -5.0
+        assert k['eos_penalty'] == 0.0
 
 
 def test_h4_interactive_mode_single_temp_when_temps_passed(monkeypatch):
@@ -197,7 +198,7 @@ def test_h4_main_prompt_branch_defaults(monkeypatch):
     gtext, _, _ = _run_main(monkeypatch, [])
     k = gtext.calls[0]
     assert (k['max_length'], k['temperature'], k['top_k']) == (30, 0.8, 50)
-    assert (k['repetition_penalty'], k['min_length'], k['eos_penalty']) == (1.4, 3, -5.0)
+    assert (k['repetition_penalty'], k['min_length'], k['eos_penalty']) == (1.4, 3, 0.0)
 
 
 def test_h4_main_igmcg_branch_wires_repetition_penalty(monkeypatch):
@@ -215,7 +216,7 @@ def test_h4_main_igmcg_branch_defaults(monkeypatch):
     _, gigmcg, _ = _run_main(monkeypatch, [], igmcg=True)
     k = gigmcg.calls[0]
     assert (k['max_length'], k['base_temp'], k['top_k']) == (30, 0.8, 50)
-    assert (k['repetition_penalty'], k['min_length'], k['eos_penalty']) == (2.0, 3, -5.0)
+    assert (k['repetition_penalty'], k['min_length'], k['eos_penalty']) == (2.0, 3, 0.0)
 
 
 def test_h4_main_interactive_branch_defaults_dual_temp(monkeypatch):
@@ -223,7 +224,7 @@ def test_h4_main_interactive_branch_defaults_dual_temp(monkeypatch):
     k = ginter.calls[0]
     assert k['temps'] == [0.7, 0.9]        # 默认保留双温度
     assert (k['max_length'], k['top_k']) == (20, 50)
-    assert (k['repetition_penalty'], k['min_length'], k['eos_penalty']) == (2.0, 3, -5.0)
+    assert (k['repetition_penalty'], k['min_length'], k['eos_penalty']) == (2.0, 3, 0.0)
 
 
 def test_h4_main_interactive_branch_explicit_temperature(monkeypatch):
@@ -254,7 +255,7 @@ def test_h4_main_example_branch_defaults(monkeypatch):
     assert len(gtext.calls) == 4
     for k in gtext.calls:
         assert (k['max_length'], k['temperature'], k['top_k']) == (20, 0.8, 50)
-        assert (k['repetition_penalty'], k['min_length'], k['eos_penalty']) == (2.0, 3, -5.0)
+        assert (k['repetition_penalty'], k['min_length'], k['eos_penalty']) == (2.0, 3, 0.0)
 
 
 def test_h4_new_cli_flags_exist(monkeypatch):

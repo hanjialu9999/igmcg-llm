@@ -27,7 +27,7 @@ from models.utils import cli_guard
 
 def generate_text(model, vocab, prompt, max_length=30, temperature=0.8,
                    top_k=50, device='cpu', ngram=None, ngram_weight=0.0,
-                   min_length=3, eos_penalty=-5.0, repetition_penalty=2.0, top_p=1.0):
+                   min_length=3, eos_penalty=0.0, repetition_penalty=2.0, top_p=1.0):
     """Generate text from prompt（可选融合 n-gram 统计先验做解码期双轨）"""
     tokens = vocab.encode(prompt)
     if tokens[-1] == vocab.eos_idx:
@@ -58,7 +58,7 @@ _GEN_DEFAULTS = {
     'example':      {'max_length': 20, 'temperature': 0.8, 'top_k': 50, 'repetition_penalty': 2.0},
 }
 _MIN_LENGTH_DEFAULT = 3
-_EOS_PENALTY_DEFAULT = -5.0
+_EOS_PENALTY_DEFAULT = 0.0  # 10-19 用户定由 -5.0 改：r47 两裁判盲评 eos0 胜（baselines/pack_20261005/r47_gen_tune.json）
 # interactive 历史行为：一条 prompt 跑两个温度（0.7 / 0.9）各出一段
 _INTERACTIVE_TEMPS = [0.7, 0.9]
 
@@ -97,11 +97,11 @@ def _interactive_temps(args):
 def interactive_mode(model, vocab, device='cpu', ngram=None, ngram_weight=0.0,
                      igmcg=False, intuition=None, candidates=5,
                      temps=None, max_length=20, top_k=50,
-                     repetition_penalty=2.0, min_length=3, eos_penalty=-5.0):
+                     repetition_penalty=2.0, min_length=3, eos_penalty=0.0):
     """Interactive text generation（可选 n-gram / IGMCG 联合解码）
 
     默认值即 H4 接线前的硬编码值（temps=[0.7,0.9]、max_length=20、top_k=50、
-    repetition_penalty=2.0、min_length=3、eos_penalty=-5.0）——不传参行为不变。"""
+    repetition_penalty=2.0、min_length=3）——不传参行为不变；eos_penalty 10-19 起默认 0.0（原 -5.0）。"""
     if temps is None:
         temps = list(_INTERACTIVE_TEMPS)
     print("\n" + "="*50)
@@ -223,7 +223,7 @@ def _style_features(text):
 
 def _generate_candidates_batch(model, ids, temps, max_length, top_k, rep_penalty,
                                 device, ngram_fn, ngram_weight, pad_id, sep_id, eos_id,
-                                min_length=3, eos_penalty=-5.0, bos_id=None,
+                                min_length=3, eos_penalty=0.0, bos_id=None,
                                 intuition=None):
     """并行生成 N 个候选：单次 batch 前向（batch=N），每个候选在 batch 内各自独立维护
     KV-cache / SSM 状态，避免候选间污染，也避免逐候选串行 forward（num_candidates 倍提速）。
@@ -347,7 +347,7 @@ def _ngram_coherence(ngram_fn, ids, device):
 def generate_igmcg(model, vocab, prompt, intuition=None, num_candidates=4,
                     max_length=60, device='cpu', base_temp=0.7, top_k=30,
                     ngram_fn=None, ngram_weight=0.0, repetition_penalty=2.0,
-                    min_length=3, eos_penalty=-5.0,
+                    min_length=3, eos_penalty=0.0,
                     coh_w=1.5, flu_w=0.15, style_w=0.15, rep_w=2.5):
     """IGMCG 多候选生成：返回 (最优文本, 各候选评分详情)。
 
@@ -470,7 +470,7 @@ def main():
     parser.add_argument('--min-length', type=int, default=argparse.SUPPRESS,
                         help='最短生成长度（低于此不判 EOS）。缺省=3（H4 接线前硬编码值）')
     parser.add_argument('--eos-penalty', type=float, default=argparse.SUPPRESS,
-                        help='EOS 惩罚（负值抑制提前结束）。缺省=-5.0（H4 接线前硬编码值）')
+                        help='EOS 惩罚（负值抑制提前结束）。缺省=0.0（10-19 由 -5.0 改）')
     parser.add_argument('--device', type=str, default='auto',
                         help='Device to use: auto (detect) / cuda / cpu / dml')
     parser.add_argument('--cpu-threads', type=int, default=4,

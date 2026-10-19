@@ -303,7 +303,7 @@ prompt ids → prefill forward(past=None, use_cache=True)        transformer.py:
 | 采样 | `sampling.py:86-89` | `temperature > 0` | `softmax` → `multinomial` |
 | 全 -inf 回退 | `sampling.py:72-83` | 所有合法 token 被屏蔽 | `raw_logits.clone()`（L9）仅屏蔽 pad/bos |
 | 低置信提前终止 | `sampling.py:87-88` | `probs.max() < 0.01` | 批量填 pad 保对齐；单序列 break |
-| EOS / min_length | `sampling.py:64-67` | `len(generated)−len(prompt_ids) ≥ min_length` 才放行 EOS | `min_length=3`、`eos_penalty=-5.0` |
+| EOS / min_length | `sampling.py:64-67` | `len(generated)−len(prompt_ids) ≥ min_length` 才放行 EOS | `min_length=3`、`eos_penalty=0.0`（10-19 前 -5.0；评测 GEN_PARAMS 仍 -5.0） |
 | 温度 | `sampling.py:55-56` | — | `lt = logits_t / τ`；`temperature_applied` 或 greedy 时不除 |
 | 重复惩罚（**加性**） | `sampling.py:7-23,57` | — | `Counter(generated_ids)`；`logits[ids] -= penalty·count` |
 | n-gram 先验叠加 | `sampling.py:58-59` | 非融合路径 | `lt += ngram_weight·ngram_fn(...)`，`ngram_weight=0.3` |

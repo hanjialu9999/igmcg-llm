@@ -1865,7 +1865,7 @@ class TransformerModel(nn.Module):
                   device: str = 'cpu', repetition_penalty: float = 2.0,
                   ngram_fn: Optional[Callable[[List[int], str], torch.Tensor]] = None, ngram_weight: float = 0.0,
                   eos_id: int = 3, pad_id: int = 0, sep_id: int = 4,
-                  min_length: int = 3, eos_penalty: float = -5.0, top_p: float = 1.0) -> List[int]:
+                  min_length: int = 3, eos_penalty: float = 0.0, top_p: float = 1.0) -> List[int]:
         """生成文本（自回归解码）。
 
         Args:
@@ -1881,7 +1881,7 @@ class TransformerModel(nn.Module):
             pad_id: PAD token id
             sep_id: SEP token id
             min_length: 最小生成长度（不含 prompt），默认 3（避免过短生成）
-            eos_penalty: EOS 惩罚值，默认 -5.0（负值抑制 EOS，正值鼓励 EOS）
+            eos_penalty: EOS 惩罚值，默认 0.0（10-19 由 -5.0 改，r47 盲评 -5.0 压住自然结尾；负值抑制 EOS，正值鼓励 EOS）
             top_p: nucleus 截断阈值，默认 1.0 不截断（见 models/sampling.py:sample_next_token）
         """
         self.eval()
