@@ -21,10 +21,10 @@ class EnhancementsMixin:
 
     def set_enhancements_active(self, spec):
         """`spec=True/False` 全开/全关；`spec=dict` 仅更新存在的键。
-        用于"交替/分段增强"训练，关闭时跳过对应 QK-Norm/可学习温度（恒等）。"""
+        用于"交替/分段增强"训练，关闭时跳过对应 QK-Norm/可学习温度/VRC（恒等）。"""
         if isinstance(spec, bool):
             on = spec
-            self._rt = {"qk_norm": on, "attn_temp": on}
+            self._rt = {k: on for k in self._rt}
         elif isinstance(spec, dict):
             for k, v in spec.items():
                 if k in self._rt:
@@ -412,7 +412,8 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         else:
             self.intra_hybrid_nope_heads = 0
         # 运行时增强开关（按开关粒度，用于“交替/分段增强”训练）：默认全开
-        self._rt: Dict[str, bool] = {"qk_norm": True, "attn_temp": True}
+        # 10-19：value_relative_coding 关 = 本步 v 不编码（恒等，λ 不更新）；cache 存的就是未编码 v，增量解码一致
+        self._rt: Dict[str, bool] = {"qk_norm": True, "attn_temp": True, "value_relative_coding": True}
         # 训练路径静态偏置掩码缓存（仅依赖 T/Tkv/mem_cols，逐层逐步重建代价高）：
         # 避免每步每头重复 arange/torch.zeros/cat 造成的海量分配与 DML 拷贝开销
         self._bias_key: Optional[tuple] = None
@@ -658,7 +659,7 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         # 全量前向：必须用递推（非 shift）以与增量解码一致——cache 存编码后 v，
         # 下一步用 encoded v_{t-1}，若全量用 shift(原 v) 会导致 train/infer parity 崩溃。
         # init λ=0 → tanh=0 → v 不变（向后兼容）；灵感：ViPE value-side relative coding
-        if self.value_relative_coding_enabled:
+        if self.value_relative_coding_enabled and self._rt["value_relative_coding"]:
             _lam = torch.tanh(self.value_rel_lambda).view(1, 1, 1, 1)
             if _mla_vrc_cache is not None:
                 # B2 修复：MLA+VRC 增量解码快速分支。

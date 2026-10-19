@@ -622,7 +622,8 @@ class TransformerModel(nn.Module):
     # 可分段 SEL 交替的开关），供 train.py 的 enhancement_schedule 与测试派生，
     # 避免键名清单散落多处漂移。
     ENHANCEMENT_KEYS = ("qk_norm", "attn_temp", "residual_gate", "hybrid_gate",
-                        "layer_film", "highway_gate", "input_highway", "controller")
+                        "layer_film", "highway_gate", "input_highway", "controller",
+                        "value_relative_coding")
 
     def __init__(self, vocab_size: int, embedding_dim: int, num_heads: int, num_layers: int,
                  hidden_dim: int, max_seq_length: int, dropout: float = 0.0, tie_weights: bool = True,

@@ -27,7 +27,7 @@ def _controller_ratio(cfg):
 
 def test_new_controller_configs_alternate():
     names = [os.path.basename(p) for p in glob.glob(os.path.join(ROOT, 'configs', 'config_train_8k_r*.yaml'))
-             if int(re.search(r'_r(\d+)\.yaml$', p).group(1)) >= 45]
+             if int(re.search(r'_r(\d+)(?:s\d+)?\.yaml$', p).group(1)) >= 45]  # rNsK = rN 换 init_seed
     assert 'config_train_8k_r45.yaml' in names
     for name in names:
         cfg = _load(name)

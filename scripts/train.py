@@ -546,7 +546,13 @@ def main(config_path='configs/pretrain.yaml', resume=False):
             shuffle=False,
             num_workers=num_workers
         )
-    
+
+    # 10-19：training.init_seed（缺省无 = 旧行为）——数据划分仍用 config['seed']（val 集不变、可比），
+    # 只重设模型初始化与 batch 打乱的随机性，用于多 seed 测噪声。
+    if config['training'].get('init_seed') is not None:
+        set_seed(int(config['training']['init_seed']))
+        print(f"  init_seed={config['training']['init_seed']}（划分 seed 仍为 {config['seed']}）")
+
     # Create model
     print("Creating model...")
     # 阶段8.1：n-gram 神经融合——用训练语料（与模型训练同一份分布）构建统计 n-gram 缓冲，
