@@ -100,7 +100,7 @@ def load_vocab(vocab_path: str = 'checkpoints/vocab.json') -> 'BaseTokenizer':
         vocab_data = json.load(f)
 
     if vocab_data.get('char'):
-        vocab = CharTokenizer()
+        vocab = CharTokenizer(pretok=vocab_data.get('pretok', 1))  # 旧 vocab.json 无此键 = 旧预分词
     else:
         # 默认按 BPE 路径（含缺标志的情况）重建，char/bpe 统一走 BaseTokenizer
         vocab = BPETokenizer()

@@ -18,10 +18,10 @@ def _load(name):
         return yaml.safe_load(f)
 
 
-def _controller_ratio(cfg):
+def _controller_ratio(cfg, key='controller'):
     """按 scripts/train.py:780-783 的展开规则（缺省键补 True）算 controller 开的段占比。"""
     sched = cfg['training'].get('enhancement_schedule') or []
-    on = [bool(seg.get('controller', True)) for seg in sched]
+    on = [bool(seg.get(key, True)) for seg in sched]
     return sum(on), len(on)
 
 
@@ -33,8 +33,9 @@ def test_new_controller_configs_alternate():
         cfg = _load(name)
         if not cfg['model'].get('controller'):
             continue
-        on, n = _controller_ratio(cfg)
-        assert 0 < on < n, f'{name}：开了 controller 却没有按步交替（10-06 约定默认交替）'
+        # r52 起允许 Controller 常开、只交替 FiLM 一路（controller_film），也算按步交替
+        assert any(0 < on < n for on, n in (_controller_ratio(cfg, k) for k in ('controller', 'controller_film'))), \
+            f'{name}：开了 controller 却没有按步交替（10-06 约定默认交替）'
         # 与 enhancement_off_prob / curriculum_anneal 互斥（scripts/train.py:792），否则会打 warn
         assert not cfg['training'].get('enhancement_off_prob') and cfg['training'].get('curriculum_anneal') is None, name
 

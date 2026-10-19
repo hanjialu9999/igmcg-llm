@@ -104,7 +104,8 @@ class TextDataset(Dataset):
 
 
 def load_data(data_file: str, vocab_size: int = 5000, max_seq_length: int = 32,
-              min_freq: int = 1, vocab: Optional['BaseTokenizer'] = None) -> Tuple[TextDataset, 'BaseTokenizer']:
+              min_freq: int = 1, vocab: Optional['BaseTokenizer'] = None,
+              tokenizer_pretok: int = 1) -> Tuple[TextDataset, 'BaseTokenizer']:
     """Load data from file with validation.
 
     统一走 `BaseTokenizer`（字符级 `CharTokenizer` 适配字符级 LM）；旧的 `Vocabulary`
@@ -119,7 +120,7 @@ def load_data(data_file: str, vocab_size: int = 5000, max_seq_length: int = 32,
     
     # 构建字符级词表（零 OOV，与推理 load_vocab 同一套分词语义）
     if vocab is None:
-        vocab = CharTokenizer(vocab_size=vocab_size)
+        vocab = CharTokenizer(vocab_size=vocab_size, pretok=tokenizer_pretok)
         vocab.train(texts, min_freq=min_freq)
     
     # Create dataset
@@ -142,7 +143,8 @@ def load_data(data_file: str, vocab_size: int = 5000, max_seq_length: int = 32,
 def load_packed_data(data_file: str, vocab_size: int = 5000, max_seq_length: int = 32,
                      test_split: float = 0.1, seed: int = 42,
                      max_train_chunks: Optional[int] = None, max_val_chunks: Optional[int] = None,
-                     min_freq: int = 1, vocab: Optional['BaseTokenizer'] = None
+                     min_freq: int = 1, vocab: Optional['BaseTokenizer'] = None,
+                     tokenizer_pretok: int = 1
                      ) -> Tuple[TextDataset, Optional[TextDataset], 'BaseTokenizer']:
     """打包版 load_data + split_dataset：先按行（清洗去重后）随机切 train/val，再各自打包，
     同一行不会同时出现在两边。词表与 load_data 一样用全部行构建。test_split=0 时 val 为 None。"""
@@ -151,7 +153,7 @@ def load_packed_data(data_file: str, vocab_size: int = 5000, max_seq_length: int
         texts = [line.strip() for line in f if line.strip()]
     print(f"Loaded {len(texts)} lines")
     if vocab is None:
-        vocab = CharTokenizer(vocab_size=vocab_size)
+        vocab = CharTokenizer(vocab_size=vocab_size, pretok=tokenizer_pretok)
         vocab.train(texts, min_freq=min_freq)
     texts = TextDataset._preprocess_texts(texts)
     perm = np.random.RandomState(seed).permutation(len(texts))
@@ -519,13 +521,34 @@ class CharTokenizer(BaseTokenizer):
     与 BPETokenizer 差异：不做 BPE 合并，词表 = 单字 + 256 byte token；
     相邻字符的"合并成词"完全交给模型侧的 CharMergeLayer 学习（受 LM loss
     监督），分词器本身只负责字符→索引的零 OOV 映射。导出标记 char:true。
+
+    pretok（10-20，data.tokenizer_pretok，导出到 vocab.json，缺省 1 = 旧行为）：
+      1 = 共用 BPE 预分词：转小写、丢空格、含非法字符的整个词（中文常是整段）丢弃；
+      2 = 保留大小写与空格（连续空白折成一个空格，空格自成 token），只删非法字符本身，
+          全角字母数字转半角（中文标点不动）。
     """
+
+    # 全角 ０-９ / Ａ-Ｚ / ａ-ｚ → 半角（pretok=2）
+    _FULLWIDTH_ALNUM = {c: c - 0xFEE0 for r in ((0xFF10, 0xFF1A), (0xFF21, 0xFF3B), (0xFF41, 0xFF5B))
+                        for c in range(*r)}
+
+    def __init__(self, vocab_size: int = 8000, special_tokens: Optional[List[str]] = None,
+                 pretok: int = 1):
+        super().__init__(vocab_size, special_tokens)
+        self.pretok = int(pretok)
+
+    def _pre_tokenize(self, text: str) -> List[str]:
+        if self.pretok < 2:
+            return self._bpe_pre_tokenize(text)
+        words = (''.join(c for c in w if self._is_valid_char(c))
+                 for w in text.translate(self._FULLWIDTH_ALNUM).split())
+        return [' '.join(w for w in words if w)]
 
     def train(self, texts: List[str], min_freq: int = 1) -> None:
         # 1) 统计字符频次（CJK 逐字 + 非 CJK 按空格切分后的字符/词字符）
         counter: Counter = Counter()
         for text in texts:
-            for w in self._bpe_pre_tokenize(text):
+            for w in self._pre_tokenize(text):
                 for ch in w:
                     if self._is_valid_char(ch):
                         counter[ch] += 1
@@ -541,7 +564,7 @@ class CharTokenizer(BaseTokenizer):
     def tokenize(self, text: str) -> List[str]:
         # 字符级：每个合法字符单独成 token（未知字符走 byte fallback 由 encode 处理）
         out = []
-        for w in self._bpe_pre_tokenize(text):
+        for w in self._pre_tokenize(text):
             out.extend(list(w))
         return out
 
@@ -555,4 +578,5 @@ class CharTokenizer(BaseTokenizer):
                 'special_tokens': self.special_tokens,
                 'bpe': True,
                 'char': True,
+                'pretok': self.pretok,
             }, f, ensure_ascii=False, indent=2)

@@ -499,12 +499,14 @@ def main(config_path='configs/pretrain.yaml', resume=False):
             max_seq_length=config['data']['max_seq_length'],
             test_split=test_split, seed=config['seed'],
             max_train_chunks=config['data'].get('pack_max_train_chunks'),
-            max_val_chunks=config['data'].get('pack_max_val_chunks'))
+            max_val_chunks=config['data'].get('pack_max_val_chunks'),
+            tokenizer_pretok=config['data'].get('tokenizer_pretok', 1))
     else:
         dataset, vocab = load_data(
             config['data']['train_file'],
             vocab_size=config['data']['vocab_size'],
-            max_seq_length=config['data']['max_seq_length']
+            max_seq_length=config['data']['max_seq_length'],
+            tokenizer_pretok=config['data'].get('tokenizer_pretok', 1)
         )
     print(f"Vocabulary size: {len(vocab)}")
     print(f"Dataset size: {len(dataset)}")
