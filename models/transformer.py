@@ -623,7 +623,7 @@ class TransformerModel(nn.Module):
     # 避免键名清单散落多处漂移。
     ENHANCEMENT_KEYS = ("qk_norm", "attn_temp", "residual_gate", "hybrid_gate",
                         "layer_film", "highway_gate", "input_highway", "controller",
-                        "value_relative_coding")
+                        "value_relative_coding", "char_merge")
 
     def __init__(self, vocab_size: int, embedding_dim: int, num_heads: int, num_layers: int,
                  hidden_dim: int, max_seq_length: int, dropout: float = 0.0, tie_weights: bool = True,
@@ -787,6 +787,9 @@ class TransformerModel(nn.Module):
         self.drop = nn.Dropout(dropout)
         # 轻量学习型分词层：字符级输入时启用，把相邻字符融合为词表示
         self.char_merge_enabled = char_merge
+        # 10-19：运行时开关（enhancement_schedule 交替）；关 = 整层旁路（连末尾 RMSNorm 一起跳过），
+        # 增量缓冲也不更新——只在训练按步切，生成全程开
+        self._rt_char_merge = bool(char_merge)
         if char_merge:
             self.char_merge = CharMergeLayer(
                 embedding_dim, kernel_size=char_merge_kernel,
@@ -1226,12 +1229,15 @@ class TransformerModel(nn.Module):
     def set_enhancements_active(self, spec):
         """运行时开关（按开关粒度）：`spec=True/False` 全开/全关；`spec=dict` 按键更新。
         用于"交替/分段增强"训练（关闭则跳过对应增强，恒等）。"""
-        # 模型级特性（layer_film / input_highway / controller）开关
+        # 模型级特性（layer_film / input_highway / controller / char_merge）开关
         if isinstance(spec, bool):
             self._rt_layer_film = spec and self.layer_film_enabled
             self._rt_input_highway = spec and self.input_highway_enabled
             self._rt_controller = spec and self.controller_enabled
+            self._rt_char_merge = spec and self.char_merge_enabled
         elif isinstance(spec, dict):
+            if 'char_merge' in spec:
+                self._rt_char_merge = bool(spec['char_merge']) and self.char_merge_enabled
             if 'layer_film' in spec:
                 self._rt_layer_film = bool(spec['layer_film']) and self.layer_film_enabled
             if 'input_highway' in spec:
@@ -1572,7 +1578,7 @@ class TransformerModel(nn.Module):
         # 关掉缓冲时该层无状态，此调用前后移对结果**逐位无影响**。
         # 前后两处之间只有 memory.reset / attn 缓存清理 / reset_ngram_state()，
         # 三者都只读 x 的 shape、dtype、device，不改 x 的值，故等价。
-        if self.char_merge_enabled:
+        if self.char_merge_enabled and self._rt_char_merge:
             x = self.char_merge(x)
         # R42: Controller/Generator 双模型——跑 Controller 产出控制信号条件化 Generator。
         # _rt_controller=False 时跳过（SEL 交替训练恒等），信号全 None。
