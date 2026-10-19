@@ -1865,7 +1865,7 @@ class TransformerModel(nn.Module):
                   device: str = 'cpu', repetition_penalty: float = 2.0,
                   ngram_fn: Optional[Callable[[List[int], str], torch.Tensor]] = None, ngram_weight: float = 0.0,
                   eos_id: int = 3, pad_id: int = 0, sep_id: int = 4,
-                  min_length: int = 3, eos_penalty: float = -5.0) -> List[int]:
+                  min_length: int = 3, eos_penalty: float = -5.0, top_p: float = 1.0) -> List[int]:
         """生成文本（自回归解码）。
 
         Args:
@@ -1882,6 +1882,7 @@ class TransformerModel(nn.Module):
             sep_id: SEP token id
             min_length: 最小生成长度（不含 prompt），默认 3（避免过短生成）
             eos_penalty: EOS 惩罚值，默认 -5.0（负值抑制 EOS，正值鼓励 EOS）
+            top_p: nucleus 截断阈值，默认 1.0 不截断（见 models/sampling.py:sample_next_token）
         """
         self.eval()
         # 增量解码 n-gram 滚动缓冲在每次新序列开头清空，避免跨序列串味。
@@ -1906,7 +1907,7 @@ class TransformerModel(nn.Module):
                 eos_penalty=eos_penalty, top_k=top_k, vocab_size=logits_t.shape[0],
                 raw_logits=logits_t,
                 temperature_applied=self.temperature_applied,
-                bos_id=BOS_IDX,
+                bos_id=BOS_IDX, top_p=top_p,
             )
 
         with torch.no_grad():

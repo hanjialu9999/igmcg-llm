@@ -32,12 +32,16 @@ def sample_next_token(logits_t: torch.Tensor, *, temperature: float,
                       top_k: int, vocab_size: int,
                       raw_logits: Optional[torch.Tensor] = None,
                       temperature_applied: bool = False,
-                      bos_id: Optional[int] = None) -> Optional[int]:
+                      bos_id: Optional[int] = None,
+                      top_p: float = 1.0) -> Optional[int]:
     """INT-2：单步采样单一事实来源——model.generate（单序列）与 generate.py 批量候选
     解码（_generate_candidates_batch）共用，消除两套采样循环公式漂移。
 
     流程：温度缩放 → 加性重复惩罚 → n-gram 先验叠加 → pad/sep/bos 屏蔽 → min_length/eos 处理
-    → top_k 截断 → 全 -inf 回退 → softmax → multinomial。低置信（probs.max()<0.01）返回
+    → top_k 截断 → top_p 截断 → 全 -inf 回退 → softmax → multinomial。
+
+    `top_p`：nucleus 截断，按概率从高到低保留到累计概率首次 ≥ top_p 的那个 token（至少留
+    1 个）；默认 1.0 = 不截断（与加入前逐位一致）。贪心时 argmax 总在保留集内，不受影响。低置信（probs.max()<0.01）返回
     None 表示提前终止。返回的是 token id（或 None）。
 
     `bos_id`：R39 加固——BOS 只作为序列起始标记出现（data_utils encode 在位置 0 注入），
@@ -69,6 +73,10 @@ def sample_next_token(logits_t: torch.Tensor, *, temperature: float,
         top_k_vals = torch.topk(lt, top_k)[0]
         threshold = top_k_vals[..., -1]
         lt[lt < threshold] = float('-inf')
+    if 0.0 < top_p < 1.0 and not torch.isinf(lt).all():
+        sv, si = torch.sort(lt, descending=True)
+        sp = torch.softmax(sv, dim=-1)
+        lt[si[(sp.cumsum(-1) - sp) >= top_p]] = float('-inf')
     if torch.isinf(lt).all():
         # 全 -inf 回退（设计行为，非 bug）：所有合法 token 都被屏蔽（pad/sep/eos/
         # top_k/惩罚后无候选）的极端边界，放弃已处理分布、用原始温度分布仅屏蔽 pad

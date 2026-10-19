@@ -27,7 +27,7 @@ from models.utils import cli_guard
 
 def generate_text(model, vocab, prompt, max_length=30, temperature=0.8,
                    top_k=50, device='cpu', ngram=None, ngram_weight=0.0,
-                   min_length=3, eos_penalty=-5.0, repetition_penalty=2.0):
+                   min_length=3, eos_penalty=-5.0, repetition_penalty=2.0, top_p=1.0):
     """Generate text from prompt（可选融合 n-gram 统计先验做解码期双轨）"""
     tokens = vocab.encode(prompt)
     if tokens[-1] == vocab.eos_idx:
@@ -39,7 +39,7 @@ def generate_text(model, vocab, prompt, max_length=30, temperature=0.8,
                                   ngram_fn=(ngram.logprob_vector if ngram else None),
                                   ngram_weight=ngram_weight,
                                   min_length=min_length,
-                                  eos_penalty=eos_penalty)
+                                  eos_penalty=eos_penalty, top_p=top_p)
     text = vocab.decode(generated)
     return text.strip()
 
