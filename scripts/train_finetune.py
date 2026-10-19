@@ -16,7 +16,7 @@ sys.path.insert(0, str(project_root))
 from models.transformer import TransformerModel
 from models.config_loader import load_config, build_model, load_vocab
 from models.device import get_device, apply_cpu_threads
-from models.utils import save_checkpoint, cli_guard
+from models.utils import save_checkpoint, cli_guard, optimizer_param_groups
 from models.checkpoint import safe_torch_load
 
 
@@ -119,17 +119,16 @@ def train():
     tc = config['training']
     opt_name = str(tc.get('optimizer', 'adamw')).lower()
     lr = float(tc.get('learning_rate', 5e-4))
+    wd = tc.get('weight_decay', 0.0)
+    params = optimizer_param_groups(model, wd)  # 同 train.py：wd>0 时 bias / norm / embedding 不衰减
     if opt_name == 'sgd':
         lr = float(tc.get('sgd_learning_rate', lr))
         momentum = float(tc.get('momentum', 0.9))
-        optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=momentum,
-                                    weight_decay=tc.get('weight_decay', 0.0))
+        optimizer = torch.optim.SGD(params, lr=lr, momentum=momentum, weight_decay=wd)
     elif opt_name == 'adam':
-        optimizer = torch.optim.Adam(model.parameters(), lr=lr,
-                                     weight_decay=tc.get('weight_decay', 0.0))
+        optimizer = torch.optim.Adam(params, lr=lr, weight_decay=wd)
     else:
-        optimizer = AdamW(model.parameters(), lr=lr,
-                          weight_decay=tc.get('weight_decay', 0.0))
+        optimizer = AdamW(params, lr=lr, weight_decay=wd)
     # 忽略 padding 部分的 loss
     criterion = nn.CrossEntropyLoss(ignore_index=vocab.pad_idx)
 

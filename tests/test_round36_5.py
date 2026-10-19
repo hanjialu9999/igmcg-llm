@@ -511,13 +511,14 @@ def test_aux_loss_zero_when_targets_match_perfectly():
     m = _build(dim=64, vocab=5, layers=3, early_exit=True, early_exit_layers=[2])
     m.train()
     src = torch.zeros(1, 4, dtype=torch.long)
-    tgt = torch.zeros(1, 4, dtype=torch.long)
-    # 手动设置 early_exit_head 使得对零输入输出 one-hot(tgt=0)
-    # RMSNorm weight=1, Linear bias=0；设 Linear weight[:, 0] = 大正数, 其余 = 0
+    # 10-20：aux CE 忽略 pad（id 0），目标改用非 pad 的 token 1
+    tgt = torch.ones(1, 4, dtype=torch.long)
+    # 手动设置 early_exit_head 使得输出 one-hot(tgt=1)
+    # RMSNorm weight=1, Linear bias=0；设 Linear weight[1, :] = 大正数, 其余 = 0
     with torch.no_grad():
         m.early_exit_head[0].weight.fill_(1.0)  # RMSNorm scale=1
         m.early_exit_head[1].weight.zero_()
-        m.early_exit_head[1].weight[0, :] = 100.0  # token 0 的 logit 极大
+        m.early_exit_head[1].weight[1, :] = 100.0  # token 1 的 logit 极大
     _ = m(src, targets=tgt)
     # CE 应接近 0（perfect prediction）
     assert m._early_exit_aux_loss.item() < 0.1

@@ -54,6 +54,15 @@ def test_v2_fullwidth_alnum_to_halfwidth_keeps_cjk_punct():
     assert 'Ａ' not in t.word2idx and 'A' in t.word2idx
 
 
+def test_v3_keeps_space_only_between_ascii():
+    t = _tok(3)
+    assert _roundtrip(t, 'Hello World, how are you? 你好，世界。') == 'Hello World, how are you?你好，世界。'
+    assert _roundtrip(t, '使用 Python 编程  测试\t多个 空白') == '使用Python编程测试多个空白'
+    assert _roundtrip(t, 'x � y 3 号') == 'x y 3号'
+    assert _roundtrip(t, 'ＡＢ１２ 测试') == 'AB12测试'
+    assert ' ' in t.word2idx
+
+
 def test_save_load_keeps_pretok(tmp_path):
     t = _tok(2)
     p = tmp_path / 'vocab.json'

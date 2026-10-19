@@ -9,7 +9,7 @@ from torch.utils.checkpoint import checkpoint
 from torch.nn.functional import scaled_dot_product_attention
 from typing import Optional, List, Tuple, Any, Dict, Callable
 
-from models.constants import MASK_FILL_VALUE, ROPE_BASE, BOS_IDX
+from models.constants import MASK_FILL_VALUE, ROPE_BASE, BOS_IDX, PAD_IDX
 
 
 from models.norms import RMSNorm, GPASNorm
@@ -1765,8 +1765,12 @@ class TransformerModel(nn.Module):
                         # 权重 w_k = 1/(rank+1)：浅出口（rank 小）权重大，鼓励浅层学到判别性
                         rank_k = self.early_exit_layers.index(i)
                         w_k = 1.0 / (rank_k + 1)
+                        # 与主 loss（scripts/train.py criterion）一致忽略 pad；pack 模式无 pad，不受影响。
+                        # sum / 非 pad 数（至少 1）：整批全是 pad 时得 0 而不是 NaN
+                        _t = targets.reshape(-1)
                         ce_k = F.cross_entropy(
-                            exit_logits.view(-1, self.vocab_size), targets.view(-1))
+                            exit_logits.view(-1, self.vocab_size), _t,
+                            ignore_index=PAD_IDX, reduction='sum') / (_t != PAD_IDX).sum().clamp_min(1)
                         self._early_exit_aux_loss = self._early_exit_aux_loss + w_k * ce_k
                 elif not use_cache:
                     # 推理 eval 全量前向：检查批次+序列均值置信度
@@ -1899,8 +1903,16 @@ class TransformerModel(nn.Module):
         self.eval()
         # 增量解码 n-gram 滚动缓冲在每次新序列开头清空，避免跨序列串味。
         self.reset_ngram_state()
-        generated = list(token_ids)
         max_seq_length = self.max_seq_length
+        # 10-20：提示过长时左截断，给生成留 min(max_length, max_seq_length//2) 个位置（此前提示
+        # 占满窗口时一个 token 也不生成）；开头的 BOS 保留。返回值仍以完整原提示开头，调用方
+        # 按 len(token_ids) 切片不受影响。
+        generated = list(token_ids)
+        keep = max_seq_length - min(max_length, max_seq_length // 2)
+        if len(generated) > keep:
+            head = generated[:1] if generated[0] == BOS_IDX else []
+            generated = head + generated[len(generated) - keep + len(head):]
+        n_prompt = len(generated)
         eos_token_id = eos_id
         pad_token_id = pad_id
         sep_token_id = sep_id
@@ -1915,7 +1927,7 @@ class TransformerModel(nn.Module):
                 logits_t, temperature=temperature, repetition_penalty=repetition_penalty,
                 generated_ids=generated, ngram_fn=ngram_fn, ngram_weight=ngram_weight,
                 device=device, pad_id=pad_token_id, sep_id=sep_token_id, eos_id=eos_token_id,
-                generated_len=len(generated) - len(token_ids), min_length=min_length,
+                generated_len=len(generated) - n_prompt, min_length=min_length,
                 eos_penalty=eos_penalty, top_k=top_k, vocab_size=logits_t.shape[0],
                 raw_logits=logits_t,
                 temperature_applied=self.temperature_applied,
@@ -1939,10 +1951,10 @@ class TransformerModel(nn.Module):
                 if next_token is None:
                     break
                 generated.append(next_token)
-                if next_token == eos_token_id and len(generated) - len(token_ids) >= min_length:
+                if next_token == eos_token_id and len(generated) - n_prompt >= min_length:
                     break
                 past, logits, cur_pos = _decode_one_step(
                     self, next_token, past, cur_pos, device=device, use_cache=True,
                     temperature=temperature,
                     temperature_applied=self.temperature_applied)
-        return generated
+        return list(token_ids) + generated[n_prompt:]

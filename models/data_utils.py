@@ -17,7 +17,8 @@ class TextDataset(Dataset):
     """Improved dataset with lazy loading and better preprocessing"""
     
     def __init__(self, texts: List[str], vocab: 'BaseTokenizer', max_seq_length: int = 32, preprocess: bool = True,
-                 pack: bool = False, max_chunks: Optional[int] = None, seed: int = 42):
+                 pack: bool = False, max_chunks: Optional[int] = None, seed: int = 42,
+                 long_line_windows: bool = False):
         """
         Args:
             texts: List of text strings
@@ -28,6 +29,9 @@ class TextDataset(Dataset):
                 长 L=max_seq_length+1 的块（相邻块重叠 1 个 token，流里每个 token 都当过目标）。
                 关（默认）= 旧行为：每行截到 L、不足补 pad（长行只用到开头）。
             max_chunks: 仅 pack 时有效；块数超过时按 seed 随机抽这么多块（固定子集，便于控步数和复现）
+            long_line_windows: 仅非 pack 时有效（10-20，data.long_line_windows，缺省关 = 旧行为）：
+                长行按步长 max_seq_length 切成多个窗口（末窗带 EOS、不足补 pad），不再只用开头；
+                记录 line_ids，split_dataset 据此按行切分。
         """
         self.vocab = vocab
         self.max_seq_length = max_seq_length
@@ -41,8 +45,11 @@ class TextDataset(Dataset):
         # “GPU 不响应更多命令 / device reset”导致 backward 崩溃。
         L = max_seq_length + 1
         pad = self.vocab.pad_idx
+        self.line_ids: Optional[np.ndarray] = None
         if pack:
             arr = self._pack(texts, L, max_chunks, seed)
+        elif long_line_windows:
+            arr, self.line_ids = self._windows(texts, L)
         else:
             # int32 以容纳 vocab_size > 32767 的词表（int16 上限 32767，超界会回绕静默损坏 token id）。
             arr = np.zeros((len(texts), L), dtype=np.int32)
@@ -67,6 +74,21 @@ class TextDataset(Dataset):
         if max_chunks is not None and n > max_chunks:
             starts = np.sort(np.random.RandomState(seed).choice(starts, int(max_chunks), replace=False))
         return stream[starts[:, None] + np.arange(L)]
+
+    def _windows(self, texts: List[str], L: int) -> Tuple[np.ndarray, np.ndarray]:
+        """每行单独按步长 L-1 切长 L 的窗口（相邻窗口重叠 1 个 token，每个 token 恰好当一次目标），
+        不足补 pad；不超过 L 的行与旧行为相同。返回 (N, L) 与每个窗口的来源行号。"""
+        T = L - 1
+        parts = [np.asarray(self.vocab.encode(t), dtype=np.int32) for t in texts]
+        counts = [max(-(-(len(p) - 1) // T), 1) for p in parts]  # ceil((n-1)/T)，至少 1 个
+        arr = np.full((sum(counts), L), self.vocab.pad_idx, dtype=np.int32)
+        r = 0
+        for p, c in zip(parts, counts):
+            for s in range(0, c * T, T):
+                w = p[s:s + L]
+                arr[r, :len(w)] = w
+                r += 1
+        return arr, np.repeat(np.arange(len(parts), dtype=np.int64), counts)
 
     @staticmethod
     def _preprocess_texts(texts: List[str]) -> List[str]:
@@ -105,7 +127,8 @@ class TextDataset(Dataset):
 
 def load_data(data_file: str, vocab_size: int = 5000, max_seq_length: int = 32,
               min_freq: int = 1, vocab: Optional['BaseTokenizer'] = None,
-              tokenizer_pretok: int = 1) -> Tuple[TextDataset, 'BaseTokenizer']:
+              tokenizer_pretok: int = 1,
+              long_line_windows: bool = False) -> Tuple[TextDataset, 'BaseTokenizer']:
     """Load data from file with validation.
 
     统一走 `BaseTokenizer`（字符级 `CharTokenizer` 适配字符级 LM）；旧的 `Vocabulary`
@@ -124,7 +147,8 @@ def load_data(data_file: str, vocab_size: int = 5000, max_seq_length: int = 32,
         vocab.train(texts, min_freq=min_freq)
     
     # Create dataset
-    dataset = TextDataset(texts, vocab, max_seq_length, preprocess=True)
+    dataset = TextDataset(texts, vocab, max_seq_length, preprocess=True,
+                          long_line_windows=long_line_windows)
     del texts  # 释放原始字符串列表，避免 3.6M 条字符串常驻内存
     
     # Print dataset statistics
@@ -144,15 +168,17 @@ def load_packed_data(data_file: str, vocab_size: int = 5000, max_seq_length: int
                      test_split: float = 0.1, seed: int = 42,
                      max_train_chunks: Optional[int] = None, max_val_chunks: Optional[int] = None,
                      min_freq: int = 1, vocab: Optional['BaseTokenizer'] = None,
-                     tokenizer_pretok: int = 1
+                     tokenizer_pretok: int = 1, vocab_train_only: bool = False
                      ) -> Tuple[TextDataset, Optional[TextDataset], 'BaseTokenizer']:
     """打包版 load_data + split_dataset：先按行（清洗去重后）随机切 train/val，再各自打包，
-    同一行不会同时出现在两边。词表与 load_data 一样用全部行构建。test_split=0 时 val 为 None。"""
+    同一行不会同时出现在两边。词表缺省与 load_data 一样用全部行构建；vocab_train_only=True
+    （10-20，data.vocab_train_only）时只用切分后的 train 行建，val 独有字符走 byte fallback。
+    test_split=0 时 val 为 None。"""
     print(f"Loading data from {data_file} (packed)...")
     with open(data_file, 'r', encoding='utf-8', errors='replace') as f:
         texts = [line.strip() for line in f if line.strip()]
     print(f"Loaded {len(texts)} lines")
-    if vocab is None:
+    if vocab is None and not vocab_train_only:
         vocab = CharTokenizer(vocab_size=vocab_size, pretok=tokenizer_pretok)
         vocab.train(texts, min_freq=min_freq)
     texts = TextDataset._preprocess_texts(texts)
@@ -161,6 +187,9 @@ def load_packed_data(data_file: str, vocab_size: int = 5000, max_seq_length: int
     train_texts = [texts[i] for i in np.sort(perm[:n_train])]
     val_texts = [texts[i] for i in np.sort(perm[n_train:])]
     del texts
+    if vocab is None:
+        vocab = CharTokenizer(vocab_size=vocab_size, pretok=tokenizer_pretok)
+        vocab.train(train_texts, min_freq=min_freq)
     train_ds = TextDataset(train_texts, vocab, max_seq_length, preprocess=False,
                            pack=True, max_chunks=max_train_chunks, seed=seed)
     val_ds = (TextDataset(val_texts, vocab, max_seq_length, preprocess=False,
@@ -193,6 +222,16 @@ def create_dataloader(dataset: TextDataset, batch_size: int = 16, shuffle: bool 
 
 def split_dataset(dataset: TextDataset, train_ratio: float = 0.9, seed: int = 42) -> Tuple[Dataset, Dataset]:
     """Split dataset into train and validation sets"""
+    line_ids = getattr(dataset, 'line_ids', None)
+    if line_ids is not None:
+        # long_line_windows：按来源行切，同一行的窗口不会同时进 train 和 val
+        n_lines = int(line_ids.max()) + 1 if len(line_ids) else 0
+        perm = torch.randperm(n_lines, generator=torch.Generator().manual_seed(seed)).numpy()
+        is_train = np.zeros(n_lines, dtype=bool)
+        is_train[perm[:int(n_lines * train_ratio)]] = True
+        mask = is_train[line_ids]
+        return (torch.utils.data.Subset(dataset, np.flatnonzero(mask).tolist()),
+                torch.utils.data.Subset(dataset, np.flatnonzero(~mask).tolist()))
     train_size = int(len(dataset) * train_ratio)
     val_size = len(dataset) - train_size
     
@@ -525,10 +564,12 @@ class CharTokenizer(BaseTokenizer):
     pretok（10-20，data.tokenizer_pretok，导出到 vocab.json，缺省 1 = 旧行为）：
       1 = 共用 BPE 预分词：转小写、丢空格、含非法字符的整个词（中文常是整段）丢弃；
       2 = 保留大小写与空格（连续空白折成一个空格，空格自成 token），只删非法字符本身，
-          全角字母数字转半角（中文标点不动）。
+          全角字母数字转半角（中文标点不动）；
+      3 = 同 2，但词间空格只在前词末字符与后词首字符都是 ASCII 时保留（英文词间留，
+          中文旁、中英交界的空格去掉；r53 语料空格 16.9 万个里中文旁 12.3 万、交界 3.3 万）。
     """
 
-    # 全角 ０-９ / Ａ-Ｚ / ａ-ｚ → 半角（pretok=2）
+    # 全角 ０-９ / Ａ-Ｚ / ａ-ｚ → 半角（pretok>=2）
     _FULLWIDTH_ALNUM = {c: c - 0xFEE0 for r in ((0xFF10, 0xFF1A), (0xFF21, 0xFF3B), (0xFF41, 0xFF5B))
                         for c in range(*r)}
 
@@ -540,9 +581,16 @@ class CharTokenizer(BaseTokenizer):
     def _pre_tokenize(self, text: str) -> List[str]:
         if self.pretok < 2:
             return self._bpe_pre_tokenize(text)
-        words = (''.join(c for c in w if self._is_valid_char(c))
-                 for w in text.translate(self._FULLWIDTH_ALNUM).split())
-        return [' '.join(w for w in words if w)]
+        words = [w for w in (''.join(c for c in w if self._is_valid_char(c))
+                             for w in text.translate(self._FULLWIDTH_ALNUM).split()) if w]
+        if self.pretok == 2:
+            return [' '.join(words)]
+        parts = words[:1]
+        for prev, w in zip(words, words[1:]):
+            if prev[-1].isascii() and w[0].isascii():
+                parts.append(' ')
+            parts.append(w)
+        return [''.join(parts)]
 
     def train(self, texts: List[str], min_freq: int = 1) -> None:
         # 1) 统计字符频次（CJK 逐字 + 非 CJK 按空格切分后的字符/词字符）

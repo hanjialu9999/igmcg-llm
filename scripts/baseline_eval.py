@@ -80,13 +80,15 @@ def load_val_set(config, max_seqs=0):
             test_split=test_split, seed=config['seed'],
             max_train_chunks=config['data'].get('pack_max_train_chunks'),
             max_val_chunks=config['data'].get('pack_max_val_chunks'),
-            tokenizer_pretok=config['data'].get('tokenizer_pretok', 1))
+            tokenizer_pretok=config['data'].get('tokenizer_pretok', 1),
+            vocab_train_only=bool(config['data'].get('vocab_train_only', False)))
     else:
         dataset, vocab = load_data(
             config['data']['train_file'],
             vocab_size=config['data']['vocab_size'],
             max_seq_length=config['data']['max_seq_length'],
             tokenizer_pretok=config['data'].get('tokenizer_pretok', 1),
+            long_line_windows=bool(config['data'].get('long_line_windows', False)),
         )
         _, val_dataset = split_dataset(dataset, train_ratio=1.0 - test_split,
                                        seed=config['seed'])

@@ -31,7 +31,7 @@ from models.config_loader import build_model, load_config
 from models.device import get_device, apply_cpu_threads
 from models.utils import (save_checkpoint, cleanup_old_checkpoints,
                               backup_existing_checkpoints, save_final_model, cli_guard,
-                              _cpu_offload)
+                              _cpu_offload, optimizer_param_groups, load_optimizer_state)
 
 def find_latest_checkpoint(checkpoint_dir: str):
     """在 checkpoint_dir 中找最新的 model_epoch_*.pt，返回 (epoch, path) 或 (0, None)。"""
@@ -166,10 +166,13 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
                  igmcg_sel_prob=0.0,
                  skip_batches=0, checkpoint_dir=None, checkpoint_percents=(),
                  checkpoint_meta=None, initial_eff_step=0,
-                 controller_active=True, use_foreach_norm_clip=False):
+                 controller_active=True, use_foreach_norm_clip=False, lr_total_eff=None):
     """Train one epoch with warmup, gradient accumulation and mixed precision.
 
-    - warmup_steps: 预热步数。若 <1 则按"占整个 epoch 有效步数的比例"解释（如 0.1=前 10% 步预热）。
+    - warmup_steps: 预热步数。若 <1 则按"占 LR 调度总有效步数的比例"解释（如 0.1=前 10% 步预热）。
+    - lr_total_eff: LR 调度的总有效步数（10-20：main 传 每 epoch 有效步 × epochs，配合
+      initial_eff_step 让 warmup / 衰减跨 epoch 只走一遍；此前每个 epoch 都从头 warmup 再衰减）。
+      None = 只按本 epoch 计（旧行为）。
     - grad_accum_steps: 梯度累积步数；有效 batch = batch_size * grad_accum_steps。
     - lr_schedule: cosine | constant | wsd（见 compute_lr）。
     - skip_batches: 跳过前 N 个 batch（step checkpoint resume 时续训用）。
@@ -200,7 +203,9 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch,
 
     total_steps = len(dataloader)
     total_eff = (total_steps + grad_accum_steps - 1) // grad_accum_steps
-    # warmup_steps 可能为小数（占 epoch 比例）或整数步数；钳制不超过总有效步数，
+    if lr_total_eff is not None:
+        total_eff = int(lr_total_eff)
+    # warmup_steps 可能为小数（占调度总步数比例）或整数步数；钳制不超过总有效步数，
     # 避免误配过大预热导致全程线性升温、永不进入稳定/衰减期。
     warmup_target = min(int(warmup_steps * total_eff) if 0 < warmup_steps < 1 else int(warmup_steps), total_eff)
 
@@ -500,13 +505,15 @@ def main(config_path='configs/pretrain.yaml', resume=False):
             test_split=test_split, seed=config['seed'],
             max_train_chunks=config['data'].get('pack_max_train_chunks'),
             max_val_chunks=config['data'].get('pack_max_val_chunks'),
-            tokenizer_pretok=config['data'].get('tokenizer_pretok', 1))
+            tokenizer_pretok=config['data'].get('tokenizer_pretok', 1),
+            vocab_train_only=bool(config['data'].get('vocab_train_only', False)))
     else:
         dataset, vocab = load_data(
             config['data']['train_file'],
             vocab_size=config['data']['vocab_size'],
             max_seq_length=config['data']['max_seq_length'],
-            tokenizer_pretok=config['data'].get('tokenizer_pretok', 1)
+            tokenizer_pretok=config['data'].get('tokenizer_pretok', 1),
+            long_line_windows=bool(config['data'].get('long_line_windows', False))
         )
     print(f"Vocabulary size: {len(vocab)}")
     print(f"Dataset size: {len(dataset)}")
@@ -648,12 +655,14 @@ def main(config_path='configs/pretrain.yaml', resume=False):
             return self.mul_(1 - weight).add_(end * weight)
         torch.Tensor.lerp_ = _dml_lerp
         print(f"[DML] 已 monkey-patch _foreach_lerp_ + lerp_ → mul_+add_（避免 AdamW/Adam CPU 回退税）")
+    # 10-20：wd>0 时 bias / norm / embedding 不衰减（optimizer_param_groups）；wd=0 单组 = 旧行为
+    _params = optimizer_param_groups(model, config['training']['weight_decay'])
     if opt_name == 'sgd':
         # SGD 学习率量级远大于 AdamW，未显式配置时给一个合理的字符级 LM 默认值
         sgd_lr = float(config['training'].get('sgd_learning_rate', config['training']['learning_rate']))
         momentum = float(config['training'].get('momentum', 0.9))
         optimizer = optim.SGD(
-            model.parameters(),
+            _params,
             lr=sgd_lr,
             momentum=momentum,
             weight_decay=config['training']['weight_decay'],
@@ -661,7 +670,7 @@ def main(config_path='configs/pretrain.yaml', resume=False):
         print(f"Optimizer: SGD(lr={sgd_lr}, momentum={momentum})  [DML GPU-native, 无 CPU lerp 税]")
     elif opt_name == 'adam':
         optimizer = optim.Adam(
-            model.parameters(),
+            _params,
             lr=config['training']['learning_rate'],
             weight_decay=config['training']['weight_decay'],
             betas=(0.9, 0.999),
@@ -670,7 +679,7 @@ def main(config_path='configs/pretrain.yaml', resume=False):
         print(f"Optimizer: Adam(lr={config['training']['learning_rate']})")
     else:
         optimizer = optim.AdamW(
-            model.parameters(),
+            _params,
             lr=config['training']['learning_rate'],
             weight_decay=config['training']['weight_decay'],
             betas=(0.9, 0.999),
@@ -696,11 +705,7 @@ def main(config_path='configs/pretrain.yaml', resume=False):
             print(f"\n[Resume] 从 step checkpoint {step_ckpt_path} 续训")
             ckpt = safe_torch_load(step_ckpt_path, map_location='cpu')
             model.load_state_dict(ckpt['model_state_dict'])
-            optimizer.load_state_dict(ckpt['optimizer_state_dict'])
-            for state in optimizer.state.values():
-                for k, v in state.items():
-                    if isinstance(v, torch.Tensor):
-                        state[k] = v.to(device)
+            load_optimizer_state(optimizer, ckpt['optimizer_state_dict'], device)
             start_epoch = ckpt['epoch']  # 当前 epoch 还没训完
             resume_skip_batches = ckpt['batch_idx']
             # R38: 此前 best_loss 被重置为 inf，训练完成后把更优模型当"新 best"保存
@@ -715,11 +720,7 @@ def main(config_path='configs/pretrain.yaml', resume=False):
                 print(f"\n[Resume] 从 epoch checkpoint {resume_path} (epoch {resume_epoch}) 续训")
                 ckpt = safe_torch_load(resume_path, map_location='cpu')
                 model.load_state_dict(ckpt['model_state_dict'])
-                optimizer.load_state_dict(ckpt['optimizer_state_dict'])
-                for state in optimizer.state.values():
-                    for k, v in state.items():
-                        if isinstance(v, torch.Tensor):
-                            state[k] = v.to(device)
+                load_optimizer_state(optimizer, ckpt['optimizer_state_dict'], device)
                 best_loss = ckpt.get('best_loss', float('inf'))
                 resume_global_step = ckpt.get('global_step', 0)
                 start_epoch = resume_epoch + 1
@@ -826,6 +827,8 @@ def main(config_path='configs/pretrain.yaml', resume=False):
     # Training loop
     print("\n[Training] Starting training...")
     history = {'train_loss': [], 'best_epoch': 0}
+    best_state = None   # 本次运行内 best epoch 的权重副本（epochs>1 时才留）
+    last_epoch = None
     no_improve_epochs = 0
     patience = config['training'].get('early_stop_patience', 5)
     # R38: resume 后 global_step 从恢复值继续（此前从 0 重计，课程退火相位错位）
@@ -867,8 +870,11 @@ def main(config_path='configs/pretrain.yaml', resume=False):
             checkpoint_dir=checkpoint_dir,
             checkpoint_percents=tuple(config['training'].get('checkpoint_percents', [])),
             checkpoint_meta={'scaler': scaler, 'best_loss': best_loss},
-            # R38: resume 后 LR 调度从已完成的累计步继续（此前 warmup/衰减从头爬升）
-            initial_eff_step=resume_skip_batches // grad_accum_steps if epoch == start_epoch else 0,
+            # R38: resume 后 LR 调度从已完成的累计步继续（此前 warmup/衰减从头爬升）；
+            # 10-20：再加上前面各 epoch 的有效步，调度按 total_eff×epochs 跨 epoch 只走一遍
+            initial_eff_step=(epoch - 1) * total_eff
+                             + (resume_skip_batches // grad_accum_steps if epoch == start_epoch else 0),
+            lr_total_eff=total_eff * epochs,
             controller_active=_ctrl_active,
             use_foreach_norm_clip=bool(config['training'].get('use_foreach_norm_clip', False)),
         )
@@ -890,6 +896,7 @@ def main(config_path='configs/pretrain.yaml', resume=False):
             print(f"\nEpoch {epoch}/{config['training']['epochs']} | Train Loss: {train_loss:.4f}")
         print(f"Learning rate: {optimizer.param_groups[0]['lr']:.6f}")
         
+        last_epoch = epoch
         # M11: best/early-stop 依据改为逐 token 加权 val loss（旧口径 val_loss 只入 history）
         epoch_loss = val_loss_tok if val_loss_tok is not None else train_loss
         if epoch_loss < best_loss:
@@ -899,6 +906,8 @@ def main(config_path='configs/pretrain.yaml', resume=False):
             # Save per-epoch checkpoint (skipped when single epoch to avoid redundant file)
             if config['training']['epochs'] > 1:
                 save_checkpoint(model, optimizer, epoch, best_loss, checkpoint_dir, len(vocab), config['model'], scaler=scaler, global_step=global_step)
+                # 10-20：留一份 best 权重的 CPU 副本，结束时 final_model 存 best 而不是最后一轮
+                best_state = {k: v.detach().to('cpu', copy=True) for k, v in model.state_dict().items()}
         else:
             no_improve_epochs += 1
             print(f"No improvement for {no_improve_epochs} epoch(s).")
@@ -921,6 +930,14 @@ def main(config_path='configs/pretrain.yaml', resume=False):
     # R39 修复：清理挪到 save_final_model 之后（此前先删 step ckpt 再保存 final——
     # 若 final save 失败/崩溃，step ckpt 已删且无 final 模型，无可恢复点）。
     # Save final model and vocab
+    # 10-20：最后一轮不是 best（没改进 / early stop）时 final 存 best 权重（此前存最后一轮）
+    if last_epoch is not None and history['best_epoch'] != last_epoch:
+        if best_state is not None:
+            model.load_state_dict(best_state)
+            print(f"final_model 用 best 权重（epoch {history['best_epoch']}，最后一轮是 epoch {last_epoch}）")
+        else:
+            print(f"[WARN] best 权重在本次 resume 之前（见 model_epoch_*.pt），final_model 存的是"
+                  f"最后一轮 epoch {last_epoch}")
     # CPU-offload 后再保存，确保任意设备（含 DML/CUDA）都能用 weights_only=True 加载
     final_model_path, vocab_path = save_final_model(
         model, vocab, checkpoint_dir, config['model'])

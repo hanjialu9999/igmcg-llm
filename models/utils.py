@@ -67,6 +67,35 @@ def _cpu_offload(obj):
     return obj
 
 
+def optimizer_param_groups(model: torch.nn.Module, weight_decay: float):
+    """给优化器的参数（10-20）：weight_decay>0 时 1 维参数（bias、各类 norm 的 weight）与
+    nn.Embedding.weight 放进 weight_decay=0 的组，其余照常衰减；weight_decay=0 时返回
+    model.parameters() 单组 = 旧行为（旧 checkpoint 的 optimizer_state_dict 照常加载）。"""
+    if not weight_decay:
+        return model.parameters()
+    emb = {id(m.weight) for m in model.modules() if isinstance(m, torch.nn.Embedding)}
+    decay, no_decay = [], []
+    for p in model.parameters():
+        (no_decay if p.ndim < 2 or id(p) in emb else decay).append(p)
+    return [g for g in ({'params': decay, 'weight_decay': float(weight_decay)},
+                        {'params': no_decay, 'weight_decay': 0.0}) if g['params']]
+
+
+def load_optimizer_state(optimizer: torch.optim.Optimizer, state: Dict, device) -> bool:
+    """resume 时恢复优化器状态并搬到 device；参数分组与 checkpoint 不一致（如改了
+    weight_decay 导致单组 / 两组切换）时打印警告、跳过（动量从零开始），返回是否已恢复。"""
+    try:
+        optimizer.load_state_dict(state)
+    except ValueError as e:
+        print(f"[Resume][WARN] 优化器状态与当前参数分组不一致，未恢复（{e}）")
+        return False
+    for st in optimizer.state.values():
+        for k, v in st.items():
+            if isinstance(v, torch.Tensor):
+                st[k] = v.to(device)
+    return True
+
+
 def save_checkpoint(model: torch.nn.Module,
                     optimizer: torch.optim.Optimizer,
                     epoch: int,
