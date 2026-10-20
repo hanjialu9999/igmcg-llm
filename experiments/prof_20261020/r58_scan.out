@@ -1,0 +1,37 @@
+﻿[Device] 已检测到 DirectML 设备（AMD/Intel 核显/独显）
+Using device: privateuseone:0
+Model: vocab=12000 T=256 layers=4 dim=256
+Batch size: 6  Steps: 20 (warmup 5)  params=6,756,101
+Optimizer: adamw  lr=0.003  wd=0.0
+Precision: fp32 (AMP=False)
+
+== 计时 A：整步（forward + backward + clip + step）==
+variant                          median ms    delta ms   delta %      loss
+baseline                            330.24        0.00      0.0%    0.0439
+off:controller                      200.49     -129.75    -39.3%    0.0180
+off:qk_norm                         307.91      -22.32     -6.8%    0.0052
+off:attn_temp                       329.90       -0.34     -0.1%    0.0030
+off:residual_gate                   314.36      -15.88     -4.8%    0.0023
+off:value_relative_coding           311.29      -18.95     -5.7%    0.0018
+off:char_merge                      314.82      -15.42     -4.7%    0.0027
+off:controller_film                 308.85      -21.39     -6.5%    0.0026
+
+== 计时 B：模块前向（mean ms，含前后同步开销）==
+module                                   mean ms    total ms
+controller                                 26.53      530.59
+blocks.3                                   19.28      385.67
+blocks.0                                   19.19      383.80
+blocks.2                                   18.81      376.16
+blocks.1                                   18.67      373.38
+blocks.3.attn                              11.54      230.72
+blocks.0.attn                              11.34      226.84
+blocks.2.attn                              11.22      224.30
+blocks.1.attn                              11.17      223.44
+output_head                                 8.23      164.64
+blocks.3.ffn                                2.11       42.19
+blocks.2.ffn                                2.08       41.70
+blocks.1.ffn                                2.05       41.06
+blocks.0.ffn                                2.04       40.87
+char_merge                                  2.00       39.94
+
+结果已写入: F:\Projects\igmcg-llm\experiments\prof_20261020\r58_scan.json

@@ -868,6 +868,15 @@ class SlidingWindowCausalSelfAttention(nn.Module, EnhancementsMixin):
         attn_mask = addends[0]
         for b in addends[1:]:
             attn_mask = attn_mask + b
+        # 10-20：DML 的 SDPA 在 Tkv=128/256/512 时走慢 kernel（fwd+bwd B6·T256 33→8ms、B3·T512 81→14ms，
+        # 补 8 列连带开销都算上；T=64/192 不变或略快，Temp\opencode\p58 实测）。无记忆列时 K/V 尾部补 8 个
+        # 全掩码空列绕开；有记忆列时 Tkv=T+M 本就不在慢点上。数学不变：空列分数 +fill 后 exp 为 0。
+        if mem_cols == 0 and dev.type == 'privateuseone':
+            _pad = 8
+            k = torch.cat([k, k.new_zeros(k.shape[:2] + (_pad, k.size(3)))], dim=2)
+            v = torch.cat([v, v.new_zeros(v.shape[:2] + (_pad, v.size(3)))], dim=2)
+            attn_mask = torch.cat([attn_mask, attn_mask.new_full(
+                attn_mask.shape[:-1] + (_pad,), self.mask_fill_value)], dim=-1)
         out = scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
         if memory_kv is not None and mk.dim() == 4:
             out = MemoryBank.positional_memory_out(out, mv)
@@ -1119,6 +1128,7 @@ class GatedDeltaNet(LinearMixerBase):
         # 增量解码路径（T=1）也用标准形式单步更新 S=A_t'@S+B_t'，保证 cache parity。
         self.chunk_scan_enabled = chunk_scan
         self.chunk_size = max(1, int(chunk_size))
+        self.chunk_parallel_min = 32  # chunk_wy 块数 ≥ 此值时块间用并行扫描（见 _chunk_wy_scan）
         # 10-05 ④：chunk_wy=True 走教科书 gated delta rule + 块内 WY/UT 分块并行（块长 chunk_size，
         # 默认 16；原型实测 32/64 在 α→1 时炸）。状态按 key 行存 S (D_k×D_v)：
         #   S_t = α_t (I - β_t k_t k_tᵀ) S_{t-1} + β_t k_t v_tᵀ，读出 o_t = einsum('bhd,bhde->bhe', q_t, S_t)
@@ -1248,25 +1258,54 @@ class GatedDeltaNet(LinearMixerBase):
         P = G * (qc @ kc.transpose(-1, -2))
         dec_end = torch.exp(g[:, :, :, -1:, :] - g)                 # γ_C/γ_i
         g_end = torch.exp(g[:, :, :, -1, :]).unsqueeze(-1)          # (B,H,n,1,1)
+        # 10-20 提速：循环里只留状态递推（U_c、S_{c+1}），各块输出与读出只依赖块起点状态 S_c 和 U_c，
+        # 循环后整批算。DML fwd+bwd B6·T256 198→56ms、B24·T64 60→33ms，相对差 1.6e-7
+        # （Temp\opencode\p58 实测）。块末衰减预先并进 k：kᵀ(U·dec_end) = (k·dec_end)ᵀU。
+        kdT = (kc * dec_end).transpose(-1, -2)                      # (B,H,n,D,C)
+        if n >= self.chunk_parallel_min:
+            # 10-20：块数多时块间改 Hillis-Steele 并行扫描（log2 n 轮）。代入 U_c 得仿射递推
+            # S_{c+1} = Ā_c S_c + b̄_c，Ā_c = γ_C I - kdT_c W_c，b̄_c = kdT_c U_v,c。
+            # DML fwd+bwd 实测 T512 88→63ms；T64 33→53、T256 持平，故只在 n≥32（T≥512）时用。
+            eye = torch.eye(D, dtype=q.dtype).to(q.device)          # DML 上 torch.eye(device=dml) 返回空张量
+            Ab = g_end * eye - kdT @ W                              # (B,H,n,D,D)
+            Bb = kdT @ U_v
+            off = 1
+            while off < n:
+                A_prev = torch.cat([eye.expand(B, H, off, D, D), Ab[:, :, :n - off]], dim=2)
+                B_prev = torch.cat([Bb.new_zeros(B, H, off, D, D), Bb[:, :, :n - off]], dim=2)
+                Bb = Ab @ B_prev + Bb
+                Ab = Ab @ A_prev
+                off *= 2
+            S = Bb[:, :, -1]                                        # Bb[c] = S_{c+1}
+            Sc = torch.cat([Bb.new_zeros(B, H, 1, D, D), Bb[:, :, :-1]], dim=2)
+            Uc = U_v - W @ Sc
+        else:
+            S = q.new_zeros(B, H, D, D)
+            Ss, Us = [], []
+            for c in range(n):
+                U = U_v[:, :, c] - W[:, :, c] @ S
+                Ss.append(S)
+                Us.append(U)
+                S = g_end[:, :, c] * S + kdT[:, :, c] @ U
+            Sc = torch.stack(Ss, dim=2)                             # (B,H,n,D,D) 各块起点状态
+            Uc = torch.stack(Us, dim=2)                             # (B,H,n,C,D)
+        num = (eg * (qc @ Sc) + P @ Uc).reshape(B, H, n * C, D)[:, :, :T]
+        reads = None
         if read_q is not None:
             # (B,H,n,C,M,C)：Pm[t,m,i] = G[t,i]·(q_m·k_i)。先并成 4 维再双边广播：
             # 6 维双边广播在 DML 上触发 dml_tensor_desc.cc:135 broadcast 检查直接杀进程（10-05 实测）
             qk = torch.einsum('mhd,bhncd->bhnmc', read_q, kc)
             M = qk.size(3)
             Pm = (G.reshape(-1, C, 1, C) * qk.reshape(-1, 1, M, C)).reshape(B, H, n, C, M, C)
-            reads = []
-        S = q.new_zeros(B, H, D, D)
-        outs = []
-        for c in range(n):
-            U = U_v[:, :, c] - W[:, :, c] @ S
-            outs.append(eg[:, :, c] * (qc[:, :, c] @ S) + P[:, :, c] @ U)
-            if read_q is not None:
-                base = torch.einsum('mhd,bhde->bhme', read_q, S)  # 块起点状态的读出
-                reads.append(torch.einsum('bht,bhme->btme', eg[:, :, c, :, 0], base)
-                             + torch.einsum('bhtmi,bhie->btme', Pm[:, :, c], U))
-            S = g_end[:, :, c] * S + kc[:, :, c].transpose(-1, -2) @ (U * dec_end[:, :, c])
-        reads = torch.cat(reads, dim=1)[:, :T] if read_q is not None else None
-        return torch.cat(outs, dim=2)[:, :, :T], S, reads
+            # 块维 n 并进 batch，einsum 维数与原逐块写法相同（不引入 6 维运算）
+            Sb = Sc.permute(0, 2, 1, 3, 4).reshape(B * n, H, D, D)
+            Ub = Uc.permute(0, 2, 1, 3, 4).reshape(B * n, H, C, D)
+            Pb = Pm.permute(0, 2, 1, 3, 4, 5).reshape(B * n, H, C, M, C)
+            egb = eg[..., 0].permute(0, 2, 1, 3).reshape(B * n, H, C)
+            base = torch.einsum('mhd,bhde->bhme', read_q, Sb)       # 块起点状态的读出
+            reads = (torch.einsum('bht,bhme->btme', egb, base)
+                     + torch.einsum('bhtmi,bhie->btme', Pb, Ub)).reshape(B, n * C, M, D)[:, :T]
+        return num, S, reads
 
     def forward(self, x: torch.Tensor, past_kv=None, use_cache: bool = False, start_pos: int = 0,
                 memory_kv=None):

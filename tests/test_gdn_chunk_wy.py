@@ -53,6 +53,23 @@ def test_chunk_wy_scan_matches_loop_fwd_and_grad(T):
         assert (a - b).abs().max().item() < 1e-8
 
 
+@pytest.mark.parametrize('T', [37, 64, 100])
+def test_chunk_wy_parallel_interchunk_matches_loop(T):
+    # 块间并行扫描（缺省 n≥32 才用）：调低阈值强制走并行，与逐步参考比前向和梯度
+    m = GatedDeltaNet(dim=24, num_heads=3, chunk_wy=True)
+    m.chunk_parallel_min = 1
+    xs = _inputs(T=T)
+    o1, S1, _ = m._chunk_wy_scan(*xs)
+    o2, S2 = _ref_loop(*xs)
+    assert (o1 - o2).abs().max().item() < 1e-9
+    assert (S1 - S2).abs().max().item() < 1e-9
+    w = torch.randn_like(o1)
+    g1 = torch.autograd.grad((o1 * w).sum() + S1.sum(), xs)
+    g2 = torch.autograd.grad((o2 * w).sum() + S2.sum(), xs)
+    for a, b in zip(g1, g2):
+        assert (a - b).abs().max().item() < 1e-8
+
+
 def test_chunk_wy_full_vs_incremental_parity():
     torch.manual_seed(0)
     m = GatedDeltaNet(dim=64, num_heads=4, chunk_wy=True, max_seq_length=64).eval()
