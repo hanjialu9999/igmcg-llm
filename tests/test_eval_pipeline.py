@@ -54,6 +54,13 @@ def test_plan_tag_and_gen_out():
     assert pl["blind_models"] == ["r45", "r47", "r55"]
 
 
+def test_plan_gen_max_length():
+    pl = eval_pipeline.plan(ns(gen_max_length=100))
+    assert pl["gen_cmd"][-2:] == ["--max-length", "100"]
+    assert pl["blind_models"] == ["r47", "r55"]
+    assert "--max-length" not in eval_pipeline.plan(ns())["gen_cmd"]
+
+
 def test_plan_drops_base_when_five():
     pl = eval_pipeline.plan(ns(models=["r55", "r54", "r56"], compare=["r47"]))
     assert pl["blind_models"] == ["r47", "r55", "r54", "r56"]

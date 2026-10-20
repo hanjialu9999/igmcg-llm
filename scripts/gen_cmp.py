@@ -1,5 +1,5 @@
 """生成对比：各模型 Controller 开/关 × 12 提示词 × (greedy 42 + T0.8/T1.1 各 seed 42,0..3)，CPU。
-用法: python scripts/gen_cmp.py out.json r47 r48 ...
+用法: python scripts/gen_cmp.py out.json r47 r48 ... [--max-length N]
       --base 模型先重生成 greedy 开 12 条，与 --ref 比对确定性。"""
 
 import json, random, sys, time
@@ -48,7 +48,7 @@ def setup(name, ckpt_fmt="checkpoints_train_8k_{}"):
     return m, v
 
 
-def gen(m, v, ctrl, setting, temp, seed, p):
+def gen(m, v, ctrl, setting, temp, seed, p, max_length=None):
     import numpy as np, torch
     from scripts.generate import generate_text
     from baseline_eval import GEN_PARAMS
@@ -62,6 +62,8 @@ def gen(m, v, ctrl, setting, temp, seed, p):
     torch.manual_seed(seed)
     kw = dict(GEN_PARAMS)
     kw["temperature"] = temp
+    if max_length is not None:  # 只改本次续写长度，不动共用的 GEN_PARAMS
+        kw["max_length"] = max_length
     with torch.no_grad():
         t = generate_text(m, v, p, device="cpu", **kw)
     return strip_echo(t, p, v)
@@ -78,6 +80,11 @@ def main(argv=None):
         "--base", default="r45", help="从 ref 取样本并重生成 greedy 开比对确定性"
     )
     ap.add_argument("--ckpt-fmt", default="checkpoints_train_8k_{}")
+    ap.add_argument(
+        "--max-length",
+        type=int,
+        help="续写 token 数，缺省用 GEN_PARAMS；受模型 max_seq_length 限制",
+    )
     a = ap.parse_args(argv)
     rp = Path(a.ref)
     rp = rp if rp.is_absolute() else ROOT / rp
@@ -94,6 +101,9 @@ def main(argv=None):
     same = sum(gen(m, v, "on", "greedy", 0.0, 42, p) == old[p] for p in PROMPTS)
     print(f"{a.base} greedy 重生成一致 {same}/{len(PROMPTS)}", flush=True)
     samples = [dict(s) for s in ref["samples"] if s["model"] == a.base]
+    if a.max_length is not None and a.max_length != GEN_PARAMS["max_length"]:
+        samples = []  # ref 里的基线样本是默认长度，混进来不可比
+        print(f"--max-length {a.max_length}：不带入 {a.base} 的 ref 样本", flush=True)
     for n in a.models:
         t0 = time.time()
         m, v = setup(n, a.ckpt_fmt)
@@ -101,7 +111,7 @@ def main(argv=None):
             for setting, temp, seeds in SETS:
                 for sd in seeds:
                     for p in PROMPTS:
-                        c = gen(m, v, ctrl, setting, temp, sd, p)
+                        c = gen(m, v, ctrl, setting, temp, sd, p, a.max_length)
                         samples.append(
                             {
                                 "model": n,
@@ -118,9 +128,12 @@ def main(argv=None):
     for s in samples:
         met.setdefault(f"{s['model']}-{s['controller']}/{s['setting']}", []).append(s)
     met = {k: metrics(x) for k, x in met.items()}
+    params = dict(GEN_PARAMS)
+    if a.max_length is not None:
+        params["max_length"] = a.max_length
     json.dump(
         {
-            "params": GEN_PARAMS,
+            "params": params,
             "prompts": PROMPTS,
             "sets": SETS,
             "r45_greedy_repro": f"{same}/{len(PROMPTS)}",

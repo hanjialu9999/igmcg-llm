@@ -1,6 +1,6 @@
 """一键评测流程：4 个 CPU 评测 -> 生成对比 -> 盲评出题 -> 裁判任务。
 用法: python scripts/eval_pipeline.py r55 [r54s43 ...] --compare r47 [--compare ...] --work-dir D
-      [--tag _r55] [--gen-out PATH] [--skip-eval] [--force] [--dry-run]"""
+      [--tag _r55] [--gen-out PATH] [--gen-max-length N] [--skip-eval] [--force] [--dry-run]"""
 
 import argparse, os, subprocess, sys, time
 from pathlib import Path
@@ -71,7 +71,11 @@ def plan(a):
     tag = a.tag if a.tag is not None else "_" + "_".join(new)
     gen_out = a.gen_out or f"{PACK}/" + "_".join(cmp_ + new) + "_gen.json"
     gen_cmd = [sys.executable, "scripts/gen_cmp.py", gen_out] + cmp_ + new
-    models = [BASE] + cmp_ + new
+    gen_len = getattr(a, "gen_max_length", None)
+    if gen_len is not None:
+        gen_cmd += ["--max-length", str(gen_len)]
+    # 改了续写长度时 gen_cmp 不带入基线样本，盲评也不放基线
+    models = ([] if gen_len is not None else [BASE]) + cmp_ + new
     if len(models) > 4:
         models = cmp_ + new
     if len(models) > 4:
@@ -96,6 +100,9 @@ def main(argv=None):
     ap.add_argument("--work-dir", required=True)
     ap.add_argument("--tag", help="盲评文件后缀，缺省 _<新模型>")
     ap.add_argument("--gen-out", help="gen.json 输出路径")
+    ap.add_argument(
+        "--gen-max-length", type=int, help="传给 gen_cmp 的 --max-length；给了就不放基线"
+    )
     ap.add_argument("--skip-eval", action="store_true")
     ap.add_argument("--force", action="store_true", help="已有输出也重跑")
     ap.add_argument("--dry-run", action="store_true")
