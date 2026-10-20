@@ -1,0 +1,58 @@
+{
+  "meta": {
+    "created": "2026-10-20 13:13:17",
+    "config": "configs/config_train_8k_r54s43.yaml",
+    "model": "checkpoints_train_8k_r54s43/final_model.pt",
+    "model_sha256_16": "320d123c12852c6f",
+    "vocab": "checkpoints_train_8k_r54s43/vocab.json",
+    "device": "cpu",
+    "torch": "2.4.1+cpu",
+    "seed": 42,
+    "batch_size": 24,
+    "max_seqs": 240,
+    "val_sequences": 240,
+    "modes": [
+      "tf",
+      "prefix",
+      "incremental"
+    ],
+    "controller": "on",
+    "controller_direction": true,
+    "char_merge_incremental_buffer": true,
+    "value_relative_safe_pow": true,
+    "value_relative_safe_pow_modules": 4,
+    "n_params": 6756101,
+    "pad_idx": 0,
+    "total_seconds": 99.32
+  },
+  "ppl": {
+    "tf": {
+      "nll_sum": 77114.102051,
+      "tokens": 15360,
+      "loss": 5.020449,
+      "ppl": 151.479356,
+      "elapsed_s": 2.15
+    },
+    "prefix": {
+      "nll_sum": 77114.10334,
+      "tokens": 15360,
+      "loss": 5.020449,
+      "ppl": 151.479369,
+      "elapsed_s": 68.23
+    },
+    "incremental": {
+      "nll_sum": 77114.103355,
+      "tokens": 15360,
+      "loss": 5.020449,
+      "ppl": 151.479369,
+      "elapsed_s": 10.62
+    }
+  },
+  "diff": {
+    "tf_minus_prefix_loss": 0.0,
+    "tf_over_prefix_ppl": 1.0,
+    "prefix_minus_incremental_loss": 0.0,
+    "tf_minus_incremental_loss": 0.0
+  },
+  "generation": []
+}
