@@ -4,7 +4,7 @@
 
 1. 准备语料 → `data/pretrain_corpus/merged.txt`（本地语料，**不纳入仓库**）
 2. 运行训练 → `python scripts/train.py --config configs/pretrain.yaml`
-3. 产物 → `checkpoints/final_model.pt` + `checkpoints/vocab.json`
+3. 产物 → `checkpoints/final_model.pt` + `checkpoints/vocab.json` + `checkpoints/final_model_config.yaml`
 
 ## 关键配置（configs/pretrain.yaml）
 
@@ -49,6 +49,23 @@ data:
   test_split: 0.1
 ```
 
+> 完整的 `model` / `training` / `data` 键位见 `configs/pretrain.yaml` 注释与 `configs/README.md`；
+> r42 起的 Controller 与因子消融、语料扩容轮次（r47–r57）见 `configs/README.md`，
+> 数据侧可选 `pack` / `tokenizer_pretok` / `long_line_windows` 等键见 `docs/DATA_USAGE.md`。
+
+## 其他训练开关（`training` 段）
+
+| 键 | 默认 | 说明 |
+|----|------|------|
+| `init_seed` | 无（沿用 `seed`） | 只重设权重初始化随机源；数据划分仍用 `seed`（val 集不变、可比），用于 r45s43 / r54s43 这类种子重复实验。 |
+| `grad_accum_steps` | `1` | 梯度累积；有效 batch = `batch_size × grad_accum_steps`。 |
+| `lr_schedule` | `cosine` | `cosine` / `constant` / `wsd`（warmup + 稳定 + 末尾衰减）。 |
+| `wsd_decay_frac` | `0.1` | `wsd` 模式末尾衰减占比。 |
+| `eta_min` | `0.0` | 学习率下限。 |
+| `enhancement_off_prob` | `0.0` | 以该概率整体跳过本 batch 全部增强（与 `enhancement_schedule` 互斥，schedule 优先）。 |
+| `curriculum_anneal` | 无 | 旧式课程退火（`warmup_frac` / `off_prob_max` / `keys`），仅在未设 schedule / off_prob 时生效。 |
+| `checkpoint_percents` | 无 | 在指定进度（如 `[0.25, 0.5, 0.8]`）保存 step 级 checkpoint，支持中断续训。 |
+
 ## 训练特性
 
 - **混合精度 (AMP)**：`precision: bf16` 在 CUDA 与 CPU 下自动开启（约 2~2.5× 提速，loss 基本无损，无需 loss scaling）；`fp16` 仅 CUDA（用 GradScaler）。AMD DirectML 暂不支持 AMP，自动回退 fp32。
@@ -57,7 +74,7 @@ data:
 - **早停**：连续 `early_stop_patience` 个 epoch 无提升则停止。
 - **检查点清理**：仅保留最近若干 epoch 与最佳模型。
 - **SELv2 默认增强调度**：`pretrain.yaml` 默认带 `training.enhancement_schedule`（SELv2 8 段：1 全开 + 1 全关极端 + 6 局部，attn_temp 仅全关段关），即默认训练按分段选择性增强训练；`validate` 强制全开。受控对比可用 `config_cmp_{enh,sel,selv2}_full.yaml` 手动顺序训练三模型。
-- **Controller 默认交替（r45 起）**：开 `controller` 的配置默认带 `training.enhancement_schedule: [{controller: true}, {controller: false}]`，按 batch 循环一步开一步关（`scripts/train.py:257-260`，缺省键补 True）；新配置从 `config_train_8k_r45.yaml` 抄起。它与 `enhancement_off_prob`、`curriculum_anneal` 互斥（`scripts/train.py:792`）。开关比例的对照见 `config_train_8k_r46.yaml`（开 1/3）。
+- **Controller 默认交替（r45 起）**：开 `controller` 的配置默认带 `training.enhancement_schedule: [{controller: true}, {controller: false}]`，按 batch 循环一步开一步关（`scripts/train.py`，缺省键补 True）；新配置从 `config_train_8k_r45.yaml` 抄起。它与 `enhancement_off_prob`、`curriculum_anneal` 互斥。开关比例的对照见 `config_train_8k_r46.yaml`（开 1/3）。r47 起同一调度还被用来做 `qk_norm` / `attn_temp` / `residual_gate` / `value_relative_coding` / `char_merge` / `controller_film` 的 2×2 / 2×2×2 因子消融，见 `configs/README.md`。
 
 ## 监控训练
 
@@ -68,9 +85,10 @@ python tools/monitor/monitor_gpu_training.py   # GPU 显存 / 利用率
 
 ## 检查点与恢复
 
-- 训练脚本支持 `--resume` 从 `checkpoint_dir` 中最新的 checkpoint 续训（恢复模型/优化器状态/best_loss/epoch）。
-- 当 `epochs > 1` 时，每个 epoch 结束会保存 `model_epoch_*.pt` 与最佳模型备份，主要用作容错备份（非自动续训）。
-- 单 epoch 配置（`epochs=1`）不保存逐 epoch 检查点，仅输出 `final_model.pt` + `vocab.json`。
+- 训练脚本支持 `--resume`：优先从 `checkpoint_step_*.pt` 恢复（含 batch 进度、global_step），否则从最新的 `model_epoch_*.pt` 续训（恢复模型/优化器状态/best_loss/epoch/LR 调度进度）。
+- 配置了 `training.checkpoint_percents`（r42 起大多为 `[0.25, 0.5, 0.8]`）时，会在对应进度保存 step 级 checkpoint。
+- 当 `epochs > 1` 时，每个 epoch 结束会保存 `model_epoch_*.pt`；`epochs=1` 时跳过逐 epoch存档，仅输出 `final_model.pt` + `vocab.json`。
+- `final_model.pt` 默认存**验证集最优**权重（若最后一轮不是 best，会回填 best 权重）；`*_config.yaml` 与 `vocab.json` 一并保存。
 - 若需从已有权重继续，可手动加载 `final_model.pt` 的 `model_state_dict` 后再训练（或作为微调底座）。
 
 ## 微调

@@ -85,13 +85,13 @@ path = hf_hub_download("shareAI/ShareGPT-Chinese-English-90k",
 
 ---
 
-## 关于 20M 参数模型的数据量建议
+## 关于 6.8M 参数模型的数据量建议
 
 | 阶段 | 建议数据量 | 训练轮数 | 效果预期 |
 |------|-----------|---------|---------|
-| 预训练 (base) | 3万-10万条文本 | 10-30 epoch | 理解语言基本结构 |
+| 预训练 (base) | 3万-10万条文本 | 1-3 epoch（单轮遍历起步） | 理解语言基本结构 |
 | 微调 (SFT) | 现有 ~7300 条问答对 | 10-20 epoch | 学会回答问题 |
-| 总参数量 | ~25M（6 层 / emb512） | - | 可运行在 CPU/AMD GPU |
+| 总参数量 | ~6.76M（6 层 / emb512，`configs/pretrain.yaml`） | - | 可运行在 CPU/AMD GPU |
 
-> **先用现有数据 (data/pretrain_corpus/merged_sample.txt) 跑通全流程，再逐步增加数据量。**
-> 太多数据反而可能让 25M 模型欠拟合，建议从 3万条开始试。
+> **先用现有数据 (`merged_sample.txt` / `merged_8k.txt`) 跑通全流程，再按 r56/r57 的 `merged_24k.txt` / `merged_72k.txt` 逐步扩容。**
+> 数据量过大反而可能让小模型欠拟合，建议先跑 3 万条量级，再按 pack 块数控步数。

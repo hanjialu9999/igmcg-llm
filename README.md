@@ -2,7 +2,7 @@
 
 基于 Transformer 的中文 LM 训练 / 推理项目，融合自定义混合架构（注意力 × SSM × IGMCG 直觉引导解码）与统计式 n-gram 双轨解码。目标是在 CPU / AMD iGPU（DirectML）等低资源设备上也能训练并跑出连贯的中文生成。
 
-当前状态（2026-09-28，R42）：全量测试 **998 passed / 2 skipped / 2 xfailed**；DML 训练实测 **7346 tok/s**（12 层，R38 优化后）。
+当前状态（2026-10-20，R57）：主线配置已扩到 `configs/config_train_8k_r57.yaml`（72k 语料、1 epoch），`tests/` 下 72 个测试文件、1100+ 个 `test_` 函数；DML 训练实测 **7346 tok/s**（12 层，R38 优化后）。
 
 ## 特性
 
@@ -24,37 +24,39 @@
 - **效率类**：SwiGLU w1/w3 合并（fuse_swiglu，省 1 次 GEMM 调用）、KV cache int8 量化（kv_cache_int8，内存 4×，标准 attn 路径有效）、gradient checkpointing 自动禁用（grad_ckpt_auto）、**MoE FFN（moe）**：top-k 路由多专家替换 SwiGLU，含负载均衡 + router z-loss（DML 兼容 dense 实现）、**提前退出（early_exit）**：训练期出口层辅助 CE 损失 + 推理期置信度阈值提前返回（增量解码因 KV cache 一致性不启用）。
 - **跨层协作**：cross_layer_routing（Top-k 稀疏路由）、cross_ssm_transfer、progressive_residual（1/√d 残差衰减）、layer_film（跨层 FiLM）、highway_gate / input_highway（动态残差 / 嵌入门控注入）、layer_contrastive（训练期相邻层 cos_sim 损失）、shared_alibi、DALA 对齐训练（aligned_training）。
 - **解码 / 训练类**：n-gram 融合（ngram_fusion）、IGMCG 多候选解码、QAT 量化感知训练（qat_bits，LSQ-STE）、CharMerge（char_merge）、层跳过（layer_skip）、层共享（share_attn_proj / share_ffn / share_norm）。
-- **双模型编排（R42）**：独立 **Controller**（GatedDeltaNet，`controller` + `controller_dim/heads/layers/mem_slots`，默认 2 层、r42 配置 1 层）与 Generator 共享 embedding，产出 3 类控制信号：①mem_kv 压缩记忆（注入 attention，与 MemoryBank `cat(dim=1)` 合并）②FiLM per-layer 调制 ③direction 方向偏置。信号投影零初始化 → 中性起步，旧权重向后兼容；`controller_warmup_frac` 三阶段训练（前 N% epoch 关 Controller）。**r45 起默认按步交替开关 Controller**（`training.enhancement_schedule` 切 `controller` 键，见 `configs/README.md`）：生成盲评胜过一直开，主模型关掉 Controller 也能单独用，训练快 16%。与 `mixer=linear2d/hybrid_linear2d` 互斥。
+- **双模型编排（R42）**：独立 **Controller**（GatedDeltaNet，`controller` + `controller_dim/heads/layers/mem_slots`，默认 2 层、r42 配置 1 层）与 Generator 共享 embedding，产出 3 类控制信号：①mem_kv 压缩记忆（注入 attention，与 MemoryBank `cat(dim=1)` 合并）②FiLM per-layer 调制 ③direction 方向偏置。信号投影零初始化 → 中性起步，旧权重向后兼容；`controller_warmup_frac` 三阶段训练（前 N% epoch 关 Controller）。**r45 起默认按步交替开关 Controller**（`training.enhancement_schedule` 切 `controller` 键，见 `configs/README.md`）：生成盲评胜过一直开，主模型关掉 Controller 也能单独用，训练快 16%。r47 起同一调度还承载 `qk_norm` / `attn_temp` / `residual_gate` / `value_relative_coding` / `char_merge` / `controller_film` 的因子消融。与 `mixer=linear2d/hybrid_linear2d` 互斥。
 
 ## 目录结构
 
 ```
 models/          模型与基础设施
-                  transformer.py  (TransformerModel / TransformerBlock / EnhancementsMixin, 支持 KV-cache)
+                  transformer.py  (TransformerModel / TransformerBlock / CrossLayerRouter, 支持 KV-cache)
+                  controller.py   (Controller/Generator 双模型编排: mem_kv / FiLM / direction)
                   mixers.py       (SlidingWindow/Linear/AxialLinear/Differential/GatedDeltaNet/MambaSSM(+CAST)/SwiGLU)
-                  moe.py          (MoELayer: dense MoE, top-k 路由 + 负载均衡 + z-loss)
-                  norms.py / rope.py / memory.py / sampling.py / layers.py (CharMerge)
+                  moe.py / gates.py / qat.py / memory.py
+                  norms.py / rope.py / sampling.py / layers.py (CharMerge)
                   model_config.py (ModelConfig dataclass, 全特性开关) / state.py (BlockState) / constants.py
-                  data_utils.py   (BaseTokenizer: 字符级零 OOV + 字节回退 + CharTokenizer/BPE)
-                  config_loader.py (load_config / build_model) / checkpoint.py (load_model, 自动旧权重转换)
-                  device.py       (get_device / apply_cpu_threads)
+                  ngram.py        (NGramModel: 1..N 阶统计先验)
+                  data_utils.py   (BaseTokenizer: 字符级零 OOV + CharTokenizer/BPE, pack / 长行滑窗)
+                  config_loader.py (load_config / build_model / load_vocab) / checkpoint.py (load_model, 安全加载)
+                  utils.py / device.py (get_device / apply_cpu_threads)
 scripts/         入口与数据处理
                    train.py        训练主程序 (--config)
                    train_finetune.py  微调训练（QA 两阶段：预训练底座 → 微调，产出 best_finetuned_model.pt）
                    generate.py     生成 API: generate_text / generate_igmcg / NGramModel
-                   chat.py         对话式 CLI (--model / --vocab / --device / --max-length / --temperature / --top-k / --repetition-penalty)
+                   chat.py         对话式 CLI (--model / --vocab / --device / --max-length / --temperature / --top-k / --repetition-penalty / --controller-direction)
                    chat_zh.bat     中文 Windows 一键对话启动器
-                    merge_data.py, process_data.py, convert_dialogue_to_qa.py, data_manager.py ...
+                   baseline_eval.py / eval_pipeline.py / gen_cmp.py / gen_tune.py / blind_eval.py  评测与盲评
+                   merge_data.py, process_data.py（data_manager.py 的兼容薄包装）, convert_dialogue_to_qa.py, data_manager.py ...
                    data/download_pretrain_data.py, tuning/  (参数扫描)
-configs/         所有 YAML 配置 (pretrain.yaml 为规范默认；config_full_dml.yaml 为 DML 生产配置)
-experiments/     实验 / 诊断 / 一次性脚本（可独立运行，自带路径修正）
-tools/           检查与监控工具 (view_model / compare_epochs / dialogue / dialogue_interactive / monitor/ ...)
-tests/           正式 pytest 单元测试（已纳入 git 跟踪，当前 977 passed / 2 skipped / 1 xfailed）
-test/            本地自测沙箱（gitignore，仅本机运行，不入库）
+configs/         所有 YAML 配置 (pretrain.yaml 为规范默认；r57 为最新一轮；config_full_dml.yaml 为 DML 生产配置)
+experiments/     实验 / 诊断脚本与产物（batch9_20261004 / claude_review_20261003 / prof_20261020）
+tools/           检查与监控工具 (view_model / compare_epochs / diagnose_vocab / dialogue_interactive / monitor/ ...)
+tests/           正式 pytest 单元测试（72 个文件 / 1100+ 个 test_ 函数）
 data/            语料 (pretrain_corpus/) 与数据集 (datasets/)
 logs/            运行日志
-checkpoints*/    训练产出（如 checkpoints_train_8k_r42/、checkpoints_train_8k_v4/，各含 final_model.pt / vocab.json；chat / diagnose / tune 用 --model 指定）
- archive_unused/  历史归档 (未动)
+checkpoints*/    训练产出（如 checkpoints_train_8k_r42/、checkpoints_train_8k_r57/，各含 final_model.pt / vocab.json / *_config.yaml；chat / diagnose / tune 用 --model 指定）
+archive_unused/  历史归档（本地保留，不入库）
 ```
 
 > 各子目录内另有 `README.md` 详述其文件用途（`models/` `scripts/` `configs/` `experiments/` `tools/` `docs/` `data/` 等）。
@@ -97,11 +99,11 @@ python scripts/tuning/tune_topk.py --model checkpoints/final_model.pt --vocab ch
 
 ### 完整快速开始（数据 / 微调 / 调参 / FAQ）
 
-**准备数据**：小样本调试可用 `merged_sample.txt`（由 `scripts/data_manager.py merge` 自动生成）；原始 QA 数据在 `data/datasets/`（仅本地保留，未入库）。重新构建语料：
+**准备数据**：小样本调试可用本地维护的 `merged_sample.txt`；原始 QA 数据在 `data/datasets/`（仅本地保留，未入库）。重新构建语料：
 
 ```bash
-python scripts/data_manager.py merge     # 合并 datasets/ 下语料并构建词表（统一入口）
-python scripts/data_manager.py to-jsonl   # 转换为 jsonl（可选）
+python scripts/data_manager.py merge --build-vocab   # 合并 datasets/ 并构建词表
+python scripts/data_manager.py to-jsonl              # 转换为 jsonl（可选）
 ```
 
 **训练基座**：`python scripts/train.py --config configs/pretrain.yaml`；结束在 `checkpoints/` 产出 `final_model.pt` 与 `vocab.json`。支持 warmup、混合精度、早停、自动清理旧检查点与断点续训（resume 恢复 global_step / best_loss / LR 进度）。
@@ -130,7 +132,7 @@ python scripts/data_manager.py to-jsonl   # 转换为 jsonl（可选）
 ## 训练
 
 - 配置集中在 `configs/`（详见 `configs/README.md`）。`pretrain.yaml` 为规范默认：词表 8000、6 层、emb512、单轮遍历。DML 生产配置见 `configs/config_full_dml.yaml`（ngram_fusion + 记忆检索 + 窗口注意力等）。
-- 数据：`data/pretrain_corpus/merged.txt` 为默认训练语料（本地，不入库）；小样本调试可用 `merged_sample.txt`。词表在训练时自动构建，存于 `checkpoints/vocab.json`。
+- 数据：`data/pretrain_corpus/merged.txt` 为默认训练语料（本地，不入库）；小样本调试可用 `merged_sample.txt`，r55/r56/r57 分别用 `merged_8k.txt` / `merged_24k.txt` / `merged_72k.txt`。词表在训练时自动构建，存于 `<checkpoint_dir>/vocab.json`（默认即 `checkpoints/vocab.json`）。
 - **混合精度**：`precision: bf16` 在 **CPU / CUDA** 开启（约 2~2.5× 提速、loss 基本无损）；`fp16` 仅 CUDA（启用 GradScaler）；AMD DirectML 暂不支持 AMP，自动回退 fp32。
 - **DML 训练**：SSM/hybrid 的选择性扫描已向量化，可在 DML 上正常训练；AdamW 已打 `_dml_foreach_lerp` patch（把 `lerp_` 替换为 4 算子展开，避免 DML CPU 回退）。
 - **增强调度（SELv2）**：`pretrain.yaml` 与 `config_full_dml.yaml` 默认带 SELv2 分段选择性增强调度（`training.enhancement_schedule`），按 8 段掩码交替开关增强特性训练——实验表明含"全关极端"的 SELv2 在分布外 / 极端采样下泛化最好。
@@ -142,33 +144,39 @@ python scripts/data_manager.py to-jsonl   # 转换为 jsonl（可选）
 | 参数 | 说明 | 默认 |
 |------|------|------|
 | `--prompt` / `--prompt-file` | 输入文本或文本文件 | — |
-| `--max-length` | 生成最大长度 | 30 |
-| `--temperature` | 采样温度（0=贪心） | 0.8 |
+| `--max-length` | 生成最大长度 | 按分支：prompt 30 / interactive 20 |
+| `--temperature` | 采样温度（0=贪心） | 0.8（interactive 双温度 0.7/0.9） |
 | `--top-k` | Top-K 截断 | 50 |
-| `--repetition-penalty` | 重复惩罚（>1 抑制重复，1.0=关闭） | 1.4 |
+| `--repetition-penalty` | 重复惩罚（>1 抑制重复，1.0=关闭） | prompt 1.4 / igmcg·interactive 2.0 |
+| `--min-length` / `--eos-penalty` | 最短长度 / EOS 惩罚 | 3 / 0.0 |
 | `--device` | `cpu` / `cuda` / `dml` / `auto` | `auto` |
-| `--dtype` | `fp32` / `bf16` / `auto` | `auto` |
+| `--dtype` | `fp32` / `bf16` / `auto` | `auto`（CPU/CUDA 用 bf16） |
 | `--quantize` | 启用 int8 动态量化（纯 CPU） | 关 |
+| `--compile` | `torch.compile`（CUDA/CPU） | 关 |
 | `--cpu-threads` | 限制 CPU 线程数（降功耗） | 4 |
 | `--ngram` / `--ngram-weight` | 开启 n-gram 双轨及权重 | 关 / 0.3 |
 | `--igmcg` / `--igmcg-candidates` | 开启 IGMCG 及候选数 | 关 / 5 |
+| `--igmcg-coh-w` / `--igmcg-flu-w` / `--igmcg-style-w` / `--igmcg-rep-w` | IGMCG 评分权重 | 1.5 / 0.15 / 0.15 / 2.5 |
 | `--intuition` | 7 维直觉向量（逗号分隔） | 全 0.5 |
+| `--char-merge-buffer` | CharMerge 增量滚动缓冲 on/off | `on` |
+| `--controller-direction` | Controller direction 信号 on/off | `off` |
 | `--model` / `--vocab` | 显式指定权重 / 词表 | `checkpoints/` |
 
 > **DML 推理**：权重统一先加载到 CPU 再 `.to(device)` 搬运，生成路径改用 `torch.no_grad()`（DML 后端不支持 `inference_mode`，会报 `Cannot set version_counter for inference tensor`）。
 
 ## IGMCG 反碎片化设计
 
-IGMCG 生成多个温度候选，按综合分选优：
+IGMCG 生成多个温度候选，跨候选 z-score 标准化后按综合分选优：
 
 ```
-score = 1.5 * 连贯度(coh) + 0.15 * 流畅度 + 0.15 * 风格匹配 - 2.5 * 重复度
+score = 1.5 * z(连贯度) + 0.15 * z(流畅度) + 0.15 * z(风格余弦相似度) - 2.5 * z(重复度)
 ```
 
 - **连贯度(coh)**：用 n-gram 模型计算序列相邻 token 的预测概率，越高=越相连，是抑制"碎片化"的核心信号。
 - 流畅度（单 token 置信度）只作轻微 tiebreaker——孤立高频词也会拉高它，故不主导。
-- 风格匹配为 7 维直觉的温和偏置（在连贯候选间微调，绝不压过连贯度）。
+- 风格匹配 = 候选 7 维风格特征与直觉方向（0~1 → -1~1）的余弦相似度，作为温和偏置，绝不压过连贯度。
 - 候选温度范围收窄 (0.75~1.35×)，生成期重复惩罚 2.0，避免候选本身过度发散或循环。
+- CLI 的 `--igmcg-coh-w / --igmcg-flu-w / --igmcg-style-w / --igmcg-rep-w` 只改权重，不改标准化方式。
 
 ## 性能（AMD 780M iGPU / DirectML 实测）
 
@@ -192,16 +200,16 @@ score = 1.5 * 连贯度(coh) + 0.15 * 流畅度 + 0.15 * 风格匹配 - 2.5 * �
 
 ## 已知限制 / 注意事项
 
-- **词表**：语料读取用 `errors='replace'`（`models/data_utils.py:95`）理论上可能引入 `U+FFFD`；2026-09-28 扫描全部 14 份 `vocab.json` **均未发现**该字符，风险在源头、结论暂不成立，做语料清洗时可一并加固。
+- **词表**：语料读取用 `errors='replace'`（`models/data_utils.py:139` / `:178`）理论上可能引入 `U+FFFD`；2026-09-28 扫描全部 14 份 `vocab.json` **均未发现**该字符，风险在源头，做语料清洗时可一并加固。
 - **DML 精度**：AMD DirectML 不支持 AMP，训练 / 推理在 DML 上均为 fp32；bf16 仅 CPU/CUDA。
-- **数据量**：冒烟训练为 4000 / 8000 行量级（`smoke_4000.txt` / `merged_8k.txt`，`config_train_8k*.yaml` 为 **3 epoch**，`pretrain.yaml` 为 1 epoch）；生成质量偏弱（语法破碎、偶发 `<unk>`）源于语料规模，提升需更大语料与更多 epoch。
+- **数据量**：`config_train_8k_r55` 为 3 epoch（8000 行），`r56` / `r57` 分别 24000 / 72000 行、1 epoch，`pretrain.yaml` 为 1 epoch；生成质量偏弱（语法破碎、偶发 `<???>`）源于语料规模，提升需更大语料与更多 epoch。
 - **生成编码**：Windows GBK 终端可能误显中文，建议读取 UTF-8 日志或重定向输出。
 - **早期退出（early_exit）**：增量解码（use_cache=True）不启用提前退出——每层每 token KV 必须完整，提前退出会破坏后续 attention 一致性。
-- **记忆 train/infer divergence（已知，量级 ~0.01-0.03）**：训练每 block 一次写全序列（block-major）、增量解码逐 token 写（token-major），且训练期记忆列不受因果掩码（过去可依赖未来）→ 两条路径 logits 有小偏差。逐 token 因果写已评估但因 14x 开销否决；候选方案=每层独立 MemoryBank。详见 `AGENT_MEMORY.md` §7。
+- **记忆 train/infer divergence（已知，量级 ~0.01-0.03）**：训练每 block 一次写全序列（block-major）、增量解码逐 token 写（token-major），且训练期记忆列不受因果掩码（过去可依赖未来）→ 两条路径 logits 有小偏差。逐 token 因果写已评估但因 14x 开销否决；候选方案=每层独立 MemoryBank。H1/H2 的因果化开关见 `docs/H2_CAUSALIZATION_PLAN.md`。
 
 ## 文档索引
 
 - `CHANGELOG.md`：主要修复与功能变更（本地维护，不入库，对照提交历史）。
-- `configs/README.md`：各训练 / 推理配置说明。
-- `docs/`：`TRAINING_GUIDE.md`、`TUNING_GUIDE.md`、`MODEL_USAGE_GUIDE.md`、`DATA_USAGE_GUIDE.md` 等。
+- `configs/README.md`：各训练 / 推理配置说明（含 r47–r57 的消融 / 语料扩容轮次）。
+- `docs/`：`ARCHITECTURE.md`、`TRAINING_GUIDE.md`、`TUNING_GUIDE.md`、`MODEL_USAGE_GUIDE.md`、`DATA_USAGE.md`、`H2_CAUSALIZATION_PLAN.md`。
 - `models/README.md`、`scripts/README.md`、`experiments/README.md`、`tools/README.md`、`data/README.md`：分模块说明。

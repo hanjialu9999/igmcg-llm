@@ -1,8 +1,13 @@
-# H2 记忆读侧未来泄漏 —— 因果化方案（只出方案，不改码）
+# H2 记忆读侧未来泄漏 —— 因果化方案
 
-> 状态：**方案稿**，等用户拍板后再动代码。本轮只做测量与设计。
+> 状态：**已实施（r43，2026-10-05）**。原方案稿保留作设计依据；实现对应
+> `models/model_config.py` 的三个开关：
+> `controller_causal_memory`（H2：mem_kv 逐位置读 `S_t`，落地 B1/B2）、
+> `controller_direction_causal`（H1：direction 改逐位置前缀均值）、
+> `controller_chunk_scan`（Controller GDN 教科书 delta rule + C=16 分块并行化；B3 未单独做成开关）。
+> 三者默认 `False`，`config_train_8k_r43.yaml` 起置 `True`。
 > 关联缺陷：H1（Controller direction 非因果）、H3（ALiBi 未做 mem_cols 修正）。
-> 依据：本轮新增的三口径基准 `baselines/r42_baseline.json` / `r42_baseline_ctrl_off.json`
+> 依据：`baselines/r42_baseline.json` / `r42_baseline_ctrl_off.json`
 > 与 24 序列信号消融（见 §2）。
 
 ## 1. 代码事实（读侧 / 写侧 / 逐层 / 训推不对称）

@@ -1,8 +1,31 @@
 # ARCHITECTURE — igmcg-llm 架构说明书（准版本）
 
 > **本文件是架构的准版本，进 git。以后任何架构改动必须在同一个 commit 里更新本文件，并把改动贴进汇报。**
-> 生成于 2026-09-29（R42 + 第三批审查后）。标注：**确定** = 有 `文件:行` 或脚本输出；**推测** = 由多条证据推出、未直接验证；**查不到** = 仓库内不存在。
+> 生成于 2026-09-29（R42 + 第三批审查后）；**2026-10-20 补充 §0 时效说明与 R43–R57 增量索引**，正文实验数字仍为 R42 快照。标注：**确定** = 有 `文件:行` 或脚本输出；**推测** = 由多条证据推出、未直接验证；**查不到** = 仓库内不存在。
 > 参数量由 `Temp\opencode\e2_params.py` 在 CPU 实际构建模型数得（未加载 checkpoint、未碰显卡），总数 **6,756,101** 与 `baselines/r42_baseline.json:19` 一致。
+
+---
+
+## 0. 文档时效与后续轮次（2026-10-20 复核）
+
+> **本文正文是 R42 快照（2026-09-29）+ 第八~九批审改的产物**，正文中的 `文件:行`、参数量、逐位实验数字均以当时仓库为准；后续提交会令行号漂移，引用前请按文件内容再核对。当前代码已经走到 **R57**，本节汇总 R42 之后的增量，细节以代码与 `configs/README.md` 为准。
+
+### 0.1 R42 之后新增 / 变化
+
+| 轮次 | 变化 | 证据 |
+|------|------|------|
+| R43 | 打包语料（`data.pack`）、H1/H2 因果化、Controller chunk GDN；新增 `controller_causal_memory` / `controller_direction_causal` / `controller_chunk_scan` 开关 | `configs/config_train_8k_r43.yaml`、`models/model_config.py` |
+| R44 | H3 因果化 + VRC 安全造核（`models/mixers.py` safe_pow 路径） | `configs/config_train_8k_r44.yaml`、`experiments/batch9_20261004/` |
+| R45 / r46 | Controller 按步交替（1:1）成为主线；r46 为 1/3 比例对照 | `configs/config_train_8k_r45.yaml`、`_r46.yaml` |
+| R47–R53 | 以 `training.enhancement_schedule` 驱动的因子消融：QK-Norm / attn_temp / residual_gate / value_relative_coding / char_merge / controller_film；r53 起引入 `data.tokenizer_pretok` 预分词缓存 | `configs/config_train_8k_r47.yaml` … `_r53.yaml` |
+| R54 | `tokenizer_pretok: 3`（仅保留 ASCII 词间空格） | `configs/config_train_8k_r54.yaml` |
+| R55–R57 | 语料扩容：8k（3 epoch）→ 24k → 72k（r56/r57 为 1 epoch，`pack_max_train_chunks` 控步数），沿用 r47 的 4 段 Controller×QK-Norm 调度 | `configs/config_train_8k_r55.yaml` … `_r57.yaml`、`docs/DATA_USAGE.md` |
+| 模块拆分 | `controller.py` 独立；新增 `ngram.py` / `gates.py` / `qat.py` / `sampling.py` / `state.py` / `norms.py` / `rope.py` / `checkpoint.py` / `config_loader.py`；`data_utils.py` 改用 `BaseTokenizer` / `CharTokenizer` / `BPETokenizer` 并支持 `pack` / 长行滑窗 | `models/README.md` |
+
+### 0.2 正文中已确认变化的两处
+
+- **IGMCG 评分**：正文 §1.1 写的线性加权已升级为 **跨候选 z-score**（风格项改为直觉方向与候选特征的余弦相似度），公式见根 `README.md`「IGMCG 反碎片化设计」；`scripts/generate.py` 的 `--igmcg-*-w` 只调权重。
+- **tokenizer 特殊 token**：当前 token 1 是 `<???>`（`models/constants.py`），正文如出现 `<unk>` 均按旧称理解。
 
 ---
 
@@ -14,7 +37,7 @@
 |---|---|---|
 | 架构总纲 | Generator（4 层 attn 主干）+ 独立 Controller（1 层 GatedDeltaNet）双模型编排，Controller 产出 3 类信号条件化 Generator | `README.md:27`、`controller.py:56-63` |
 | 架构形态 | **opt-in 特性矩阵**：全部由 `config['model']` 开关控制，默认关、旧权重向后兼容 | `README.md:18`、`model_config.py:247-254` |
-| 当前基线 | R42，总参数 **6,756,101**（≈6.76M）、DML 训练 7346 tok/s | `baselines/r42_baseline.json:19`、`README.md:5` |
+| 当前基线 | 本文快照为 R42，总参数 **6,756,101**（≈6.76M）、DML 训练 7346 tok/s；当前主线已到 **R57**（见 §0） | `baselines/r42_baseline.json:19`、`README.md:5` |
 
 ### 1.1 IGMCG 的全称和含义
 
@@ -30,7 +53,7 @@
 | 件 | 内容 | 文件:行 |
 |---|---|---|
 | 7 维直觉向量 | `IGMCG_DIMS = ['语气','氛围','意图','情感','风格','受众','创新']`，CLI `--intuition` 默认全 0.5 | `generate.py:174`、`:481-482` |
-| 评分公式 | `score = 1.5*连贯度(coh) + 0.15*流畅度 + 0.15*风格匹配 − 2.5*重复度` | `README.md:164-166`、权重键 `generate.py:483-490` |
+| 评分公式 | `score = 1.5*z(连贯度) + 0.15*z(流畅度) + 0.15*z(风格余弦相似度) − 2.5*z(重复度)`（R42 后升级为跨候选 z-score；旧线性式保留在历史文档） | `README.md`「IGMCG 反碎片化设计」、权重键 `generate.py` 的 `--igmcg-*-w` |
 | 两层作用 | ①**模型内门控**：`igmcg_use_gate` 逐位置 sigmoid 决定"用不用"、`intuition_proj(7→1)` 注入偏置，`fused = logp + gate·ngram_vec`；②**脚本层多候选选优**：`generate_igmcg` 批量生成 N 个候选 + z-score 打分 | `transformer.py:744/750-753/1802-1813`、`generate.py:347-430` |
 | 依赖 | `igmcg_enabled = bool(igmcg) and ngram_fusion_enabled` —— **依赖 n-gram 融合，融合关则 IGMCG 连带失效** | `transformer.py:744` |
 | 与 direction 的关系 | **不是一回事**：direction 是 R42 学的 Controller 注入信号（`controller.py:240-241`）；IGMCG 是阶段 8.7 的解码期机制。仅共享"候选/采样"表象 | `model_config.py:250` vs `:259` |

@@ -1,11 +1,16 @@
 # experiments/
 
-实验 / 诊断 / 一次性脚本目录。
+实验 / 诊断 / 一次性脚本与产物目录。
 
-## 当前状态
+## 当前目录
 
-历史上的 `_*.py` 一次性实验脚本已在仓库整理中清理（见 git 历史 commit `b19bbd2` / `e4dd90f`）。
-目录保留，供后续新实验脚本使用。
+| 路径 | 说明 |
+|------|------|
+| `batch9_20261004/` | 第九批审改：三口径评估表（`report_full.md` / `e8a.md` / `e8b.md` / `v3_report.md`）、`eval_dw.py` / `eval_singlesig.py` / `build_batch9_files.py`，以及 r42 训练剖析 JSON / loss CSV。 |
+| `claude_review_20261003/` | GDN 专项审查：`gdn_orientation_check.py`（delta rule 取向核对）、`gdn_chunk_proto.py`（分块并行原型）、`gdn_loop_v3.patch` + `gdn_loop_v3_check.py`（循环外提补丁与逐位对拍）。 |
+| `prof_20261020/` | r57 / r58 训练步剖析：`prof_step.py` 与 `r57*.json/out`、`r58*.json/out`（默认 / pad / scan 三种口径）、`selftest_cpu.json`。 |
+
+> 这些不是项目主流程的一部分，仅用于探索与验证；产物通常写到 `logs/` 或本目录。
 
 ## 历史脚本（已删除，可从 git 历史恢复）
 
@@ -26,5 +31,4 @@
 | `_cmp_sel_full.py` | SEL 全量受控对比复现脚本（产物 `cmp_sel_full.txt`）。 |
 | `_dl_c4.py` | C4 语料下载相关。 |
 
-> 这些不是项目主流程的一部分，仅用于探索与验证；产物通常写到 `logs/`。
 > 如需复用，可从对应 commit 的 git 历史中恢复。
