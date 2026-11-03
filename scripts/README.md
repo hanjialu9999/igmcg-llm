@@ -7,7 +7,7 @@
 | 文件 | 说明 |
 |------|------|
 | `train.py` | 训练主程序：`python scripts/train.py --config configs/pretrain.yaml`。支持 warmup、早停、分阶段增强调度（`enhancement_schedule` / `enhancement_off_prob`）、Controller 按步交替、打包语料、自动备份旧检查点（label smoothing 因 PyTorch 限制当前未启用，见 `docs/TRAINING_GUIDE.md`）。 |
-| `generate.py` | 生成 API：`generate_text` / `generate_igmcg` / `NGramModel`。IGMCG 多候选按 z-score 后的综合分（连贯度 / 流畅度 / 风格 / 重复度）选优，生成期 `repetition_penalty=2.0`。CLI 支持 `--dtype fp32/bf16/auto`（默认 auto：支持的 CPU/CUDA 用 bf16）、`--cpu-threads N`、`--quantize`（纯 CPU int8 动态量化）、`--compile`、`--ngram` 固定 n-gram 先验、`--igmcg`、`--controller-direction`（生成期 direction 因果化）、`--char-merge-buffer`（增量 char-merge 缓冲）。 |
+| `generate.py` | 生成 API：`generate_text` / `generate_igmcg` / `NGramModel`。IGMCG 多候选按 z-score 后的综合分（连贯度 / 流畅度 / 风格 / 多样性）选优，生成期 `repetition_penalty=2.0`。CLI 支持 `--dtype fp32/bf16/auto`（默认 auto：支持的 CPU/CUDA 用 bf16）、`--cpu-threads N`、`--quantize`（纯 CPU int8 动态量化）、`--compile`、`--ngram` 固定 n-gram 先验、`--igmcg`、`--controller-direction`（生成期 direction 因果化）、`--char-merge-buffer`（增量 char-merge 缓冲）。 |
 | `chat.py` | 对话式 CLI（参数：`--model` / `--vocab` / `--device` / `--max-length` / `--temperature` / `--top-k` / `--repetition-penalty` / `--controller-direction`），具体见 `--help`。 |
 | `chat_zh.bat` | 中文 Windows 一键对话启动器（自动定位项目根，调用 `scripts/chat.py`）。 |
 | `train_finetune.py` | 微调训练（QA 两阶段：预训练底座 → 微调），产出 `best_finetuned_model.pt`。 |

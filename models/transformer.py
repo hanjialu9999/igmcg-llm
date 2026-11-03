@@ -1458,7 +1458,7 @@ class TransformerModel(nn.Module):
         # 专用 bias（前 _gate_out 维 alpha_init，后 _gate_out 维 beta_init），但 _init_weights
         # 遍历 nn.Linear 时用 N(0,0.02) 覆盖了 weight，用 zeros 覆盖了 bias。
         # 此处按 GatedDeltaNet 设计意图恢复：weight=0（弱门控，逐 token 由模型自决），
-        # bias 前 _gate_out 维 alpha_init（sigmoid≈0.12 弱遗忘起步）/ 后 _gate_out 维 beta_init
+        # bias 前 _gate_out 维 alpha_init（sigmoid≈0.12 强遗忘起步）/ 后 _gate_out 维 beta_init
         # （sigmoid≈0.88 强写入起步）。
         # 同时重置 SlidingWindowCausalSelfAttention.output_gate（weight=0, bias=0 → sigmoid=0.5 半通起步）。
         for blk in self.blocks:

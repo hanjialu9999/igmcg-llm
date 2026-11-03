@@ -52,6 +52,20 @@ def safe_torch_load(path, map_location: str = 'cpu'):
     return torch.load(path, map_location=map_location, weights_only=True)
 
 
+_COMPILE_PREFIX = '_orig_mod.'
+
+
+def strip_compile_prefix(state_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """剥离 torch.compile 包装器保存 state_dict 时添加的 `_orig_mod.` 前缀。
+
+    torch.compile(model).state_dict() 的键会统一带该前缀；若直接 strict=False
+    加载到未编译模型，全部权重会被静默忽略。仅在全部键都带前缀时剥离，
+    避免误伤普通模型中恰好以 `_orig_mod.` 命名的子模块。"""
+    if state_dict and all(k.startswith(_COMPILE_PREFIX) for k in state_dict):
+        return {k[len(_COMPILE_PREFIX):]: v for k, v in state_dict.items()}
+    return state_dict
+
+
 def build_ngram_model(vocab, model_config: Dict[str, Any]):
     """从配置重建统计 n-gram 缓冲（阶段8.1/8.7 神经融合用）。
 
@@ -139,7 +153,8 @@ def load_model(model_path, vocab_path, device: 'Union[str, torch.device]' = 'cpu
 
     # SwiGLU 格式自动转换：checkpoint 是 w1/w3 分离但模型配置 fuse_swiglu=True（需 w13）时，
     # 静默缺失 w13 + 静默丢弃 w1/w3 → FFN 随机初始化。自动检测并转换避免静默失败。
-    _ckpt_sd = checkpoint['model_state_dict']
+    _ckpt_sd = strip_compile_prefix(checkpoint['model_state_dict'])
+    checkpoint['model_state_dict'] = _ckpt_sd
     _model_sd = model.state_dict()
     _model_has_w13 = any(k == 'w13.weight' or k.endswith('.w13.weight') for k in _model_sd)
     _ckpt_has_w1 = any(k == 'w1.weight' or k.endswith('.w1.weight') for k in _ckpt_sd)

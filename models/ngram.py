@@ -408,7 +408,8 @@ class NGramModel:
         V = self.vocab_size
         # 取 tri/unigram 等价的逐位置 logp：仅用 unigram 兜底 + 高阶叠加，
         # 与旧 _compute_logprob 等价（高阶优先、低阶兜底）。
-        vec = self._uni.clone()
+        # uni_prob 常驻 CPU；先搬到目标设备，避免后续用 device 上的 idx/p 索引 CPU 张量。
+        vec = self._uni.to(device).clone()
         order_data = []
         for order in range(2, self.max_order + 1):
             if order == 2 and w1 is not None:

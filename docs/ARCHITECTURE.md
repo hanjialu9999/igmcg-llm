@@ -46,14 +46,14 @@
 | 释义 | 出处 |
 |---|---|
 | **直觉引导（多候选）生成** | `scripts/generate.py:167`、`models/transformer.py:739`、`docs/MODEL_USAGE_GUIDE.md:16` |
-| **反碎片化**：生成多个温度候选，按综合分（连贯度 + 流畅度 + 风格 − 重复度）选优，抑制"碎片式"输出 | `README.md:14`、`README.md:160-171` |
+| **反碎片化**：生成多个温度候选，按综合分（连贯度 + 流畅度 + 风格 + 多样性）选优，抑制"碎片式"输出 | `README.md:14`、`README.md:160-171` |
 
 含义拆解（**确定**）：
 
 | 件 | 内容 | 文件:行 |
 |---|---|---|
 | 7 维直觉向量 | `IGMCG_DIMS = ['语气','氛围','意图','情感','风格','受众','创新']`，CLI `--intuition` 默认全 0.5 | `generate.py:174`、`:481-482` |
-| 评分公式 | `score = 1.5*z(连贯度) + 0.15*z(流畅度) + 0.15*z(风格余弦相似度) − 2.5*z(重复度)`（R42 后升级为跨候选 z-score；旧线性式保留在历史文档） | `README.md`「IGMCG 反碎片化设计」、权重键 `generate.py` 的 `--igmcg-*-w` |
+| 评分公式 | `score = 1.5*z(连贯度) + 0.15*z(流畅度) + 0.15*z(风格余弦相似度) + 2.5*z(多样性)`（R42 后升级为跨候选 z-score；R57 修正：原实现误把 distinct-2 多样性当重复度惩罚，现改为正奖励） | `README.md`「IGMCG 反碎片化设计」、权重键 `generate.py` 的 `--igmcg-*-w` |
 | 两层作用 | ①**模型内门控**：`igmcg_use_gate` 逐位置 sigmoid 决定"用不用"、`intuition_proj(7→1)` 注入偏置，`fused = logp + gate·ngram_vec`；②**脚本层多候选选优**：`generate_igmcg` 批量生成 N 个候选 + z-score 打分 | `transformer.py:744/750-753/1802-1813`、`generate.py:347-430` |
 | 依赖 | `igmcg_enabled = bool(igmcg) and ngram_fusion_enabled` —— **依赖 n-gram 融合，融合关则 IGMCG 连带失效** | `transformer.py:744` |
 | 与 direction 的关系 | **不是一回事**：direction 是 R42 学的 Controller 注入信号（`controller.py:240-241`）；IGMCG 是阶段 8.7 的解码期机制。仅共享"候选/采样"表象 | `model_config.py:250` vs `:259` |

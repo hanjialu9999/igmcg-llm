@@ -169,7 +169,7 @@ def batch_generate(model, vocab, prompts, max_length=30, temperature=0.8,
 #   0 语气 formal↔casual  1 氛围 relaxed↔tense  2 意图 explain↔persuade
 #   3 情感 positive↔negative  4 风格 concise↔detailed  5 受众 pro↔general
 #   6 创新 conservative↔aggressive
-# 流程：按直觉生成多个风格候选 -> 自评(流畅度/重复度/风格匹配) -> 加权选优
+# 流程：按直觉生成多个风格候选 -> 自评(流畅度/多样性/风格匹配) -> 加权选优
 # ---------------------------------------------------------------------------
 IGMCG_DIMS = ['语气', '氛围', '意图', '情感', '风格', '受众', '创新']
 _POS_WORDS = set('好 棒 喜欢 开心 高兴 优秀 美丽 顺利 成功 支持 赞美 爱 赞 不错 幸福'.split())
@@ -177,8 +177,8 @@ _NEG_WORDS = set('坏 差 讨厌 生气 难过 糟糕 失败 反对 批评 恨 �
 
 
 def _repetition(text):
-    """重复度惩罚（IGMCG 2.0 改为 distinct-2 多样性度量，比单纯 bigram 重复比更鲁棒）：
-    返回 0~1，越高越多样（越低越重复）。用于评分时取负。"""
+    """多样性度量（函数名为历史命名；IGMCG 2.0 用 distinct-2，比单纯 bigram 重复比更鲁棒）：
+    返回 0~1，越高越多样（越低越重复）。评分时取正，作为多样性奖励。"""
     toks = [t for t in text.replace(' ', '')]
     if len(toks) < 2:
         return 1.0
@@ -355,7 +355,7 @@ def generate_igmcg(model, vocab, prompt, intuition=None, num_candidates=4,
      ngram_fn / ngram_weight: 可选叠加 n-gram 统计先验（双轨解码）。
      所有候选并行生成（单次 batch 前向），显著降低多候选开销。
 
-     评分 = COH_W*连贯度(coh) + FLU_W*流畅度 + STYLE_W*风格匹配 - REP_W*重复度
+     评分 = COH_W*连贯度(coh) + FLU_W*流畅度 + STYLE_W*风格匹配 + DIV_W*多样性
        - coh 直接奖励相邻 token 的相连性，是抑制"碎片化"的核心信号；
        - 流畅度(单 token 置信度)只作轻微 tiebreaker——孤立高频词也会拉高它，故不主导；
        - 风格匹配为直觉引导的温和偏置（在连贯候选之间做微调，绝不压过连贯度）；
@@ -382,7 +382,7 @@ def generate_igmcg(model, vocab, prompt, intuition=None, num_candidates=4,
                                        intuition=intuition)
     flus = _fluency_batch(model, seqs, device, pad_id)
 
-    COH_W, FLU_W, STYLE_W, REP_W = coh_w, flu_w, style_w, rep_w
+    COH_W, FLU_W, STYLE_W, DIV_W = coh_w, flu_w, style_w, rep_w
     candidates = []
     for k, gen in enumerate(seqs):
         cand_ids = gen[len(ids):]
@@ -417,8 +417,8 @@ def generate_igmcg(model, vocab, prompt, intuition=None, num_candidates=4,
     style_z = _zscore(style_scores)
 
     for k, c in enumerate(candidates):
-        # 连贯度主导（z 标准化，绝对值可比）；流畅/风格为温和偏置；重复取负（重复越低分越高）。
-        score = COH_W * coh_z[k] + FLU_W * flu_z[k] + STYLE_W * style_z[k] - REP_W * rep_z[k]
+        # 连贯度主导（z 标准化，绝对值可比）；流畅/风格为温和偏置；多样性取正（越多样分越高）。
+        score = COH_W * coh_z[k] + FLU_W * flu_z[k] + STYLE_W * style_z[k] + DIV_W * rep_z[k]
         c['style'] = style_scores[k]
         c['score'] = score
     candidates.sort(key=lambda c: c['score'], reverse=True)
@@ -510,7 +510,7 @@ def main():
                              '生成入口默认 off = 本轮 r42 生成对照的默认；on = config 默认（旧行为）。'
                              '只切层内运行时开关，model_config 默认值与 checkpoint 不动')
     parser.add_argument('--igmcg-rep-w', type=float, default=2.5,
-                        help='IGMCG 重复惩罚权重')
+                        help='IGMCG 多样性奖励权重（distinct-2；键名为历史命名）')
     
     args = parser.parse_args()
 
@@ -622,7 +622,7 @@ def main():
                 style_w=args.igmcg_style_w,
                 rep_w=args.igmcg_rep_w)
             best = cands[0] if cands else None
-            gen_info = (f"\n  [IGMCG候选={len(cands)}, 最优分={best['score']:.3f}, 重复度={best['rep']:.3f}]"
+            gen_info = (f"\n  [IGMCG候选={len(cands)}, 最优分={best['score']:.3f}, 多样性={best['rep']:.3f}]"
                         if best else "")
         else:
             _g = _resolve_gen_args(args, 'prompt')

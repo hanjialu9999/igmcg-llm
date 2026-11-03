@@ -12,7 +12,7 @@ requests>=2.25.0          # scripts/data/fetch_ms_corpus.py
 psutil>=5.9.0             # tools/monitor/monitor_gpu_training.py
 
 # ===== 开发依赖 =====
-pytest>=7.0.0             # 32 个测试文件共用
+pytest>=7.0.0             # 72 个测试文件共用
 
 # ===== 可选：AMD / Intel 显卡加速（Windows）=====
 # 安装 torch-directml 后，代码会自动通过 DirectML 使用核显/集显，

@@ -143,9 +143,11 @@ def clip_grad_norm_dml(params, max_norm, foreach_norm=False):
     if foreach_norm:
         total_norm = torch.stack(torch._foreach_norm(grads)).pow(2).sum().sqrt()
     else:
-        total_sq = torch.zeros((), device=grads[0].device, dtype=grads[0].dtype)
+        # fp16 下用半精度累加平方极易溢出为 inf（clip_coef 变 0，梯度被整体清零），
+        # 统一在 fp32 中累加范数；fp32 路径数值不变。
+        total_sq = torch.zeros((), device=grads[0].device, dtype=torch.float32)
         for g in grads:
-            total_sq = total_sq + g.pow(2).sum()
+            total_sq = total_sq + g.float().pow(2).sum()
         total_norm = total_sq.sqrt()
     clip_coef = max_norm / (total_norm + 1e-6)
     # clip_coef >= 1.0（含 NaN）→ scale=1.0 不缩放；<1.0 → 用 clip_coef 缩放
@@ -567,7 +569,7 @@ def main(config_path='configs/pretrain.yaml', resume=False):
     # 阶段8.1：n-gram 神经融合——用训练语料（与模型训练同一份分布）构建统计 n-gram 缓冲，
     # 传入 build_model 供可学习门控融合（缺省关；开启时 ngram_fusion=True 且 ngram_corpus 指向语料）。
     # 构建逻辑统一收敛到 models.checkpoint.build_ngram_model，避免与 generate.py 重复实现。
-    from models.checkpoint import build_ngram_model, safe_torch_load
+    from models.checkpoint import build_ngram_model, safe_torch_load, strip_compile_prefix
     _ngram_model = build_ngram_model(vocab, config['model'])
     model = build_model(config, device=device, ngram_model=_ngram_model)
 
@@ -704,7 +706,10 @@ def main(config_path='configs/pretrain.yaml', resume=False):
             # step checkpoint：从 epoch 中间续训（如 50% 处中断 → 从 50% 继续）
             print(f"\n[Resume] 从 step checkpoint {step_ckpt_path} 续训")
             ckpt = safe_torch_load(step_ckpt_path, map_location='cpu')
-            model.load_state_dict(ckpt['model_state_dict'])
+            # torch.compile 保存的权重键带 _orig_mod. 前缀；加载到 _orig_mod 本体，
+            # 兼容"编译保存 → 未编译续训"和反向组合。
+            getattr(model, '_orig_mod', model).load_state_dict(
+                strip_compile_prefix(ckpt['model_state_dict']))
             load_optimizer_state(optimizer, ckpt['optimizer_state_dict'], device)
             start_epoch = ckpt['epoch']  # 当前 epoch 还没训完
             resume_skip_batches = ckpt['batch_idx']
@@ -719,7 +724,8 @@ def main(config_path='configs/pretrain.yaml', resume=False):
             if resume_path is not None:
                 print(f"\n[Resume] 从 epoch checkpoint {resume_path} (epoch {resume_epoch}) 续训")
                 ckpt = safe_torch_load(resume_path, map_location='cpu')
-                model.load_state_dict(ckpt['model_state_dict'])
+                getattr(model, '_orig_mod', model).load_state_dict(
+                    strip_compile_prefix(ckpt['model_state_dict']))
                 load_optimizer_state(optimizer, ckpt['optimizer_state_dict'], device)
                 best_loss = ckpt.get('best_loss', float('inf'))
                 resume_global_step = ckpt.get('global_step', 0)

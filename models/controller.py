@@ -117,7 +117,7 @@ class ControllerModel(nn.Module):
         self.ln_pre = RMSNorm(ctrl_dim)
         self.ln_layers = nn.ModuleList([RMSNorm(ctrl_dim) for _ in range(ctrl_layers)])
         # GatedDeltaNet mixer：线性复杂度看全上下文，S 矩阵=上下文压缩
-        # 用项目已验证的默认参数（alpha_init=-2 弱遗忘 / beta_init=2 强写入）
+        # 用项目已验证的默认参数（alpha_init=-2 强遗忘起步 / beta_init=2 强写入）
         # chunk_scan=False（旧 for-loop 路径）：不走 GDN 自带 chunk_scan（A_mats/B_mats 各 50MB，DML OOM）。
         # chunk_scan=True（10-05 ④）：GDN chunk_wy——教科书 delta rule + C=16 分块，块内并行、块间 T/16 步，
         # 状态按 key 行存，与下面 mem_query 的 einsum('mhd,bhde->bme') 读法同向。

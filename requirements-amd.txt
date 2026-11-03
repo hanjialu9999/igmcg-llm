@@ -21,7 +21,7 @@ requests>=2.25.0          # scripts/data/fetch_ms_corpus.py
 psutil>=5.9.0             # tools/monitor/monitor_gpu_training.py
 
 # ===== 开发依赖 =====
-pytest>=7.0.0             # 32 个测试文件共用
+pytest>=7.0.0             # 72 个测试文件共用
 
 # ===== 可选：数据准备脚本（scripts/data/*）=====
 # 从 ModelScope 下载 / 读取 parquet 时需要，非训练/推理必装：

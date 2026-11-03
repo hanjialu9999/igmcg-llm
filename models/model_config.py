@@ -46,8 +46,8 @@ class AttnConfig:
     # 第十五轮新特性
     rope_dim_fraction: float = 1.0   # Partial RoPE：仅前 dim*fraction 维度加 RoPE（1.0=全维，向后兼容）
     output_gate: bool = False        # 注意力输出门控（消除 Attention Sink）
-    zero_centered_norm: bool = False # Zero-Centered RMSNorm（先去均值再归一化，防 Massive Activation）
-    delta_alpha_init: float = -2.0   # GatedDeltaNet 衰减门偏置初值（sigmoid≈0.12，弱遗忘起步）
+    zero_centered_norm: bool = False # mean-centered RMSNorm（历史命名 zero_centered；先去均值再归一化）
+    delta_alpha_init: float = -2.0   # GatedDeltaNet 状态保留门偏置初值（sigmoid≈0.12，强遗忘起步）
     delta_beta_init: float = 2.0     # GatedDeltaNet 输入门偏置初值（sigmoid≈0.88，强写入起步）
     # 第十七轮新特性
     use_mla_kv: bool = False         # MLA 风格 KV 潜空间压缩（cache 只存潜向量，长序列内存降 2*dim/kv_latent_dim 倍）

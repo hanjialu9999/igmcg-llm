@@ -9,9 +9,11 @@ import torch.nn.functional as F
 class RMSNorm(nn.Module):
     """Root Mean Square Layer Normalization（LLaMA 风格，比 LayerNorm 更省且更稳定）。
 
-    第十五轮新增 zero_centered 选项（灵感：Qwen3-Next Zero-Centered RMSNorm）：
+    第十五轮新增 zero_centered 选项（历史命名；实际实现是 mean-centered RMSNorm）：
     计算 rms(x - mean) 而非 rms(x)，先去均值再归一化。
-    防止 norm 权重异常增大（Massive Activation），DML 上提升数值稳定性。
+    注意：这并非 Qwen3-Next 的 zero-centered gamma（对权重做中心化），二者机制不同；
+    本实现只去掉激活的公共均值分量，并不阻止 norm 权重增大，也没有"防 Massive Activation"
+    的理论保证。DML 上的收益应视为经验结果，而非机制保证。
     默认 False（向后兼容），config 显式开启。
 
     性能优化（第二十六轮）：用 F.rms_norm 替代手写 pow+mean+rsqrt+mul 链。
@@ -28,7 +30,7 @@ class RMSNorm(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.zero_centered:
-            # Zero-Centered: 先去均值，再 rms 归一化（防止 Massive Activation）
+            # zero_centered（历史命名）：先去均值，再做 RMS 归一化
             x = x - x.mean(-1, keepdim=True)
         return F.rms_norm(x, self.normalized_shape, self.weight, self.eps)
 

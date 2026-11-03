@@ -1057,7 +1057,8 @@ class GatedDeltaNet(LinearMixerBase):
     增量解码：T=1 单步 delta 更新，O(D²) 内存（chunk_scan 开启时用标准 delta rule 单步 bmm，cache parity 保持）。
 
     参数:
-        alpha_init: 衰减门偏置初值（init -2.0 → sigmoid≈0.12，弱遗忘起步，保留长程信息）
+        alpha_init: 状态保留门偏置初值（init -2.0 → sigmoid≈0.12，强遗忘起步：
+                    每 token 仅保留约 12% 历史状态，长程信息需靠训练学出）
         beta_init:  输入门偏置初值（init 2.0 → sigmoid≈0.88，强写入起步，确保新信息注入）
     """
 
